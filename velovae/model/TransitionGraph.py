@@ -178,7 +178,6 @@ def recoverTransitionTime(t_trans, ts, graph, init_type):
         ts_orig[x] += t_trans_orig[x]
         recoverTransitionTimeRec(t_trans_orig, ts_orig, x, graph)
     return t_trans_orig, ts_orig
-
 #######################################################################
 # Transition Graph
 #######################################################################
