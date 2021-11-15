@@ -853,7 +853,7 @@ def componentLogLikelihood(u, s,
 # transitions. The initial condition is a weighted sum
 # of ODEs, where the weight represents transition probability.
 ############################################################
-def computeMixWeight(t,
+def computeMixWeight(mu_t, sigma_t,
                      cell_labels,
                      alpha,
                      beta,
@@ -865,7 +865,8 @@ def computeMixWeight(t,
                      s0,
                      sigma_u,
                      sigma_s,
-                     eps_t):
+                     eps_t,
+                     k=1):
     
     U0_hat, S0_hat = initAllPairs(alpha,
                                   beta,
@@ -879,29 +880,21 @@ def computeMixWeight(t,
     Ntype = alpha.shape[0]
     var = torch.mean(sigma_u.pow(2)+sigma_s.pow(2))
     
-    tscore = torch.zeros(Ntype, Ntype).to(alpha.device)
+    tscore = torch.empty(Ntype, Ntype).to(alpha.device)
     
-    t_type = [t[cell_labels==i] for i in range(Ntype)]
-    mu_t = torch.tensor([x.mean() for x in t_type]).to(alpha.device)
-    std_t = torch.tensor([x.std() for x in t_type]).to(alpha.device)
+    mu_t_type = [mu_t[cell_labels==i] for i in range(Ntype)]
+    std_t_type = [sigma_t[cell_labels==i] for i in range(Ntype)]
     for i in range(Ntype):#child
         for j in range(Ntype):#parent
-            mask1, mask2, mask3 = t_type[j]<t_trans[i]-eps_t, t_type[j]>=t_trans[i]+eps_t, torch.abs(t_type[j]-t_trans[i])<eps_t
-            #tscore[i,j] = mask3.float().sum()/len(t_type[j])+mask1.float().sum()/len(t_type[j])*0.1
-            
-            if(torch.any(mask1)):
-                tscore[i, j] = tscore[i, j] + ((t_type[j][mask1]-t_trans[i]).pow(2).sum()/len(t_type[j]))
-            
-            if(torch.any(mask2)):
-                tscore[i, j] = tscore[i, j] + 20*((t_type[j][mask2]-t_trans[i]).pow(2).sum()/len(t_type[j]))
-            
+            mask1, mask2 = (mu_t_type[j]<t_trans[i]-3*eps_t).float(), (mu_t_type[j]>=t_trans[i]+3*eps_t).float()
+            tscore[i, j] = torch.mean( ((mu_t_type[j]-t_trans[i]).pow(2) + (std_t_type[j] - eps_t).pow(2))*(mask1+mask2*k) )
     
     xscore = torch.mean(((U0_hat-u0.unsqueeze(1))).pow(2)+((S0_hat-s0.unsqueeze(1))).pow(2),-1) + torch.eye(alpha.shape[0]).to(alpha.device)*var*0.1
     
     #tmask = t_trans.view(-1,1)<t_trans
     #xscore[tmask] = var*1e3
-    
-    logit_w = - tscore - xscore
+    mu_tscore, mu_xscore = tscore.mean(), xscore.mean()
+    logit_w = - tscore/mu_tscore - xscore/mu_xscore
     
     return logit_w, tscore, xscore
 
