@@ -30,7 +30,7 @@ def testVanillaVAE():
     file_path = '/scratch/blaauw_root/blaauw1/gyichen'
     #file_path = f'data/{dataset}/'
     
-    config_vae = {'num_epochs':800, 'test_epoch':50, 'save_epoch':50, 'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':1e-3, 'neg_slope':0, 'reg_t':10.0, 'batch_size':1024}
+    config_vae = {'num_epochs':800, 'test_epoch':50, 'save_epoch':50, 'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':1e-3, 'neg_slope':0, 'reg_t':2.0, 'batch_size':1024}
     model = vv.VanillaVAE(adata, 20, hidden_size=(500, 250), tprior='tprior', device='gpu')
     model.train(adata, config=config_vae, gene_plot=gene_plot[dataset], figure_path=figure_path)
     model.saveModel(pt_path)
@@ -49,7 +49,7 @@ def testBranchingVAE():
     
     
     config_vae = {'num_epochs':800, 'test_epoch':50, 'save_epoch':50, 'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':3e-3, 'reg_t':10.0, 'batch_size':1024, 'yprior':True}
-    model = vv.BranchingVAE(adata, "braindev", Cz=30, hidden_size=[(1000,500),(1000,500),(1000,500)], tprior='tprior', device='gpu', tkey='vanilla')
+    model = vv.BranchingVAE(adata, "braindev", Cz=30, hidden_size=[(500,250), (500,250), (500,250)], tprior='tprior', device='gpu', tkey='vanilla')
     model.encoder.encoder_t.load_state_dict(torch.load(f'checkpoints/{dataset}/Default/encoder_vanilla.pt',map_location=model.device))
     model.train(adata, config=config_vae, gene_plot=gene_plot[dataset], figure_path=figure_path)
     model.saveModel(pt_path)
@@ -72,12 +72,11 @@ def testMixtureVAE():
                   'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':2e-3, 'neg_slope':0, 
                   'reg_t':2.0, 'reg_y':100.0, 'informative_y':True}
     model = vv.VAE(adata, Cz=30, hidden_size=[(500,250), (500,250), (500,250)], Tmax=t_vanilla.max(), device='gpu', tkey='vanilla')
-    #model.printWeight(model.decoder.tscore, model.decoder.xscore)
     model.encoder.encoder_t.load_state_dict(torch.load(f'checkpoints/{dataset}/Default/encoder_vanilla.pt',map_location=model.device))
-    
-    model.train(adata, config=config_vae, gene_plot=gene_plot[dataset], figure_path=figure_path)
-    model.saveModel(pt_path)
-    model.saveAnnData(adata, 'mvae', file_path, file_name='output.h5ad')
+    model.debugW(adata)
+    #model.train(adata, config=config_vae, gene_plot=gene_plot[dataset], figure_path=figure_path)
+    #model.saveModel(pt_path)
+    #model.saveAnnData(adata, 'mvae', file_path, file_name='output.h5ad')
 
 def testBranchingVAETwoStage():
     adata = anndata.read_h5ad('data/Pancreas/pancreas.h5ad')
