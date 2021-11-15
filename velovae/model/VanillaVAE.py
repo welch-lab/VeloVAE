@@ -182,10 +182,11 @@ class VanillaVAE():
             self.mu_t = (torch.ones(U.shape[0],1)*Tmax*0.5).double().to(self.device)
             self.std_t = (torch.ones(U.shape[0],1)*Tmax*0.18).double().to(self.device)
         else:
+            print('Using informative time prior.')
             t = adata.obs[tprior].to_numpy()
             t = t/t.max()*Tmax
             self.mu_t = torch.tensor(t).view(-1,1).double().to(self.device)
-            self.std_t = (torch.ones(self.mu_t.shape)*np.std(t)).double().to(self.device)
+            self.std_t = (torch.ones(self.mu_t.shape)*Tmax*0.25).double().to(self.device)
         
         #Training Configuration
         self.config = config = {
