@@ -55,12 +55,12 @@ def VAERisk(u,
             s,
             uhat,
             shat,
-            w,
             mu_tx, std_tx,
             mu_t, std_t,
             mu_zx, std_zx,
             mu_z, std_z,
             logit_y_tzx, pi_y,
+            logit_ypr, pi_ypr,
             sigma_u, sigma_s, 
             weight=None):
     """
@@ -84,16 +84,15 @@ def VAERisk(u,
     kld_t = KLGaussian(mu_tx, std_tx, mu_t, std_t)
     kld_z = KLGaussian(mu_zx, std_zx, mu_z, std_z)
     kld_y = KLy(logit_y_tzx, pi_y)
+    kld_ypr = KLy(logit_ypr, pi_ypr)
 
-    log_gaussian = -((uhat-u.unsqueeze(1))/sigma_u).pow(2)-((shat-s.unsqueeze(1))/sigma_s).pow(2)-torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
-    #mse_sc = -((uhat-u.unsqueeze(1))/sigma_u).pow(2)-((shat-s.unsqueeze(1))/sigma_s).pow(2)
-    #rectifier = nn.Softplus(threshold=1e-3)
-    logpx_zty = (log_gaussian * (w.unsqueeze(-1))).sum(1)
-    if( weight is not None):
-        logpx_zty = logpx_zty*weight.view(-1,1)
+    log_gaussian = -((uhat-u)/sigma_u).pow(2)-((shat-s)/sigma_s).pow(2)-torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
     
-    err_rec = torch.mean(torch.sum(logpx_zty, 1))
-    return err_rec, kld_t, kld_z, kld_y
+    if( weight is not None):
+        log_gaussian = log_gaussian*weight.view(-1,1)
+    
+    err_rec = torch.mean(torch.sum(log_gaussian, 1))
+    return err_rec, kld_t, kld_z, kld_y, kld_ypr
 
 
 
@@ -330,34 +329,7 @@ class decoder(nn.Module):
         self.sigma_u.requires_grad = False
         self.sigma_s.requires_grad = False
         
-        self.eps_t = torch.tensor(Tmax*0.01, device=device).double()
-        
-        self.updateWeight(self.t_init, self.cell_labels)
-            
-    def updateWeight(self, t, cell_labels):
-        if(not isinstance(t, torch.Tensor)):
-            t = torch.tensor(t).double().to(self.device)
-        if(not isinstance(cell_labels, torch.Tensor)):
-            cell_labels = torch.tensor(cell_labels).long().to(self.device)
-        with torch.no_grad():
-            logit_w, tscore, xscore = computeMixWeight(t.squeeze(),
-                                       cell_labels,
-                                       torch.exp(self.alpha),
-                                       torch.exp(self.beta),
-                                       torch.exp(self.gamma),
-                                       torch.exp(self.t_trans),
-                                       torch.exp(self.t_end),
-                                       torch.exp(self.dts)+torch.exp(self.t_trans.view(-1,1)),
-                                       torch.exp(self.u0),
-                                       torch.exp(self.s0),
-                                       torch.exp(self.sigma_u),
-                                       torch.exp(self.sigma_s),
-                                       self.eps_t)
-            self.w = logit_w
-            self.tscore = tscore.detach().cpu().numpy()
-            self.xscore = xscore.detach().cpu().numpy()
-            #self.u0 = torch.log(U0_hat+eps)
-            #self.s0 = torch.log(S0_hat+eps)
+        self.eps_t = torch.tensor(Tmax*0.005, device=device).double()
     
     def forward(self, t, y_onehot, train_mode=False, neg_slope=1e-4, temp=0.01):
         """
@@ -366,7 +338,8 @@ class decoder(nn.Module):
         train_mode: determines whether to use leaky_relu 
         """
         #w = F.softmax(torch.sum(self.w*y_onehot.unsqueeze(-1), 1), 1)
-        #w = F.gumbel_softmax(torch.sum(self.w*y_onehot.unsqueeze(-1), 1), tau=temp, hard=True)
+        logit_w = torch.sum(self.w*y_onehot.unsqueeze(-1), 1)
+        w = F.gumbel_softmax(logit_w, tau=temp, hard=True)
         Uhat, Shat = odeWeighted(t, y_onehot,
                                  train_mode=False,
                                  neg_slope=neg_slope,
@@ -380,7 +353,7 @@ class decoder(nn.Module):
                                  sigma_u = torch.exp(self.sigma_u),
                                  sigma_s = torch.exp(self.sigma_s),
                                  scaling=torch.exp(self.scaling))
-        return Uhat, Shat
+        return (Uhat*w.unsqueeze(-1)).sum(1), (Shat*w.unsqueeze(-1)).sum(1), logit_w
     
     def predSU(self, t, y_onehot, gidx=None):
         Ntype = y_onehot.shape[1]
@@ -465,8 +438,8 @@ class VAE():
             "num_epochs":500, "learning_rate":1e-4, "learning_rate_ode":1e-4, "lambda":1e-3,\
             "reg_t":1.0, "reg_z":2.0, "reg_y":2.0, "reg_w":1.0, "neg_slope":1e-4,\
             "test_epoch":100, "save_epoch":100, "batch_size":128, "K_alt":0,\
-            "train_scaling":False, "train_std":False, "weight_sample":False, "anneal":True, "informative_y":False
-            
+            "train_scaling":False, "train_std":False, "weight_sample":False, "anneal":True, 
+            "info_y":False, "info_t":False, "info_w":False
         }
         
         N, G = adata.n_obs, adata.n_vars
@@ -488,10 +461,11 @@ class VAE():
         self.mu_z = torch.zeros(Cz).double().to(self.device)
         self.std_z = torch.ones(Cz).double().to(self.device)
         
-        self.use_informative_y = "informative_y" in kwargs
         self.prior_y_default = (torch.ones(Ntype)*(1/Ntype)).double().to(self.device)
         self.prior_w_default = (torch.ones(Ntype,Ntype)*(1/Ntype)).double().to(self.device)
-        
+        self.prior_w = None
+        if('wprior' in kwargs):
+            self.prior_w = torch.tensor(kwargs['wprior']).double().to(self.device)
         
         
     def setDevice(self, device, device_number=None):
@@ -517,15 +491,41 @@ class VAE():
         eps = torch.normal(mean=0.0, std=1.0, size=(B,1)).double().to(self.device)
         return std*eps+mu
     
-
+    def updateWeight(self, data_in, cell_labels):
+        if(not isinstance(cell_labels, torch.Tensor)):
+            cell_labels = torch.tensor(cell_labels).long().to(self.device)
+        
+        scaling = torch.exp(self.decoder.scaling)
+        data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/scaling, data_in[:,data_in.shape[1]//2:]),1).double()
+        mu_tx, std_tx = self.encoder.encoder_t.forward(data_in_scale)
+        
+        logit_w, tscore, xscore = computeMixWeight(mu_tx.squeeze(), std_tx.squeeze(),
+                                   cell_labels,
+                                   torch.exp(self.decoder.alpha),
+                                   torch.exp(self.decoder.beta),
+                                   torch.exp(self.decoder.gamma),
+                                   torch.exp(self.decoder.t_trans),
+                                   torch.exp(self.decoder.t_end),
+                                   torch.exp(self.decoder.dts)+torch.exp(self.decoder.t_trans.view(-1,1)),
+                                   torch.exp(self.decoder.u0),
+                                   torch.exp(self.decoder.s0),
+                                   torch.exp(self.decoder.sigma_u),
+                                   torch.exp(self.decoder.sigma_s),
+                                   self.decoder.eps_t,
+                                   20)
+        self.decoder.w = logit_w.detach()
+        self.decoder.tscore = tscore.detach().cpu().numpy()
+        self.decoder.xscore = xscore.detach().cpu().numpy()
+        return logit_w
+    
     def forward(self, data_in, train_mode, temp=1.0):
         scaling = torch.exp(self.decoder.scaling)
         
         mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y_onehot = self.encoder.forward(data_in, scaling, torch.exp(self.decoder.t_trans.detach()), temp=temp)
         
-        uhat, shat = self.decoder.forward(t, y_onehot.float(), train_mode, neg_slope=self.config['neg_slope'], temp=temp)
+        uhat, shat, logit_w = self.decoder.forward(t, y_onehot.float(), train_mode, neg_slope=self.config['neg_slope'], temp=temp)
         
-        return mu_tx, std_tx, mu_zx, std_zx, logit_y, t, y_onehot, uhat, shat
+        return mu_tx, std_tx, mu_zx, std_zx, logit_y, logit_w, t, y_onehot, uhat, shat
     
     def evalModel(self, data_in, gidx=None):
         """
@@ -605,7 +605,7 @@ class VAE():
                     reg_t=1.0, 
                     reg_z=1.0, 
                     reg_y=1.0,
-                    informative_y=False):
+                    yprior=False):
         """
         Training in each epoch
         X_loader: Data loader of the input data
@@ -623,22 +623,25 @@ class VAE():
                 optimizer2.zero_grad()
             batch = iterX.next()
             xbatch, label_batch, weight = batch[0].to(self.device), batch[1].to(self.device), batch[2].to(self.device)
-            mu_tx, std_tx, mu_zx, std_zx, logit_y, t, y_onehot, uhat, shat = self.forward(xbatch, True, temp=tau)
+            mu_tx, std_tx, mu_zx, std_zx, logit_y, logit_w, t, y_onehot, uhat, shat = self.forward(xbatch, True, temp=tau)
             u, s = xbatch[:,:xbatch.shape[1]//2],xbatch[:,xbatch.shape[1]//2:]
             
-            if(informative_y):
-                py = self.getInformativePriorY(label_batch)
+            if(yprior):
+                prior_y = self.getInformativePriorY(label_batch)
             else:
-                py = self.prior_y_default
-            w_batch = (F.softmax(self.decoder.w)*y_onehot.unsqueeze(-1)).sum(1)
+                prior_y = self.prior_y_default
+            
+            w_batch = (F.softmax(self.w)*y_onehot.unsqueeze(-1)).sum(1)
+            prior_w = self.prior_w_default if self.prior_w is None else self.prior_w
+            prior_w_batch = (prior_w*y_onehot.unsqueeze(-1)).sum(1)
             err_rec, kld_t, kld_z, kld_y = VAERisk(u, s,
                                                    uhat, shat,
-                                                   w_batch,
                                                    mu_tx, std_tx,
                                                    self.mu_t, self.std_t,
                                                    mu_zx, std_zx,
                                                    self.mu_z, self.std_z,
-                                                   logit_y, py,
+                                                   logit_y, prior_y,
+                                                   w_batch, prior_w_batch,
                                                    torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
                                                    weight=None)
             loss = - err_rec + reg_t * kld_t + reg_z * kld_z + reg_y * kld_y
@@ -652,6 +655,14 @@ class VAE():
             optimizer2.step()
         
         return loss_list, counter+B, tau
+    
+    def debugW(self, adata):
+        #Get data loader
+        U,S = adata.layers['Mu'], adata.layers['Ms']
+        X = np.concatenate((U,S), 1)
+        with torch.no_grad():
+            self.updateWeight(torch.tensor(X).to(self.device), self.decoder.cell_labels)
+            self.printWeight(self.decoder.tscore, self.decoder.xscore)
     
     def train(self, 
               adata, 
@@ -685,6 +696,12 @@ class VAE():
         plotTLatent(self.decoder.t_init, Xembed, 'Vanilla VAE', True, figure_path, 'vanilla')
         
         gind, gene_plot = getGeneIndex(adata.var_names, gene_plot)
+        
+        
+        print('Before Training')
+        with torch.no_grad():
+            self.updateWeight(torch.tensor(X).to(self.device), self.decoder.cell_labels)
+            self.printWeight(self.decoder.tscore, self.decoder.xscore)
         
         if(plot):
             makeDir(figure_path)
@@ -747,8 +764,6 @@ class VAE():
         
         
         start = time.time()
-        print('Before Training')
-        self.printWeight()
         
         for epoch in range(n_epochs):
             #Optimize the encoder
@@ -791,12 +806,6 @@ class VAE():
                                                            self.config["informative_y"])
                 loss_train = loss_train+loss_list
             
-            if( (epoch+1)%10 == 0):
-                #Use the prior cell type to update the weights 
-                self.decoder.updateWeight(t, self.decoder.cell_labels)
-                print(f'Epoch {epoch+1} ')
-                self.printWeight()
-            
             if(epoch==0 or (epoch+1) % self.config["test_epoch"] == 0):
                 print(f'temperature = {tau}')
                 save = (epoch+1)%n_save==0 or epoch==0
@@ -815,6 +824,9 @@ class VAE():
                 loss_test.append(loss)
                 err_test.append(err)
                 randidx_test.append(rand_idx)
+            
+            if( (epoch+1)%10 == 0):
+                self.printWeight()
         
         print("***     Finished Training     ***")
         plotTrainLoss(loss_train,[i for i in range(len(loss_train))],True,figure_path,"vae")
