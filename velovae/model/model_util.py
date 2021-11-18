@@ -697,55 +697,15 @@ def odeBranchNumpy(t, graph, init_type, **kwargs):
         py[cell_labels==i,i,:] = 1
     uhat, shat = odeBranch(t, graph, init_type, True, **kwargs)
     return np.sum(py*(uhat*scaling), 1), np.sum(py*shat, 1)
+
+
     
-
-
 
 ############################################################
-#Deprecated!
-#Markov ODE Solution
+#Proposed new method that considers all possible cell type
+# transitions. The initial condition is a weighted sum
+# of ODEs, where the weight represents transition probability.
 ############################################################
-def typeInitVal(U,S,cell_labels,cell_types,t):
-    Ntype = len(cell_types)
-    U0,S0 = np.zeros((Ntype, U.shape[1])),np.zeros((Ntype, U.shape[1]))
-    for i in cell_types:
-        t_lb = np.quantile(t[cell_labels==i],0.02)
-        U0[i] = np.mean(U[(cell_labels==i)&(t<=t_lb)], 0)
-        S0[i] = np.mean(S[(cell_labels==i)&(t<=t_lb)], 0)
-    return U0, S0
-
-def odeMixture(t, y_onehot, train_mode=False, neg_slope=1e-4, **kwargs):
-    """
-    t: [B x 1] cell time
-    y_onehot: [B x Ntype] cell type 
-    train_mode: whether to use leaky relu for time duration
-    neg_slope: negative slope of the leaky ReLU
-    **kwargs: contains ODE parameters
-    """
-    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
-    t_trans, ts = kwargs['t_trans'], kwargs['ts']
-    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
-    sigma_u, sigma_s = kwargs["sigma_u"], kwargs["sigma_s"]
-    
-    #Compute initial conditions
-    U0_hat, S0_hat = initAllPairs(alpha,
-                                  beta,
-                                  gamma,
-                                  t_trans,
-                                  ts,
-                                  u0,
-                                  s0)
-    
-    Ntype = alpha.shape[0]
-    N = t.shape[0]
-    G = alpha.shape[1]
-    
-    #Compute ODE solution
-    tau = F.leaky_relu( t.view(t.shape[0],1,1,1) - ts.view(Ntype,1,G), neg_slope) if train_mode else F.relu( t.view(t.shape[0],1,1,1) - ts.view(Ntype,1,G) ) 
-    Uhat, Shat = predSU(tau, U0_hat, S0_hat, alpha.view(Ntype,1,G), beta.view(Ntype,1,G), gamma.view(Ntype,1,G))
-    
-    return torch.sum(Uhat*y_onehot.view(N, Ntype, 1, 1), 1), torch.sum(Shat*y_onehot.view(N, Ntype, 1, 1),1)
-
 def initAllPairs(alpha,
                  beta,
                  gamma,
@@ -767,92 +727,6 @@ def initAllPairs(alpha,
     
     return F.relu(U0_hat), F.relu(S0_hat)
 
-def computeCoeffs(u, s,
-                  t,
-                  alpha,
-                  beta,
-                  gamma,
-                  ts,
-                  u0,
-                  s0,
-                  train_mode=False,
-                  neg_slope=1e-4):
-    tau = F.leaky_relu(t.view(t.shape[0],1,1)-ts, neg_slope) if train_mode else F.relu(t.view(t.shape[0],1,1)-ts)
-    unstability = (torch.abs(beta - gamma) < 1e-3).long()
-    eps = 1e-6
-    C_beta = torch.exp(-beta*tau)
-    C_gamma = torch.exp(-gamma*tau)
-    C_u = alpha/beta*(1-C_beta) - u.view(u.shape[0],1,u.shape[1])
-    C_betagamma = beta/(beta-gamma+eps)*(C_gamma - C_beta)*(1-unstability) - beta*tau*C_gamma*unstability
-    C_s = alpha/gamma*(1-C_gamma) + (alpha/(gamma-beta+eps)*(C_gamma - C_beta)*(1-unstability) + alpha*tau*C_gamma*unstability) - s.view(u.shape[0],1,u.shape[1])
-    
-    return C_beta, C_gamma, C_u, C_betagamma, C_s
-    
-def componentLogLikelihood(u, s,
-                          t,
-                          y_onehot,
-                          alpha,
-                          beta,
-                          gamma,
-                          t_trans,
-                          ts,
-                          u0,
-                          s0,
-                          sigma_u,
-                          sigma_s,
-                          scaling,
-                          train_mode=False,
-                          neg_slope=1e-4):
-    """
-    Evaluate the integral of p(u0,s0)p(x|t,y,u0,s0) over u0 and s0.
-    This is the conditional log likelihood of each mixture component
-    """
-    #Dimensions = (child type, parent type, gene)
-    U0_hat, S0_hat = initAllPairs(alpha,
-                                  beta,
-                                  gamma,
-                                  t_trans,
-                                  ts,
-                                  u0,
-                                  s0)
-    N = u.shape[0]
-    Ntype = U0_hat.shape[0]
-    G = U0_hat.shape[2]
-    U0_batch = torch.sum(y_onehot.view(N, Ntype, 1, 1)*U0_hat, 1)
-    S0_batch = torch.sum(y_onehot.view(N, Ntype, 1, 1)*S0_hat, 1)
-    
-    #Dimensions = (cell, type, gene)
-    C_beta, C_gamma, C_u, C_betagamma, C_s = computeCoeffs(u/scaling, s,
-                                                           t,
-                                                           alpha,
-                                                           beta,
-                                                           gamma,
-                                                           ts,
-                                                           u0,
-                                                           s0,
-                                                           train_mode,
-                                                           neg_slope)
-    sigma_u_sc = sigma_u / scaling
-    Kuu = (C_beta/sigma_u_sc).pow(2)+(1/sigma_u_sc).pow(2)+(C_betagamma/sigma_s).pow(2)
-    Kss = (C_gamma/sigma_s).pow(2)+(1/sigma_s).pow(2)
-    Kus = (C_betagamma/sigma_s)*(C_gamma/sigma_s)
-    detK = Kuu*Kss - Kus.pow(2)
-    
-    Au = (C_beta/sigma_u_sc)*(C_u/sigma_u_sc) - U0_batch/(sigma_u_sc.pow(2)) + (C_betagamma/sigma_s)*(C_s/sigma_s)
-    As = (C_gamma/sigma_s)*(C_s/sigma_s) - S0_batch/(sigma_s.pow(2))
-    res = (U0_batch/sigma_u_sc).pow(2)+(C_u/sigma_u_sc).pow(2)+(S0_batch/sigma_s).pow(2)+(C_s/sigma_s).pow(2) \
-                    - ( (Kss/detK)*(Au.pow(2)) - 2*(Kus/detK)*Au*As + (Kuu/detK)*(As.pow(2))) 
-    t_init_mask = (torch.sum(t_trans.view(1,Ntype)*y_onehot,1,keepdim=True)>=t_trans).long()
-    delta_t0 = torch.sum(t_trans.view(1,Ntype)*y_onehot,1,keepdim=True) - t_trans
-    eps_p = -1e6
-    return  torch.sum(-0.5*torch.log(detK)-2*torch.log(sigma_u_sc)-2*torch.log(sigma_s)-np.log(2*np.pi)-res/2, 2)*t_init_mask + eps_p * (1-t_init_mask), U0_batch, S0_batch
-    
-
-############################################################
-#Proposed new method that considers all possible cell type
-# transitions. The initial condition is a weighted sum
-# of ODEs, where the weight represents transition probability.
-############################################################
 def computeMixWeight(mu_t, sigma_t,
                      cell_labels,
                      alpha,
@@ -958,6 +832,155 @@ def odeWeightedNumpy(t, y_onehot, w_onehot, **kwargs):
     Uhat, Shat = np.sum(Uhat*w_onehot.reshape(N, Ntype, 1), 1), np.sum(Shat*w_onehot.reshape(N, Ntype, 1), 1)
     
     return Uhat, Shat
+
+
+
+############################################################
+#  Optimal Transport
+############################################################
+
+
+"""
+Geoffrey Schiebinger, Jian Shu, Marcin Tabaka, Brian Cleary, Vidya Subramanian, 
+  Aryeh Solomon, Joshua Gould, Siyan Liu, Stacie Lin, Peter Berube, Lia Lee, 
+  Jenny Chen, Justin Brumbaugh, Philippe Rigollet, Konrad Hochedlinger, Rudolf Jaenisch, Aviv Regev, Eric S. Lander,
+  Optimal-Transport Analysis of Single-Cell Gene Expression Identifies Developmental Trajectories in Reprogramming,
+  Cell,
+  Volume 176, Issue 4,
+  2019,
+  Pages 928-943.e22,
+  ISSN 0092-8674,
+  https://doi.org/10.1016/j.cell.2019.01.006.
+"""
+# @ Lénaïc Chizat 2015 - optimal transport
+def fdiv(l, x, p, dx):
+    return l * np.sum(dx * (x * (np.log(x / p)) - x + p))
+
+
+def fdivstar(l, u, p, dx):
+    return l * np.sum((p * dx) * (np.exp(u / l) - 1))
+
+
+def primal(C, K, R, dx, dy, p, q, a, b, epsilon, lambda1, lambda2):
+    I = len(p)
+    J = len(q)
+    F1 = lambda x, y: fdiv(lambda1, x, p, y)
+    F2 = lambda x, y: fdiv(lambda2, x, q, y)
+    with np.errstate(divide='ignore'):
+        return F1(np.dot(R, dy), dx) + F2(np.dot(R.T, dx), dy) \
+               + (epsilon * np.sum(R * np.nan_to_num(np.log(R)) - R + K) \
+                  + np.sum(R * C)) / (I * J)
+
+
+def dual(C, K, R, dx, dy, p, q, a, b, epsilon, lambda1, lambda2):
+    I = len(p)
+    J = len(q)
+    F1c = lambda u, v: fdivstar(lambda1, u, p, v)
+    F2c = lambda u, v: fdivstar(lambda2, u, q, v)
+    return - F1c(- epsilon * np.log(a), dx) - F2c(- epsilon * np.log(b), dy) \
+           - epsilon * np.sum(R - K) / (I * J)
+
+
+# end @ Lénaïc Chizat
+
+def optimal_transport_duality_gap(C, G, lambda1, lambda2, epsilon, batch_size, tolerance, tau,
+                                  epsilon0, max_iter, **ignored):
+    """
+    Compute the optimal transport with stabilized numerics, with the guarantee that the duality gap is at most `tolerance`
+    Parameters
+    ----------
+    C : 2-D ndarray
+        The cost matrix. C[i][j] is the cost to transport cell i to cell j
+    G : 1-D array_like
+        Growth value for input cells.
+    lambda1 : float, optional
+        Regularization parameter for the marginal constraint on p
+    lambda2 : float, optional
+        Regularization parameter for the marginal constraint on q
+    epsilon : float, optional
+        Entropy regularization parameter.
+    batch_size : int, optional
+        Number of iterations to perform between each duality gap check
+    tolerance : float, optional
+        Upper bound on the duality gap that the resulting transport map must guarantee.
+    tau : float, optional
+        Threshold at which to perform numerical stabilization
+    epsilon0 : float, optional
+        Starting value for exponentially-decreasing epsilon
+    max_iter : int, optional
+        Maximum number of iterations. Print a warning and return if it is reached, even without convergence.
+    Returns
+    -------
+    transport_map : 2-D ndarray
+        The entropy-regularized unbalanced transport map
+    """
+    C = np.asarray(C, dtype=np.float64)
+    epsilon_scalings = 5
+    scale_factor = np.exp(- np.log(epsilon) / epsilon_scalings)
+
+    I, J = C.shape
+    dx, dy = np.ones(I) / I, np.ones(J) / J
+
+    p = G
+    q = np.ones(C.shape[1]) * np.average(G)
+
+    u, v = np.zeros(I), np.zeros(J)
+    a, b = np.ones(I), np.ones(J)
+
+    epsilon_i = epsilon0 * scale_factor
+    current_iter = 0
+
+    for e in range(epsilon_scalings + 1):
+        duality_gap = np.inf
+        u = u + epsilon_i * np.log(a)
+        v = v + epsilon_i * np.log(b)  # absorb
+        epsilon_i = epsilon_i / scale_factor
+        _K = np.exp(-C / epsilon_i)
+        alpha1 = lambda1 / (lambda1 + epsilon_i)
+        alpha2 = lambda2 / (lambda2 + epsilon_i)
+        K = np.exp((np.array([u]).T - C + np.array([v])) / epsilon_i)
+        a, b = np.ones(I), np.ones(J)
+        old_a, old_b = a, b
+        threshold = tolerance if e == epsilon_scalings else 1e-6
+
+        while duality_gap > threshold:
+            for i in range(batch_size if e == epsilon_scalings else 5):
+                current_iter += 1
+                old_a, old_b = a, b
+                a = (p / (K.dot(np.multiply(b, dy)))) ** alpha1 * np.exp(-u / (lambda1 + epsilon_i))
+                b = (q / (K.T.dot(np.multiply(a, dx)))) ** alpha2 * np.exp(-v / (lambda2 + epsilon_i))
+
+                # stabilization
+                if (max(max(abs(a)), max(abs(b))) > tau):
+                    u = u + epsilon_i * np.log(a)
+                    v = v + epsilon_i * np.log(b)  # absorb
+                    K = np.exp((np.array([u]).T - C + np.array([v])) / epsilon_i)
+                    a, b = np.ones(I), np.ones(J)
+
+                if current_iter >= max_iter:
+                    logger.warning("Reached max_iter with duality gap still above threshold. Returning")
+                    return (K.T * a).T * b
+
+            # The real dual variables. a and b are only the stabilized variables
+            _a = a * np.exp(u / epsilon_i)
+            _b = b * np.exp(v / epsilon_i)
+
+            # Skip duality gap computation for the first epsilon scalings, use dual variables evolution instead
+            if e == epsilon_scalings:
+                R = (K.T * a).T * b
+                pri = primal(C, _K, R, dx, dy, p, q, _a, _b, epsilon_i, lambda1, lambda2)
+                dua = dual(C, _K, R, dx, dy, p, q, _a, _b, epsilon_i, lambda1, lambda2)
+                duality_gap = (pri - dua) / abs(pri)
+            else:
+                duality_gap = max(
+                    np.linalg.norm(_a - old_a * np.exp(u / epsilon_i)) / (1 + np.linalg.norm(_a)),
+                    np.linalg.norm(_b - old_b * np.exp(v / epsilon_i)) / (1 + np.linalg.norm(_b)))
+
+    if np.isnan(duality_gap):
+        raise RuntimeError("Overflow encountered in duality gap computation, please report this incident")
+    return R / C.shape[1]
+
+
 ############################################################
 #Other Auxilliary Functions
 ############################################################
