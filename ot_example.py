@@ -5,7 +5,10 @@ import anndata
 import wot
 import argparse
 import sklearn
-from velovae import optimal_transport_duality_gap
+import velovae as vv
+from velovae import optimal_transport_duality_gap, plotTLatent
+
+import torch
 
 ##  Argument Parsing    ##
 parser = argparse.ArgumentParser('ot')
@@ -32,6 +35,18 @@ def transportMap(adata, tkey, epsilon = 0.05, lambda1 = 1, lambda2 = 50, niter =
     cell_labels = adata.obs['clusters'].to_numpy()
     cell_types = np.unique(cell_labels)
     t = adata.obs[f'{tkey}_time'].to_numpy()
+    #Recompute time
+    """
+    model = vv.OTVAE(adata, 20, hidden_size=(500, 250), tprior=None, device='gpu')
+    model.encoder.load_state_dict(torch.load(f'checkpoints/Pancreas/OTVAE/encoder_vanilla.pt',map_location=model.device))
+    U,S = adata.layers['Mu'], adata.layers['Ms']
+    scaling = adata.var[f"{tkey}_scaling"].to_numpy()
+    D_sc = np.concatenate((U/scaling,S),axis=1)
+    mu_t, std_t = model.encoder.forward(torch.tensor(D_sc).float().to(model.device))
+    t = mu_t.squeeze().detach().cpu().numpy()
+    """
+    
+    plotTLatent(t, adata.obsm['X_umap'], f"Time Posterior", True, 'figures', f"otvae-time")
     tmin, tmax = t.min(), t.max()
     dt = (tmax-tmin)/args.nbin
     #pseudo_days = adata.obs['day'].to_numpy()
@@ -122,4 +137,4 @@ def transportMapCustom(adata, tkey, epsilon = 0.05, lambda1 = 1, lambda2 = 50, n
 adata = anndata.read_h5ad('data/Pancreas/output.h5ad')
 #adata = anndata.read_h5ad('/scratch/blaauw_root/blaauw1/gyichen/output.h5ad')
 #discretizeTime(adata, args.tkey, args.nbin)
-transportMapCustom(adata, args.tkey, args.epsilon, args.lambda1, args.lambda2, args.niter, args.quantile)
+transportMap(adata, args.tkey, args.epsilon, args.lambda1, args.lambda2, args.niter, args.quantile)
