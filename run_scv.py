@@ -1,21 +1,33 @@
 import numpy as np
 import anndata
 import scvelo as scv
+import argparse
 
-def run_scv(filename, Ngene, Nplot):
+##  Argument Parsing    ##
+parser = argparse.ArgumentParser('test')
+parser.add_argument('-i','--infile', type=str)
+parser.add_argument('-o', '--outfile', type=str, default="output.h5ad")
+parser.add_argument('--save_path', type=str, default='data/')
+parser.add_argument('-g', '--Ngene', type=int, default=1000)
+parser.add_argument('--Nplot', type=int, default=10)
+parser.add_argument('--skip_pp', action='store_true')
+args = parser.parse_args()
+
+def run_scv(filename, Ngene, Nplot, skip_pp=False):
     adata = anndata.read_h5ad(filename)
     #Preprocessing
-    #1. Gene filtering and data normalization
-    scv.pp.filter_and_normalize(adata, min_shared_counts=100, min_shared_cells = 100,  n_top_genes=Ngene)
-    #2. KNN Averaging
-    scv.pp.moments(adata,n_pcs=30, n_neighbors=50)
-    #3. Obtain cell clusters
-    if(not 'clusters' in adata.obs):
-        if('Class' in adata.obs):
-            adata.obs['clusters'] = adata.obs['Class'].to_numpy()
-        else:
-            scanpy.tl.leiden(adata, key_added='clusters')
-            print(np.unique(adata.obs['clusters'].to_numpy()))
+    if(not skip_pp):
+        #1. Gene filtering and data normalization
+        scv.pp.filter_and_normalize(adata, min_shared_counts=100, min_shared_cells = 100,  n_top_genes=Ngene)
+        #2. KNN Averaging
+        scv.pp.moments(adata,n_pcs=30, n_neighbors=50)
+        #3. Obtain cell clusters
+        if(not 'clusters' in adata.obs):
+            if('Class' in adata.obs):
+                adata.obs['clusters'] = adata.obs['Class'].to_numpy()
+            else:
+                scanpy.tl.leiden(adata, key_added='clusters')
+                print(np.unique(adata.obs['clusters'].to_numpy()))
     
     
     #4. Compute Umap coordinates for visulization
@@ -34,13 +46,13 @@ def run_scv(filename, Ngene, Nplot):
     for i in range(Nplot):
         scv.pl.scatter(adata, basis=[top_genes[i]],linewidth=2.0,figsize=(12,8),add_assignments=True,save=f"{top_genes[i]}.png")
     
-    scv.pl.velocity_embedding_stream(adata, basis='umap', vkey="velocity", save=f"vel-stream.png")
-    scv.pl.scatter(adata, color='latent_time', color_map='gnuplot', size=80, colorbar=True, save=f"time.png")
+    scv.pl.velocity_embedding_stream(adata, basis='umap', vkey="velocity", save="vel-stream.png")
+    scv.pl.scatter(adata, color='latent_time', color_map='gnuplot', size=80, colorbar=True, save="time.png")
     
     #Save the output
-    adata.write_h5ad(filename)
+    adata.write_h5ad(args.save_path+args.outfile)
     
-    scv.pl.scatter(adata, basis='X_umap', figsize=(10,10), save='class.png')
+    scv.pl.scatter(adata, basis='X_umap', figsize=(10,10), save="class.png")
     return
 
 def scvPlot(filename, genes):
@@ -55,9 +67,7 @@ def scvPlot(filename, genes):
     
     return
 
-filename = "/scratch/blaauw_root/blaauw1/gyichen/braindev_part.h5ad"
-Ngene = 1000
-Nplot = 10
-run_scv(filename, Ngene, Nplot)
+
+run_scv(args.infile, args.Ngene, args.Nplot, args.skip_pp)
 #genes = ['Auts2', 'Dync1i1', 'Gm3764', 'Mapt', 'Nfib', 'Rbfox1', 'Satb2', 'Slc6a13', 'Srrm4', 'Tcf4']
 #scvPlot(filename, genes)
