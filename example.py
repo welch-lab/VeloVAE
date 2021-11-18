@@ -47,8 +47,12 @@ def testOTVAE():
     pt_path = f'checkpoints/{dataset}/OTVAE'
     file_path = args.save
     
-    config_vae = {'num_epochs':800, 'test_epoch':50, 'save_epoch':50, 'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':1e-3, 'neg_slope':0, 'reg_t':2.0, 'batch_size':1024}
-    model = vv.OTVAE(adata, 20, hidden_size=(500, 250), tprior='tprior', device='gpu')
+    config_vae = {'num_epochs':800, 'test_epoch':50, 'save_epoch':50, 
+                  'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':1e-3, 
+                  'neg_slope':0, 'reg_t':2.0, 'batch_size':1024,
+                  'reg_ot':0.1, 'nbin':20
+    }
+    model = vv.OTVAE(adata, 20, hidden_size=(500, 250), tprior=None, device='gpu')
     model.train(adata, config=config_vae, gene_plot=gene_plot[dataset], figure_path=figure_path)
     model.saveModel(pt_path)
     model.saveAnnData(adata, 'otvae', file_path, file_name='output.h5ad')
