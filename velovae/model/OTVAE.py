@@ -125,6 +125,33 @@ class OTVAE(VanillaVAE):
         print("***          Finished.          ***")
         
         gind, gene_plot = getGeneIndex(adata.var_names, gene_plot)
+        if(plot):
+            makeDir(figure_path)
+            #Plot the initial estimate
+            plotTLatent(self.decoder.t_init, Xembed, f"Initial Estimate", plot, figure_path, f"init-vanilla")
+            
+            Uhat_init, Shat_init = self.decoder.predSU(torch.tensor(self.decoder.t_init.reshape(-1,1), device=self.device, dtype=self.decoder.alpha.dtype))
+            for i in range(len(gind)):
+                idx = gind[i]
+                track_idx = None
+                state = (self.decoder.t_init>=np.exp(self.decoder.toff[idx].detach().cpu().item())) + 2*(self.decoder.t_init<np.exp(self.decoder.ton[idx].detach().cpu().item()))
+                plotPhase(U[:,idx], S[:,idx], 
+                          Uhat_init[:,idx].detach().cpu().numpy(), Shat_init[:,idx].detach().cpu().numpy(), 
+                          gene_plot[i], 
+                          track_idx, 
+                          state, 
+                          ['Induction', 'Repression', 'Off'],
+                          True, figure_path,
+                          f"{gene_plot[i]}-init")
+                
+                plotSig(self.decoder.t_init, 
+                        U[:,idx], S[:,idx], 
+                        Uhat_init[:,idx].detach().cpu().numpy(), Shat_init[:,idx].detach().cpu().numpy(), 
+                        gene_plot[i], 
+                        True, 
+                        figure_path, 
+                        f"{gene_plot[i]}-init-vanilla",
+                        cell_labels=cell_labels_raw)
         
         #define optimizer
         print("***     Creating optimizers     ***")
