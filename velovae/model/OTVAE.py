@@ -80,10 +80,10 @@ class OTVAE(VanillaVAE):
             #Sample the time bins
             Nbin = self.config['nbin']
             dt = (t.squeeze().max()-t.squeeze().min())/Nbin
-            tbin = (torch.range(1, Nbin)-0.5)*dt+t.squeeze().min()
+            tbin = (torch.range(1, Nbin).to(self.device)-0.5)*dt+t.squeeze().min()
             b_onehot = F.gumbel_softmax(-(t-tbin).pow(2), tau=0.01, hard=True)
             b = torch.argmax(b_onehot, 1)
-            ot = self.computeOT(X_pca[idx], 
+            ot = self.computeOT(X_pca[idx.cpu().numpy()], 
                                 t.squeeze().detach().cpu().numpy(),
                                 b.detach().cpu().numpy())
             ot = torch.tensor(ot, device=self.device)
