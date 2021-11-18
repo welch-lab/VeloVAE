@@ -39,29 +39,7 @@ def KLGaussian(mu1, std1, mu2, std2):
 
 
 
-############################################################
-#Training Objective
-############################################################
-def VAERisk(mu_tx, std_tx, mu_t, std_t, u, s, uhat, shat, sigma_u, sigma_s, weight=None, b=1.0):
-    """
-    This is the negative ELBO.
-    t0, dt: [B x 1] encoder output, conditional uniform distribution parameters
-    Tmax: parameter of the prior uniform distribution
-    u , s : [B x G] input data
-    uhat, shat: [B x G] prediction by the ODE model
-    sigma_u, sigma_s : parameter of the Gaussian distribution
-    """
-    
-    kldt = KLGaussian(mu_tx, std_tx, mu_t, std_t)
-    
-    #u and sigma_u has the original scale
-    logp = -0.5*((u-uhat)/sigma_u).pow(2)-0.5*((s-shat)/sigma_s).pow(2)-torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
-    
-    if( weight is not None):
-        logp = logp*weight
-    err_rec = torch.mean(torch.sum(logp,1))
-    
-    return (- err_rec + b*(kldt))
+
 
 ##############################################################
 # Vanilla VAE
@@ -158,7 +136,7 @@ class decoder(nn.Module):
         return nn.functional.relu(Uhat*scaling), nn.functional.relu(Shat)
 
 class VanillaVAE():
-    def __init__(self, adata, Tmax, device='cpu', hidden_size=(500, 250), tprior=None, **kwargs):
+    def __init__(self, adata, Tmax, device='cpu', hidden_size=(500, 250), tprior=None):
         """
         adata: AnnData Object
         Tmax: (float/int) Time Range 
@@ -231,7 +209,31 @@ class VanillaVAE():
             self.decoder.eval()
         else:
             print("Warning: mode not recognized. Must be 'train' or  'test'! ")
-            
+    
+    ############################################################
+    #Training Objective
+    ############################################################
+    def VAERisk(self, mu_tx, std_tx, mu_t, std_t, u, s, uhat, shat, sigma_u, sigma_s, weight=None, b=1.0):
+        """
+        This is the negative ELBO.
+        t0, dt: [B x 1] encoder output, conditional uniform distribution parameters
+        Tmax: parameter of the prior uniform distribution
+        u , s : [B x G] input data
+        uhat, shat: [B x G] prediction by the ODE model
+        sigma_u, sigma_s : parameter of the Gaussian distribution
+        """
+        
+        kldt = KLGaussian(mu_tx, std_tx, mu_t, std_t)
+        
+        #u and sigma_u has the original scale
+        logp = -0.5*((u-uhat)/sigma_u).pow(2)-0.5*((s-shat)/sigma_s).pow(2)-torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
+        
+        if( weight is not None):
+            logp = logp*weight
+        err_rec = torch.mean(torch.sum(logp,1))
+        
+        return (- err_rec + b*(kldt))
+        
     def train_epoch(self, X_loader, optimizer, optimizer2=None, K=1, reg_t=1.0):
         """
         Training in each epoch
@@ -253,15 +255,15 @@ class VanillaVAE():
             s = xbatch[:,xbatch.shape[1]//2:]
             mu_tx, std_tx, t_global, ton, toff, uhat, shat = self.forward(xbatch,True)
             
-            loss = VAERisk(mu_tx, 
-                           std_tx, 
-                           self.mu_t[idx], 
-                           self.std_t[idx],
-                           u, s, 
-                           uhat, shat, 
-                           torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
-                           None,
-                           reg_t)
+            loss = self.VAERisk(mu_tx, 
+                                std_tx, 
+                                self.mu_t[idx], 
+                                self.std_t[idx],
+                                u, s, 
+                                uhat, shat, 
+                                torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
+                                None,
+                                reg_t)
             loss_list.append(loss.detach().cpu().item())
             with torch.autograd.detect_anomaly():
                 loss.backward()
@@ -270,13 +272,7 @@ class VanillaVAE():
                 optimizer2.step()
         return loss_list
     
-    def train(self, 
-              adata, 
-              config={}, 
-              plot=True, 
-              gene_plot=[], 
-              figure_path="figures", 
-              embed="umap"):
+    def loadConfig(self, config):
         #We don't have to specify all the hyperparameters. Just pass the ones we want to modify.
         for key in config:
             if(key in self.config):
@@ -288,6 +284,16 @@ class VanillaVAE():
         if(self.config["train_std"]):
             self.decoder.sigma_u.requires_grad = True
             self.decoder.sigma_s.requires_grad = True
+    
+    def train(self, 
+              adata, 
+              config={}, 
+              plot=True, 
+              gene_plot=[], 
+              figure_path="figures", 
+              embed="umap"):
+        
+        self.loadConfig(config)
         
         print("------------------------- Train a Vanilla VAE -------------------------")
         #Get data loader
