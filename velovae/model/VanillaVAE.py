@@ -158,7 +158,7 @@ class VanillaVAE():
         
         if(tprior is None):
             self.mu_t = (torch.ones(U.shape[0],1)*Tmax*0.5).double().to(self.device)
-            self.std_t = (torch.ones(U.shape[0],1)*Tmax*0.18).double().to(self.device)
+            self.std_t = (torch.ones(U.shape[0],1)*Tmax*0.25).double().to(self.device)
         else:
             print('Using informative time prior.')
             t = adata.obs[tprior].to_numpy()
@@ -475,8 +475,9 @@ class VanillaVAE():
         adata.var[f"{key}_sigma_u"] = np.exp(self.decoder.sigma_u.detach().cpu().numpy())
         adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
         U,S = adata.layers['Mu'], adata.layers['Ms']
-        D = np.concatenate((U,S),axis=1)
-        mu_t, std_t = self.encoder.forward(torch.tensor(D).float().to(self.device))
+        scaling = adata.var[f"{key}_scaling"].to_numpy()
+        D_sc = np.concatenate((U/scaling,S),axis=1)
+        mu_t, std_t = self.encoder.forward(torch.tensor(D_sc).float().to(self.device))
         my_t = (mu_t).squeeze().detach().cpu().numpy()
         
         adata.obs[f"{key}_time"] = my_t
