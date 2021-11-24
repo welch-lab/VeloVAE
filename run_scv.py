@@ -10,17 +10,19 @@ parser.add_argument('-o', '--outfile', type=str, default="output.h5ad")
 parser.add_argument('--save_path', type=str, default='data/')
 parser.add_argument('-g', '--Ngene', type=int, default=1000)
 parser.add_argument('--Nplot', type=int, default=10)
+parser.add_argument('--min_shared_counts', type=int, default=20)
+parser.add_argument('--min_shared_cells', type=int, default=10)
 parser.add_argument('--skip_pp', action='store_true')
 args = parser.parse_args()
 
-def run_scv(filename, Ngene, Nplot, skip_pp=False):
+def run_scv(filename, Ngene, Nplot, min_shared_counts=args.min_shared_counts, min_shared_cells=args.min_shared_cells, skip_pp=False):
     adata = anndata.read_h5ad(filename)
     #Preprocessing
     if(not skip_pp):
         #1. Gene filtering and data normalization
-        scv.pp.filter_and_normalize(adata, min_shared_counts=100, min_shared_cells = 100,  n_top_genes=Ngene)
+        scv.pp.filter_and_normalize(adata, min_shared_counts=min_shared_counts, min_shared_cells = min_shared_cells,  n_top_genes=Ngene)
         #2. KNN Averaging
-        scv.pp.moments(adata,n_pcs=30, n_neighbors=50)
+        scv.pp.moments(adata,n_pcs=30, n_neighbors=30)
         #3. Obtain cell clusters
         if(not 'clusters' in adata.obs):
             if('Class' in adata.obs):
@@ -28,11 +30,11 @@ def run_scv(filename, Ngene, Nplot, skip_pp=False):
             else:
                 scanpy.tl.leiden(adata, key_added='clusters')
                 print(np.unique(adata.obs['clusters'].to_numpy()))
-    
+    print(f'{adata.n_obs} Cells, {adata.n_vars} Genes.')
     
     #4. Compute Umap coordinates for visulization
-    #if(not 'X_umap' in adata.obsm):
-    scv.tl.umap(adata)
+    if(not 'X_umap' in adata.obsm):
+        scv.tl.umap(adata)
     #Fit each gene
     scv.tl.recover_dynamics(adata)
 
