@@ -25,13 +25,13 @@ def testVanillaVAE():
     dataset = args.dataset
     
     adata = anndata.read_h5ad(args.file)
-    #vv.preprocess(adata, 1000)
+    vv.preprocess(adata, 2000)
     
     figure_path = f'figures/{dataset}/Default'
     pt_path = f'checkpoints/{dataset}/Default'
     file_path = args.save
     
-    config_vae = {'num_epochs':800, 'test_epoch':50, 'save_epoch':50, 'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':1e-3, 'neg_slope':0, 'reg_t':2.0, 'batch_size':1024}
+    config_vae = {'num_epochs':800, 'test_epoch':50, 'save_epoch':50, 'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':1e-3, 'neg_slope':0, 'reg_t':2.0, 'batch_size':128}
     model = vv.VanillaVAE(adata, 20, hidden_size=(500, 250), tprior='tprior', device='gpu')
     model.train(adata, config=config_vae, gene_plot=gene_plot[dataset], figure_path=figure_path)
     model.saveModel(pt_path)
@@ -49,8 +49,8 @@ def testOTVAE():
     
     config_vae = {'num_epochs':800, 'test_epoch':50, 'save_epoch':50, 
                   'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':1e-3, 
-                  'neg_slope':0, 'reg_t':2.0, 'batch_size':1024,
-                  'reg_ot':0.1, 'nbin':20
+                  'neg_slope':0, 'reg_t':2.0, 'batch_size':128,
+                  'reg_ot':0.01, 'nbin':10
     }
     model = vv.OTVAE(adata, 20, hidden_size=(500, 250), tprior=None, device='gpu')
     model.train(adata, config=config_vae, gene_plot=gene_plot[dataset], figure_path=figure_path)
@@ -86,12 +86,11 @@ def testMixtureVAE():
     
     t_vanilla =adata.obs['vanilla_time'].to_numpy()
     config_vae = {'num_epochs':800, 'test_epoch':50, 'save_epoch':50, 
-                  'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':2e-3, 'neg_slope':0, 
-                  'reg_t':2.0, 'reg_y':100.0, 'informative_y':True}
+                  'learning_rate':2e-4, 'learning_rate_ode':2e-4, 'lambda':1e-3, 'neg_slope':0, 
+                  'reg_t':2.0, 'reg_y':100.0, 'info_y':True}
     model = vv.VAE(adata, Cz=30, hidden_size=[(500,250), (500,250), (500,250)], Tmax=t_vanilla.max(), device='gpu', tkey='vanilla')
-    model.encoder.encoder_t.load_state_dict(torch.load(f'checkpoints/{dataset}/Default/encoder_vanilla.pt',map_location=model.device))
-    model.debugW(adata)
-    #model.train(adata, config=config_vae, gene_plot=gene_plot[dataset], figure_path=figure_path)
+    #model.encoder.encoder_t.load_state_dict(torch.load(f'checkpoints/{dataset}/Default/encoder_vanilla.pt',map_location=model.device))
+    model.train(adata, config=config_vae, gene_plot=gene_plot[dataset], figure_path=figure_path)
     #model.saveModel(pt_path)
     #model.saveAnnData(adata, 'mvae', file_path, file_name='output.h5ad')
 
