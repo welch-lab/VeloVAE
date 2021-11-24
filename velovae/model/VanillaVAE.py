@@ -45,7 +45,7 @@ def KLGaussian(mu1, std1, mu2, std2):
 # Vanilla VAE
 ##############################################################
 class encoder(nn.Module):
-    def __init__(self, Cin, N1=500, N2=250, device=torch.device('cpu'), **kwargs):
+    def __init__(self, Cin, N1=500, N2=250, device=torch.device('cpu'), checkpoint=None):
         super(encoder, self).__init__()
         self.fc1 = nn.Linear(Cin, N1).to(device)
         self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
@@ -61,8 +61,8 @@ class encoder(nn.Module):
         self.fc_mu, self.spt1 = nn.Linear(N2,1).to(device), nn.Softplus()
         self.fc_std, self.spt2 = nn.Linear(N2,1).to(device), nn.Softplus()
         
-        if('checkpoint' in kwargs):
-            self.load_state_dict(torch.load(kwargs['checkpoint'],map_location=device))
+        if(checkpoint is not None):
+            self.load_state_dict(torch.load(checkpoint,map_location=device))
         else:
             self.init_weights()
 
@@ -84,37 +84,48 @@ class encoder(nn.Module):
         return mu_zx, std_zx
 
 class decoder(nn.Module):
-    def __init__(self, adata, Tmax, p=98, device=torch.device('cpu'), tkey=None):
+    def __init__(self, adata, Tmax, p=98, device=torch.device('cpu'), tkey=None, checkpoint=None):
         super(decoder,self).__init__()
         #Dynamical Model Parameters
-        U,S = adata.layers['Mu'], adata.layers['Ms']
-        X = np.concatenate((U,S),1)
-        alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
-        if(tkey is not None):
-            t_init = adata.obs['{tkey}_time'].to_numpy()
+        if(checkpoint is not None):
+            self.alpha = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
+            self.beta = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
+            self.gamma = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
+            self.scaling = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
+            self.ton = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
+            self.toff = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
+            self.sigma_u = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
+            self.sigma_s = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
+            self.load_state_dict(torch.load(checkpoint,map_location=device))
         else:
-            #t_init = np.quantile(T,0.5,1)
-            #t_init = np.clip(t_init, 0, np.quantile(t_init, 0.95))
-            #self.t_init = t_init/t_init.max()*Tmax
-            T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
-            T_eq = np.zeros(T.shape)
-            Nbin = T.shape[0]//50+1
-            for i in range(T.shape[1]):
-                T_eq[:, i] = histEqual(T[:, i], Tmax, 0.9, Nbin)
-            self.t_init = np.quantile(T_eq,0.5,1)
-        toff = getTsGlobal(self.t_init, U/scaling, S, 95)
-        alpha, beta, gamma,ton = reinitParams(U/scaling, S, self.t_init, toff)
-        
-        self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
-        self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
-        self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
-        self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-        self.ton = nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
-        self.toff = nn.Parameter(torch.tensor(np.log(toff+1e-10), device=device).float())
-        self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-        self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-        self.Rscore = Rscore
-        
+            U,S = adata.layers['Mu'], adata.layers['Ms']
+            X = np.concatenate((U,S),1)
+            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
+            if(tkey is not None):
+                t_init = adata.obs['{tkey}_time'].to_numpy()
+            else:
+                #t_init = np.quantile(T,0.5,1)
+                #t_init = np.clip(t_init, 0, np.quantile(t_init, 0.95))
+                #self.t_init = t_init/t_init.max()*Tmax
+                T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
+                T_eq = np.zeros(T.shape)
+                Nbin = T.shape[0]//50+1
+                for i in range(T.shape[1]):
+                    T_eq[:, i] = histEqual(T[:, i], Tmax, 0.9, Nbin)
+                self.t_init = np.quantile(T_eq,0.5,1)
+            toff = getTsGlobal(self.t_init, U/scaling, S, 95)
+            alpha, beta, gamma,ton = reinitParams(U/scaling, S, self.t_init, toff)
+            
+            self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
+            self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
+            self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
+            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
+            self.ton = nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+            self.toff = nn.Parameter(torch.tensor(np.log(toff+1e-10), device=device).float())
+            self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+            self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+            self.Rscore = Rscore
+            
         self.scaling.requires_grad = False
         self.sigma_u.requires_grad = False
         self.sigma_s.requires_grad = False
@@ -136,7 +147,7 @@ class decoder(nn.Module):
         return nn.functional.relu(Uhat*scaling), nn.functional.relu(Shat)
 
 class VanillaVAE():
-    def __init__(self, adata, Tmax, device='cpu', hidden_size=(500, 250), tprior=None):
+    def __init__(self, adata, Tmax, device='cpu', hidden_size=(500, 250), tprior=None, checkpoints=[None,None]):
         """
         adata: AnnData Object
         Tmax: (float/int) Time Range 
@@ -150,10 +161,10 @@ class VanillaVAE():
         
         G = adata.n_vars
         try:
-            self.encoder = encoder(2*G, hidden_size[0], hidden_size[1], self.device)
+            self.encoder = encoder(2*G, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0])
         except IndexError:
             print('Please provide two dimensions!')
-        self.decoder = decoder(adata, Tmax, device=self.device)
+        self.decoder = decoder(adata, Tmax, device=self.device, checkpoint=checkpoints[1])
         self.Tmax=torch.tensor(Tmax).to(self.device)
         
         if(tprior is None):
@@ -168,7 +179,7 @@ class VanillaVAE():
         
         #Training Configuration
         self.config = config = {
-            "num_epochs":500, "learning_rate":1e-4, "learning_rate_ode":1e-4, "lambda":1e-3, "reg_t":1.0, "neg_slope":1e-4,\
+            "num_epochs":500, "learning_rate":1e-4, "learning_rate_ode":1e-4, "lambda":1e-3, "reg_t":1.0, "neg_slope":0.0,\
             "test_epoch":100, "save_epoch":100, "batch_size":128, "K_alt":0,\
             "train_scaling":False, "train_std":False, "weight_sample":False
         }
