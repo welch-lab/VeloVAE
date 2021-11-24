@@ -47,6 +47,10 @@ class OTVAE(VanillaVAE):
         ot[-1] = ot[-2]
         return ot
     
+    def lossTransport(self,x,t,b):
+        
+        return
+    
     def train_epoch(self, X_loader, optimizer, X_pca, optimizer2=None, K=1, reg_t=1.0):
         """
         Training in each epoch
@@ -78,6 +82,7 @@ class OTVAE(VanillaVAE):
                                     None,
                                     reg_t)
             #Sample the time bins
+            """
             Nbin = self.config['nbin']
             dt = (t.squeeze().max()-t.squeeze().min())/Nbin
             tbin = (torch.range(1, Nbin).to(self.device)-0.5)*dt+t.squeeze().min()
@@ -88,6 +93,8 @@ class OTVAE(VanillaVAE):
                                 b.detach().cpu().numpy())
             ot = torch.tensor(ot, device=self.device)
             loss_ot = (b_onehot*ot).sum(1).mean()
+            """
+            
             
             loss = loss_vae + self.config['reg_ot']*loss_ot
             
