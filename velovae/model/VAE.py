@@ -5,14 +5,15 @@ import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 import os
+import sklearn
 from sklearn.metrics import adjusted_rand_score
 import time
 import matplotlib.pyplot as plt
 
 from velovae.plotting import plotSig, plotTLatent, plotTrainLoss, plotTestLoss, plotCluster, plotLatentEmbedding
 
-from .model_util import  convertTime, initParams, getTsGlobal, reinitParams, transitionTime, reinitTypeParams, recoverTransitionTime, predSU, makeDir, getGeneIndex
-from .model_util import odeInitial, odeWeighted, computeMixWeight
+from .model_util import  convertTime, initParams, getTsGlobal, reinitTypeParams, predSU, makeDir, getGeneIndex
+from .model_util import odeWeighted, optimal_transport_duality_gap
 from .TrainingData import SCLabeledData
 from .TransitionGraph import TransGraph, encodeType, str2int, int2str
 
@@ -60,7 +61,6 @@ def VAERisk(u,
             mu_zx, std_zx,
             mu_z, std_z,
             logit_y_tzx, pi_y,
-            logit_ypr, pi_ypr,
             sigma_u, sigma_s, 
             weight=None):
     """
@@ -84,7 +84,6 @@ def VAERisk(u,
     kld_t = KLGaussian(mu_tx, std_tx, mu_t, std_t)
     kld_z = KLGaussian(mu_zx, std_zx, mu_z, std_z)
     kld_y = KLy(logit_y_tzx, pi_y)
-    kld_ypr = KLy(logit_ypr, pi_ypr)
 
     log_gaussian = -((uhat-u)/sigma_u).pow(2)-((shat-s)/sigma_s).pow(2)-torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
     
@@ -92,7 +91,7 @@ def VAERisk(u,
         log_gaussian = log_gaussian*weight.view(-1,1)
     
     err_rec = torch.mean(torch.sum(log_gaussian, 1))
-    return err_rec, kld_t, kld_z, kld_y, kld_ypr
+    return err_rec, kld_t, kld_z, kld_y
 
 
 
@@ -295,7 +294,7 @@ class decoder(nn.Module):
         #Dynamical Model Parameters
         alpha, beta, gamma, scaling, ts, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X, p, fit_scaling=True)
         if(tkey is not None):
-            print(f'[:: Decoder ::] Using pretrained time with key {tkey}')
+            print(f"[:: Decoder ::] Using pretrained time with key '{tkey}'")
             self.t_init = adata.obs[f'{tkey}_time'].to_numpy()
         else:
             t_init = np.quantile(T,0.5,1)
@@ -310,26 +309,27 @@ class decoder(nn.Module):
         alpha, beta, gamma, u0, s0 = reinitTypeParams(U/scaling, S, self.t_init, ts, self.cell_labels, self.cell_types, self.cell_types)
         
         self.device = device
-        self.alpha = (torch.tensor(np.log(alpha), device=device).double())
-        self.beta = (torch.tensor(np.log(beta), device=device).double())
-        self.gamma = (torch.tensor(np.log(gamma), device=device).double())
+        self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).double())
+        self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).double())
+        self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).double())
         
-        self.scaling = (torch.tensor(np.log(scaling), device=device).double())
-        self.t_trans = (torch.tensor(np.log(t_trans+1e-10), device=device).double())
-        self.t_end = (torch.tensor(np.log(t_end+1e-10), device=device).double())
-        self.dts = (torch.tensor(np.log(dts+1e-10), device=device).double())
-        self.u0 = (torch.tensor(np.log(u0), device=device).double())
-        self.s0 = (torch.tensor(np.log(s0), device=device).double())
+        self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
+        self.t_trans = nn.Parameter(torch.tensor(np.log(t_trans+1e-10), device=device).double())
+        self.t_end = nn.Parameter(torch.tensor(np.log(t_end+1e-10), device=device).double())
+        self.dts = nn.Parameter(torch.tensor(np.log(dts+1e-10), device=device).double())
+        self.u0 = nn.Parameter(torch.tensor(np.log(u0), device=device).double())
+        self.s0 = nn.Parameter(torch.tensor(np.log(s0), device=device).double())
         
         self.sigma_u = (torch.tensor(np.log(sigma_u), device=device).double())
         self.sigma_s = (torch.tensor(np.log(sigma_s), device=device).double())
-        self.Rscore = Rscore
         
         self.scaling.requires_grad = False
         self.sigma_u.requires_grad = False
         self.sigma_s.requires_grad = False
+        self.u0.requires_grad=False
+        self.s0.requires_grad=False
         
-        self.eps_t = torch.tensor(Tmax*0.005, device=device).double()
+        self.updateWeight(adata.obsm['X_pca'], self.t_init, self.cell_labels)
     
     def forward(self, t, y_onehot, train_mode=False, neg_slope=1e-4, temp=0.01):
         """
@@ -337,9 +337,9 @@ class decoder(nn.Module):
         y_onehot: [B x Ntype]
         train_mode: determines whether to use leaky_relu 
         """
-        #w = F.softmax(torch.sum(self.w*y_onehot.unsqueeze(-1), 1), 1)
-        logit_w = torch.sum(self.w*y_onehot.unsqueeze(-1), 1)
-        w = F.gumbel_softmax(logit_w, tau=temp, hard=True)
+        w = torch.sum(self.w*y_onehot.unsqueeze(-1), 1)
+        w_onehot = F.one_hot(torch.argmax(w, 1), y_onehot.shape[1])
+        
         Uhat, Shat = odeWeighted(t, y_onehot,
                                  train_mode=False,
                                  neg_slope=neg_slope,
@@ -353,14 +353,56 @@ class decoder(nn.Module):
                                  sigma_u = torch.exp(self.sigma_u),
                                  sigma_s = torch.exp(self.sigma_s),
                                  scaling=torch.exp(self.scaling))
-        return (Uhat*w.unsqueeze(-1)).sum(1), (Shat*w.unsqueeze(-1)).sum(1), logit_w
+        return (Uhat*w_onehot.unsqueeze(-1)).sum(1), (Shat*w_onehot.unsqueeze(-1)).sum(1)
+    
+    def updateWeight(self, X_pca, t, cell_labels, nbin=10, epsilon = 0.05, lambda1 = 1, lambda2 = 50, niter = 1, q = 0.01):
+        cell_types = np.unique(cell_labels)
+        dt = (t.max()-t.min())/nbin
+        P = np.zeros((len(cell_types), len(cell_types)))
+        for i, x in enumerate(cell_types): #child type
+            mask = cell_labels==x
+            t0 = np.quantile(t[mask], q) #estimated transition time
+            mask1 = (t>=t0-dt) & (t<t0) 
+            mask2 = (t>=t0) & (t<t0+dt)
+            
+            if(np.any(mask1) and np.any(mask2)):
+                X1, X2 = X_pca[mask1], X_pca[mask2]
+                C = sklearn.metrics.pairwise.pairwise_distances(X1,X2,metric='sqeuclidean', n_jobs=-1)
+                C = C/np.median(C)
+                G = np.ones((C.shape[0]))
+                Pi = optimal_transport_duality_gap(C, G, lambda1, lambda2, epsilon, 5, 1e-8, 10000,
+                                      1, 1000)
+                
+                #Sum the weights of each cell type
+                cell_labels_1 = cell_labels[mask1]
+                cell_labels_2 = cell_labels[mask2]
+                for j, y in enumerate(cell_types): #parent
+                    if(np.any(cell_labels_1==y) and np.any(cell_labels_2==x)):
+                        P[i,j] = np.sum(Pi[cell_labels_1==y])
+            if(P[i].sum()==0):
+                P[i,i] = 1.0
+            P[i] = P[i]/P[i].sum()
+        self.w = torch.tensor(P, device=self.alpha.device)
+        return
+    
+    def printWeight(self):
+        w = self.w.cpu().numpy()
+        with pd.option_context('display.max_rows', None, 
+                               'display.max_columns', None, 
+                               'display.precision', 3,
+                               'display.chop_threshold',1e-3,
+                               'display.width', None):
+            w_dic = {}
+            for i in range(len(self.cell_types)):
+                w_dic[self.label_dic_rev[i]] = w[:, i]
+            w_df = pd.DataFrame(w_dic, index=pd.Index([self.label_dic_rev[i] for i in range(len(self.cell_types))]))
+            print(w_df)
     
     def predSU(self, t, y_onehot, gidx=None):
         Ntype = y_onehot.shape[1]
         
-        par = torch.argmax(self.w, 1)
-        w = F.one_hot(torch.sum(y_onehot*par, 1).long(), Ntype)
-        #w = F.softmax(torch.sum(self.w*y_onehot.unsqueeze(-1), 1), 1)
+        w = torch.sum(self.w*y_onehot.unsqueeze(-1), 1)
+        w_onehot = F.one_hot(torch.argmax(w, 1), y_onehot.shape[1])
         if(gidx is None):
             Uhat, Shat, = odeWeighted(t, y_onehot,
                                       train_mode=False,
@@ -387,7 +429,7 @@ class decoder(nn.Module):
                                      sigma_u = torch.exp(self.sigma_u[gidx]),
                                      sigma_s = torch.exp(self.sigma_s[gidx]),
                                      scaling=torch.exp(self.scaling[gidx]))
-        return (Uhat*w.unsqueeze(-1)).sum(1), (Shat*w.unsqueeze(-1)).sum(1)
+        return (Uhat*w_onehot.unsqueeze(-1)).sum(1), (Shat*w_onehot.unsqueeze(-1)).sum(1)
     
     def getTimeDistribution(self):
         from scipy.stats import norm
@@ -491,41 +533,14 @@ class VAE():
         eps = torch.normal(mean=0.0, std=1.0, size=(B,1)).double().to(self.device)
         return std*eps+mu
     
-    def updateWeight(self, data_in, cell_labels):
-        if(not isinstance(cell_labels, torch.Tensor)):
-            cell_labels = torch.tensor(cell_labels).long().to(self.device)
-        
-        scaling = torch.exp(self.decoder.scaling)
-        data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/scaling, data_in[:,data_in.shape[1]//2:]),1).double()
-        mu_tx, std_tx = self.encoder.encoder_t.forward(data_in_scale)
-        
-        logit_w, tscore, xscore = computeMixWeight(mu_tx.squeeze(), std_tx.squeeze(),
-                                   cell_labels,
-                                   torch.exp(self.decoder.alpha),
-                                   torch.exp(self.decoder.beta),
-                                   torch.exp(self.decoder.gamma),
-                                   torch.exp(self.decoder.t_trans),
-                                   torch.exp(self.decoder.t_end),
-                                   torch.exp(self.decoder.dts)+torch.exp(self.decoder.t_trans.view(-1,1)),
-                                   torch.exp(self.decoder.u0),
-                                   torch.exp(self.decoder.s0),
-                                   torch.exp(self.decoder.sigma_u),
-                                   torch.exp(self.decoder.sigma_s),
-                                   self.decoder.eps_t,
-                                   20)
-        self.decoder.w = logit_w.detach()
-        self.decoder.tscore = tscore.detach().cpu().numpy()
-        self.decoder.xscore = xscore.detach().cpu().numpy()
-        return logit_w
-    
     def forward(self, data_in, train_mode, temp=1.0):
         scaling = torch.exp(self.decoder.scaling)
         
         mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y_onehot = self.encoder.forward(data_in, scaling, torch.exp(self.decoder.t_trans.detach()), temp=temp)
         
-        uhat, shat, logit_w = self.decoder.forward(t, y_onehot.float(), train_mode, neg_slope=self.config['neg_slope'], temp=temp)
+        uhat, shat = self.decoder.forward(t, y_onehot.float(), train_mode, neg_slope=self.config['neg_slope'], temp=temp)
         
-        return mu_tx, std_tx, mu_zx, std_zx, logit_y, logit_w, t, y_onehot, uhat, shat
+        return mu_tx, std_tx, mu_zx, std_zx, logit_y, t, y_onehot, uhat, shat
     
     def evalModel(self, data_in, gidx=None):
         """
@@ -554,47 +569,19 @@ class VAE():
         else:
             print("Warning: mode not recognized. Must be 'train' or 'test'! ")
     
-    def printWeight(self, tscore=None, xscore=None):
-        w = F.softmax(self.decoder.w.detach()).cpu().numpy()
-        with pd.option_context('display.max_rows', None, 
-                               'display.max_columns', None, 
-                               'display.precision', 3,
-                               'display.chop_threshold',1e-3,
-                               'display.width', None):
-            w_dic = {}
-            for i in range(self.Ntype):
-                w_dic[self.decoder.label_dic_rev[i]] = w[:, i]
-            w_df = pd.DataFrame(w_dic, index=pd.Index([self.decoder.label_dic_rev[i] for i in range(self.Ntype)]))
-            print(w_df)
-            print("-------------------------------------------------")
+    def updateWeight(self, data, X_embed):
+        N, G = data.shape[0], data.shape[1]//2
+        t = torch.empty(N)
         
-            w_dic = {}
-            for i in range(self.Ntype):
-                w_dic[self.decoder.label_dic_rev[i]] = self.decoder.w[:, i].detach().cpu().numpy()
-            w_df = pd.DataFrame(w_dic, index=pd.Index([self.decoder.label_dic_rev[i] for i in range(self.Ntype)]))
-            print("Logit: ")
-            print(w_df)
-            print("-------------------------------------------------")
+        with torch.no_grad():
+            B = self.config["batch_size"]
+            Nb = N // B
+            scaling = torch.exp(self.decoder.scaling)
+            mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y_onehot = self.encoder.forward(data, scaling, torch.exp(self.decoder.t_trans.detach()), temp=1e-4)
+                
+        t = mu_tx.detach().cpu().numpy().squeeze()
+        self.decoder.updateWeight(X_embed, t, self.decoder.cell_labels)
         
-            if(tscore is not None):
-                w_dic = {}
-                for i in range(self.Ntype):
-                    w_dic[self.decoder.label_dic_rev[i]] = tscore[:, i]
-                w_df = pd.DataFrame(w_dic, index=pd.Index([self.decoder.label_dic_rev[i] for i in range(self.Ntype)]))
-                print("Time Score: ")
-                print(w_df)
-                print("-------------------------------------------------")
-        
-            if(xscore is not None):
-                w_dic = {}
-                for i in range(self.Ntype):
-                    w_dic[self.decoder.label_dic_rev[i]] = xscore[:, i]
-                w_df = pd.DataFrame(w_dic, index=pd.Index([self.decoder.label_dic_rev[i] for i in range(self.Ntype)]))
-                print("MSE Penalty: ")
-                print(w_df)
-                print("-------------------------------------------------")
-    
-    
     def train_epoch(self, 
                     X_loader, 
                     optimizer, 
@@ -623,7 +610,7 @@ class VAE():
                 optimizer2.zero_grad()
             batch = iterX.next()
             xbatch, label_batch, weight = batch[0].to(self.device), batch[1].to(self.device), batch[2].to(self.device)
-            mu_tx, std_tx, mu_zx, std_zx, logit_y, logit_w, t, y_onehot, uhat, shat = self.forward(xbatch, True, temp=tau)
+            mu_tx, std_tx, mu_zx, std_zx, logit_y, t, y_onehot, uhat, shat = self.forward(xbatch, True, temp=tau)
             u, s = xbatch[:,:xbatch.shape[1]//2],xbatch[:,xbatch.shape[1]//2:]
             
             if(yprior):
@@ -631,9 +618,6 @@ class VAE():
             else:
                 prior_y = self.prior_y_default
             
-            w_batch = (F.softmax(self.w)*y_onehot.unsqueeze(-1)).sum(1)
-            prior_w = self.prior_w_default if self.prior_w is None else self.prior_w
-            prior_w_batch = (prior_w*y_onehot.unsqueeze(-1)).sum(1)
             err_rec, kld_t, kld_z, kld_y = VAERisk(u, s,
                                                    uhat, shat,
                                                    mu_tx, std_tx,
@@ -641,28 +625,17 @@ class VAE():
                                                    mu_zx, std_zx,
                                                    self.mu_z, self.std_z,
                                                    logit_y, prior_y,
-                                                   w_batch, prior_w_batch,
                                                    torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
                                                    weight=None)
             loss = - err_rec + reg_t * kld_t + reg_z * kld_z + reg_y * kld_y
             loss_list.append(loss.detach().cpu().item())
             loss.backward()
             optimizer.step()
-        
             
-        #Update the mixture weight
         if( optimizer2 is not None and ((i+1) % K == 0 or i==B-1)):
             optimizer2.step()
         
         return loss_list, counter+B, tau
-    
-    def debugW(self, adata):
-        #Get data loader
-        U,S = adata.layers['Mu'], adata.layers['Ms']
-        X = np.concatenate((U,S), 1)
-        with torch.no_grad():
-            self.updateWeight(torch.tensor(X).to(self.device), self.decoder.cell_labels)
-            self.printWeight(self.decoder.tscore, self.decoder.xscore)
     
     def train(self, 
               adata, 
@@ -697,11 +670,6 @@ class VAE():
         
         gind, gene_plot = getGeneIndex(adata.var_names, gene_plot)
         
-        
-        print('Before Training')
-        with torch.no_grad():
-            self.updateWeight(torch.tensor(X).to(self.device), self.decoder.cell_labels)
-            self.printWeight(self.decoder.tscore, self.decoder.xscore)
         
         if(plot):
             makeDir(figure_path)
@@ -750,7 +718,7 @@ class VAE():
         #optimizer_t = torch.optim.Adam(param_nn_t, lr=self.config["learning_rate"]*0.05, weight_decay=self.config["lambda"])
         optimizer_ode = torch.optim.Adam(param_ode, lr=self.config["learning_rate_ode"])
         print('***           Finished.         ***')
-    
+        
         #Optionally load model parameters
         anneal=True
         tau=1.0
@@ -777,7 +745,7 @@ class VAE():
                                                            self.config["reg_t"], 
                                                            self.config["reg_z"], 
                                                            self.config["reg_y"],
-                                                           self.config["informative_y"])
+                                                           self.config["info_y"])
                 loss_train = loss_train+loss_list
                 loss_list, _, tau = self.train_epoch(data_loader, 
                                                      optimizer_ode, 
@@ -789,7 +757,7 @@ class VAE():
                                                      self.config["reg_t"], 
                                                      self.config["reg_z"], 
                                                      self.config["reg_y"],
-                                                     self.config["informative_y"])
+                                                     self.config["info_y"])
                 
                 
                 loss_train = loss_train+loss_list
@@ -803,7 +771,7 @@ class VAE():
                                                            self.config["reg_t"], 
                                                            self.config["reg_z"], 
                                                            self.config["reg_y"],
-                                                           self.config["informative_y"])
+                                                           self.config["info_y"])
                 loss_train = loss_train+loss_list
             
             if(epoch==0 or (epoch+1) % self.config["test_epoch"] == 0):
@@ -825,8 +793,9 @@ class VAE():
                 err_test.append(err)
                 randidx_test.append(rand_idx)
             
-            if( (epoch+1)%10 == 0):
-                self.printWeight()
+            #if( (epoch+1)>=100):
+            self.updateWeight(torch.tensor(X).to(self.device), adata.obsm['X_pca'])
+            self.decoder.printWeight()
         
         print("***     Finished Training     ***")
         plotTrainLoss(loss_train,[i for i in range(len(loss_train))],True,figure_path,"vae")
