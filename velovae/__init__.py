@@ -1,6 +1,7 @@
 from velovae.model import *
 from velovae.analysis.evaluation import *
 from .plotting import (plotSig, 
+                       plotSig_,
                        plotPhase, 
                        plotCluster,
                        plotTLatent, 
