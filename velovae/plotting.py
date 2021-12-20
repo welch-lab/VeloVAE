@@ -12,9 +12,9 @@ from sklearn.neighbors import NearestNeighbors
 #Default colors and markers for plotting
 #######################################################################################
 colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown', 'lime', 'grey', \
-   'olive', 'cyan', 'maroon', 'pink', 'gold', 'steelblue', 'salmon', 'teal', \
+   'olive', 'cyan', 'pink', 'gold', 'steelblue', 'salmon', 'teal', \
    'magenta', 'rosybrown', 'darkorange', 'yellow', 'greenyellow', 'darkseagreen', 'yellowgreen', 'palegreen', \
-   'hotpink', 'navajowhite', 'aqua', 'navy', 'saddlebrown', 'black']
+   'hotpink', 'navajowhite', 'aqua', 'navy', 'saddlebrown', 'black', 'maroon']
 
 colors_state=['r','b','k']
 
@@ -164,12 +164,12 @@ def plotSig(t,
             for i, type_ in enumerate(cell_types):
                 mask_mytype = labels_demo==type_
                 order = np.argsort(tdemo[mask_mytype])
-                ax[1,0].plot(tdemo[mask_mytype][order], upred[mask_mytype][order], '-', color=colors[i], label=type_+" ode", linewidth=1.5)
-                ax[1,1].plot(tdemo[mask_mytype][order], spred[mask_mytype][order], '-', color=colors[i], label=type_+" ode", linewidth=1.5)
+                ax[1,0].plot(tdemo[mask_mytype][order], upred[mask_mytype][order], '.', color=colors[i], label=type_+" ode", linewidth=1.5)
+                ax[1,1].plot(tdemo[mask_mytype][order], spred[mask_mytype][order], '.', color=colors[i], label=type_+" ode", linewidth=1.5)
         else:
             order = np.argsort(tdemo)
-            ax[1,0].plot(tdemo[order], upred[order], 'k-', linewidth=1.5)
-            ax[1,1].plot(tdemo[order], spred[order], 'k-', linewidth=1.5)
+            ax[1,0].plot(tdemo[order], upred[order], 'k.', linewidth=1.5)
+            ax[1,1].plot(tdemo[order], spred[order], 'k.', linewidth=1.5)
 
         if('ts' in kwargs and 't_trans' in kwargs):
             ts = kwargs['ts']
@@ -572,7 +572,7 @@ def plotSigGrid(Nr,
     Labels: Dictionary with array of labels as values
     """
     methods = list(Uhat.keys())
-    M = min(1, len(methods))
+    M = max(1, len(methods))
     
     
     #Detect whether multiple figures are needed
@@ -583,6 +583,7 @@ def plotSigGrid(Nr,
     #Plotting
     for l in range(Nfig):
         fig_sig, ax_sig = plt.subplots(2*Nr,M*Nc,figsize=(W*M*Nc+1.0, 2*H*Nr))
+        print(ax_sig.shape)
         if(M*Nc==1):
             for i in range(min(Nr,len(gene_list)-l*Nr)):
                 idx = l*Nr+i
@@ -615,11 +616,11 @@ def plotSigGrid(Nr,
                             t = T[method]
                             that = That[method]
                         
-                        plotSigAxis(ax_sig[2*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, D, True, f"{gene_list[idx]} ({method})")
-                        plotSigAxis(ax_sig[2*i+1, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', alpha, D)
+                        plotSigAxis(ax_sig[2*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, sparsify, True, f"{gene_list[idx]} ({method})")
+                        plotSigAxis(ax_sig[2*i+1, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', alpha, sparsify)
                         try:
-                            plotSigAxis(ax_sig[2*i, M*j+k], that, Uhat[methods[0]][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1, True, f"{gene_list[idx]} ({method})")
-                            plotSigAxis(ax_sig[2*i+1, M*j+k], that, Shat[methods[0]][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
+                            plotSigAxis(ax_sig[2*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1, True, f"{gene_list[idx]} ({method})")
+                            plotSigAxis(ax_sig[2*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
@@ -631,6 +632,7 @@ def plotSigGrid(Nr,
         if(savefig):
             try:
                 fig_sig.savefig(f'{path}/sig_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), bbox_inches='tight')
+                print(f'Saved to {path}/sig_{figname}_{l+1}.png')
             except FileNotFoundError:
                 print("Saving failed. File path doesn't exist!")
         plt.close(fig_sig)
@@ -703,6 +705,7 @@ def plotClusterGrid(X_umap,
     if(savefig):
         try:
             fig.savefig(f'{path}/{figname}.png')
+            print(f'Saved to {path}/{figname}.png')
         except FileNotFoundError:
             print("Saving failed. File path doesn't exist!")
     plt.close(fig)
@@ -746,12 +749,13 @@ def plotTimeGrid(T,
         sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
         cbar1 = fig_time.colorbar(sm1,ax=ax_var)
         cbar1.ax.get_yaxis().labelpad = 15
-        cbar1.ax.set_ylabel('VAE Time Variance',rotation=270,fontsize=12)
+        cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
         ax_var.axis('off')
     
     if(savefig):
         try:
             fig_time.savefig(f'{path}/{figname}.png')
+            print(f'Saved to {path}/{figname}.png')
         except FileNotFoundError:
             print("Saving failed. File path doesn't exist!")
     plt.close(fig_time)
@@ -759,21 +763,21 @@ def plotTimeGrid(T,
 
 
 
-def plotVelocity(X_umap, vx, vy, path='figures', figname='genes'):
+def plotVelocity(X_umap, vx, vy, scale=1.0, path='figures', figname='genes'):
     umap1, umap2 = X_umap[:,0], X_umap[:,1]
     fig, ax = plt.subplots(figsize=(12,8))
     v = np.sqrt(vx**2+vy**2)
     vmax, vmin = np.quantile(v,0.95), np.quantile(v,0.05)
     v = np.clip(v, vmin, vmax)
     ax.plot(umap1, umap2, '.', alpha=0.5)
-    ax.quiver(umap1, umap2, vx, vy, v, angles='xy')
+    ax.quiver(umap1, umap2, vx, vy, v, angles='xy', scale=scale)
     try:
         fig.savefig(f"{path}/vel_{figname}.png")
     except FileNotFoundError:
         print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def plotVelocityStream(X_umap, vx, vy, cell_labels, path='figures', figname='genes'):
+def plotVelocityStream(X_umap, vx, vy, cell_labels, figsize=(7,5), path='figures', figname='genes'):
     #Compute velocity on a grid
     N = 50
     umap1, umap2 = X_umap[:,0], X_umap[:,1]
@@ -795,7 +799,7 @@ def plotVelocityStream(X_umap, vx, vy, cell_labels, path='figures', figname='gen
     vx_grid[dist_med > dist_thred] = 0
     vy_grid[dist_med > dist_thred] = 0
     
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=figsize)
     #Plot cells by label
     for i, type_ in enumerate(np.unique(cell_labels)):
         mask = cell_labels==type_
