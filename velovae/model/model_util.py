@@ -41,7 +41,7 @@ def scvPred(adata, key, glist=None):
 			print('Gene '+glist[i]+' not found!')
 			continue
 			
-		alpha, beta, gamma, scaling = item[f'{key}_alpha'], item['{key}_beta'], item['{key}_gamma'], item['{key}_scaling']
+		alpha, beta, gamma, scaling = item[f'{key}_alpha'], item[f'{key}_beta'], item[f'{key}_gamma'], item[f'{key}_scaling']
 		ts = item[f'{key}_t_']
 		scaling = item[f'{key}_scaling']
 		t = adata.layers[f'{key}_t'][:,idx]
@@ -398,9 +398,9 @@ def odeNumpy(t,alpha,beta,gamma,to,ts,scaling=None):
     uhat, shat = (uhat_on*o + uhat_off*(1-o)),(shat_on*o + shat_off*(1-o))
     if(scaling is not None):
         uhat *= scaling
-    return uhat, shat
+    return uhat, shat 
 
-def ode(t,alpha,beta,gamma,to,ts,train_mode=False,neg_slope=0):
+def ode(t,alpha,beta,gamma,to,ts,neg_slope=0):
     """
     (PyTorch Version)
     ODE Solution
@@ -414,7 +414,7 @@ def ode(t,alpha,beta,gamma,to,ts,train_mode=False,neg_slope=0):
     o = (t<=ts).int()
     
     #Induction
-    tau_on = nn.functional.leaky_relu(t-to, negative_slope=neg_slope) if train_mode else nn.functional.relu(t-to) 
+    tau_on = nn.functional.leaky_relu(t-to, negative_slope=neg_slope)
     expb, expg = torch.exp(-beta*tau_on), torch.exp(-gamma*tau_on)
     uhat_on = alpha/(beta+eps)*(torch.tensor([1.0]).to(alpha.device)-expb)
     shat_on = alpha/(gamma+eps)*(torch.tensor([1.0]).to(alpha.device)-expg)+ (alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability) + alpha*tau_on*expg * unstability)
@@ -423,10 +423,10 @@ def ode(t,alpha,beta,gamma,to,ts,train_mode=False,neg_slope=0):
     assert not torch.any(torch.isnan(shat_on))
     
     #Repression
-    u0_,s0_ = predSteady(nn.functional.leaky_relu(ts-to, neg_slope),alpha,beta,gamma) if train_mode else predSteady(nn.functional.relu(ts-to),alpha,beta,gamma)  
+    u0_,s0_ = predSteady(nn.functional.leaky_relu(ts-to, neg_slope),alpha,beta,gamma)
     assert not torch.any(torch.isnan(u0_))
     assert not torch.any(torch.isnan(s0_))
-    tau_off = nn.functional.leaky_relu(t-ts, negative_slope=neg_slope) if train_mode else nn.functional.relu(t-ts) 
+    tau_off = nn.functional.leaky_relu(t-ts, negative_slope=neg_slope)
     expb, expg = torch.exp(-beta*tau_off), torch.exp(-gamma*tau_off)
     uhat_off = u0_*expb
     shat_off = s0_*expg+(-beta*u0_)/(gamma-beta+eps)*(expg-expb) * (1-unstability)
@@ -434,61 +434,15 @@ def ode(t,alpha,beta,gamma,to,ts,train_mode=False,neg_slope=0):
     assert not torch.any(torch.isnan(uhat_off))
     assert not torch.any(torch.isnan(shat_off))
     return (uhat_on*o + uhat_off*(1-o)),(shat_on*o + shat_off*(1-o)) 
-    
 
+
+
+
+    
 
 ############################################################
 #Branching VAE
 ############################################################
-"""
-Reinitialization using the estimated global cell time
-"""
-def transitionTimeRec(t_trans, ts, t_type, prev_type, graph, G, dt_min=0.01):
-    """
-    Applied to the branching ODE
-    Recursive helper function for transition time initialization
-    """
-    if(len(graph[prev_type])==0):
-        return
-    for cur_type in graph[prev_type]:
-        t_trans[cur_type] = np.quantile(t_type[cur_type],0.01)
-        ts[cur_type] = np.clip(np.quantile(t_type[cur_type],0.02) - t_trans[cur_type], a_min=dt_min, a_max=None)
-        transitionTimeRec(t_trans, ts, t_type, cur_type, graph, G)
-        t_trans[cur_type] = np.clip(t_trans[cur_type]-t_trans[prev_type], a_min=dt_min, a_max=None)
-    return
-
-def transitionTime(t, cell_labels, cell_types, graph, init_type, G, dt_min=1e-4):
-    """
-    Applied to the branching ODE
-    Initialize transition (between consecutive cell types) and switching(within the same cell type) time.
-    """
-    t_type = {}
-    for i, type_ in enumerate(cell_types):
-        t_type[type_] = t[cell_labels==type_]
-    ts = np.zeros((len(cell_types),G))
-    t_trans = np.zeros((len(cell_types)))
-    for x in init_type:
-        t_trans[x] = t_type[x].min()
-        ts[x] = np.clip(np.quantile(t_type[x],0.01) - t_trans[x], a_min=dt_min, a_max=None)
-        transitionTimeRec(t_trans, ts, t_type, x, graph, G, dt_min=dt_min)
-    return t_trans, ts
-
-
-
-def linregMtx(u,s):
-    """
-    Performs linear regression ||U-kS||_2 while 
-    U and S are matrices and k is a vector.
-    Handles divide by zero by returninig some default value.
-    """
-    Q = np.sum(s*s, axis=0)
-    R = np.sum(u*s, axis=0)
-    k = R/Q
-    if np.isinf(k) or np.isnan(k):
-        k = 1.5
-    #k[np.isinf(k) | np.isnan(k)] = 1.5
-    return k
-
 def reinitTypeParams(U, S, t, ts, cell_labels, cell_types, init_types):
     """
     Applied under branching ODE
@@ -547,165 +501,6 @@ def reinitTypeParams(U, S, t, ts, cell_labels, cell_types, init_types):
      
     return alpha,beta,gamma,u0,s0
 
-def recoverTransitionTimeRec(t_trans, ts, prev_type, graph):
-    """
-    Recursive helper function of recovering transition time.
-    """
-    if(len(graph[prev_type])==0):
-        return
-    for cur_type in graph[prev_type]:
-        t_trans[cur_type] += t_trans[prev_type]
-        ts[cur_type] += t_trans[cur_type]
-        recoverTransitionTimeRec(t_trans, ts, cur_type, graph)
-    return
-
-def recoverTransitionTime(t_trans, ts, graph, init_type):
-    """
-    Recovers the transition and switching time from the relative time.
-    
-    t_trans: [N type] transition time of each cell type
-    ts: [N type x G] switch-time of each gene in each cell type
-    graph: (dictionary) transition graph
-    init_type: (list) initial cell types
-    """
-    t_trans_orig = deepcopy(t_trans) if isinstance(t_trans,np.ndarray) else t_trans.clone()
-    ts_orig = deepcopy(ts) if isinstance(ts, np.ndarray) else ts.clone()
-    for x in init_type:
-        ts_orig[x] += t_trans_orig[x]
-        recoverTransitionTimeRec(t_trans_orig, ts_orig, x, graph)
-    return t_trans_orig, ts_orig
-
-def odeInitialRec(U0, S0, t_trans, ts, prev_type, graph, init_type, use_numpy=False, **kwargs):
-    """
-    Recursive Helper Function to Compute the Initial Conditions
-    1. U0, S0: stores the output, passed by reference
-    2. t_trans: [N type] Transition time (starting time)
-    3. ts: [N_type x 2 x G] Switching time (Notice that there are 2 phases and the time is gene-specific)
-    4. prev_type: previous cell type (parent)
-    5. graph: dictionary representation of the transition graph
-    6. init_type: starting cell types
-    """
-    alpha,beta,gamma = kwargs['alpha'][prev_type], kwargs['beta'][prev_type], kwargs['gamma'][prev_type]
-    u0, s0 = U0[prev_type], S0[prev_type]
-
-    for cur_type in graph[prev_type]:
-        if(use_numpy):
-            u0_cur, s0_cur = predSUNumpy(np.clip(t_trans[cur_type]-ts[prev_type],0,None), u0, s0, alpha, beta, gamma)
-        else:
-            u0_cur, s0_cur = predSU(nn.functional.relu(t_trans[cur_type]-ts[prev_type]), u0, s0, alpha, beta, gamma)
-        U0[cur_type] = u0_cur
-        S0[cur_type] = s0_cur
-
-        odeInitialRec(U0, 
-                      S0, 
-                      t_trans, 
-                      ts, 
-                      cur_type, 
-                      graph, 
-                      init_type,
-                      use_numpy=use_numpy,
-                      **kwargs)
-                      
-    return
-
-def odeInitial(t_trans, 
-               ts, 
-               graph, 
-               init_type, 
-               alpha, 
-               beta, 
-               gamma,
-               u0,
-               s0,
-               use_numpy=False):
-    """
-    Traverse the transition graph to compute the initial conditions of all cell types.
-    """
-    U0, S0 = {}, {}
-    for i,x in enumerate(init_type):
-        U0[x] = u0[i]
-        S0[x] = s0[i]
-        odeInitialRec(U0,
-                      S0,
-                      t_trans,
-                      ts,
-                      x,
-                      graph,
-                      init_type,
-                      alpha=alpha,
-                      beta=beta,
-                      gamma=gamma,
-                      use_numpy=use_numpy)
-    return U0, S0
-
-def odeBranch(t, graph, init_type, use_numpy=False, train_mode=False, neg_slope=1e-4, **kwargs):
-    """
-    Top-level function to compute branching ODE solution
-    
-    t: [B x 1] cell time
-    graph: transition graph
-    init_type: initial cell types
-    use_numpy: (bool) whether to use the numpy version
-    train_mode: (bool) affects whether to use the leaky ReLU to train the transition and switch-on time.
-    """
-    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
-    t_trans, ts = kwargs['t_trans'], kwargs['ts']
-    u0,s0 = kwargs['u0'], kwargs['s0']
-    if(use_numpy):
-        U0, S0 = np.zeros((alpha.shape[0], alpha.shape[-1])), np.zeros((alpha.shape[0], alpha.shape[-1]))
-    else:
-        U0, S0 = torch.empty(alpha.shape[0], alpha.shape[-1]).to(t.device), torch.empty(alpha.shape[0], alpha.shape[-1]).to(t.device)
-    #Compute initial states of all cell types and genes
-    U0_dic, S0_dic = odeInitial(t_trans,
-                       ts,
-                       graph,
-                       init_type,
-                       alpha,
-                       beta,
-                       gamma,
-                       u0,
-                       s0,
-                       use_numpy=use_numpy)
-    for i in U0_dic:
-        U0[i] = U0_dic[i]
-        S0[i] = S0_dic[i]
-    
-    #Recover the transition time
-    t_trans_orig, ts_orig = recoverTransitionTime(t_trans, ts, graph, init_type) 
-
-    #Compute ode solution
-    if(use_numpy):
-        tau = np.clip(t.reshape(-1,1,1)-ts_orig,0,None)
-        uhat, shat = predSUNumpy(tau, U0, S0, alpha, beta, gamma)
-    else:
-        tau = nn.functional.leaky_relu(t.unsqueeze(-1)-ts_orig, negative_slope=neg_slope) if train_mode else nn.functional.relu(t.unsqueeze(-1)-ts_orig)
-        uhat, shat = predSU(tau, U0, S0, alpha, beta, gamma)
-    
-    return uhat, shat
-
-
-def odeBranchNumpy(t, graph, init_type, **kwargs):
-    """
-    (Numpy Version)
-    Top-level function to compute branching ODE solution. Wraps around odeBranch
-    """
-    Ntype = len(graph.keys())
-    cell_labels = kwargs['cell_labels']
-    scaling = kwargs['scaling']
-    py = np.zeros((t.shape[0], Ntype, 1))
-    for i in range(Ntype):
-        py[cell_labels==i,i,:] = 1
-    uhat, shat = odeBranch(t, graph, init_type, True, **kwargs)
-    return np.sum(py*(uhat*scaling), 1), np.sum(py*shat, 1)
-
-
-    
-
-############################################################
-#Proposed new method that considers all possible cell type
-# transitions. The initial condition is a weighted sum
-# of ODEs, where the weight represents transition probability.
-############################################################
 def initAllPairs(alpha,
                  beta,
                  gamma,
@@ -808,7 +603,26 @@ def odeWeighted(t, y_onehot, train_mode=False, neg_slope=0, **kwargs):
     
     return ((Uhat*y_onehot.view(N,Ntype,1,1)).sum(1))*scaling, (Shat*y_onehot.view(N,Ntype,1,1)).sum(1)
 
-def odeWeightedNumpy(t, y_onehot, w_onehot, **kwargs):
+def initAllPairsNumpy(alpha,
+                      beta,
+                      gamma,
+                      t_trans,
+                      ts,
+                      u0,
+                      s0):
+    """
+    Notice: t_trans and ts are all the absolute values, not relative values
+    """
+    Ntype = alpha.shape[0]
+    G = alpha.shape[1]
+    
+    #Compute different initial conditions
+    tau0 = np.clip(t_trans.reshape(-1,1,1) - ts, 0, None)
+    U0_hat, S0_hat = predSUNumpy(tau0, u0, s0, alpha, beta, gamma) #initial condition of the current type considering all possible parent types
+    
+    return np.clip(U0_hat, 0, None), np.clip(S0_hat, 0, None)
+
+def odeWeightedNumpy(t, y_onehot, w_onehot, get_init=False, **kwargs):
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
     t_trans, ts = kwargs['t_trans'], kwargs['ts']
     u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
@@ -817,9 +631,13 @@ def odeWeightedNumpy(t, y_onehot, w_onehot, **kwargs):
     Ntype, G = alpha.shape
     N = y_onehot.shape[0]
     
-    #Compute different initial conditions
-    tau0 = np.clip(t_trans.reshape(-1,1,1) - ts, 0, None)
-    U0_hat, S0_hat = predSUNumpy(tau0, u0, s0, alpha, beta, gamma) #initial condition of the current type considering all possible parent types
+    U0_hat, S0_hat = initAllPairsNumpy(alpha,
+                                       beta,
+                                       gamma,
+                                       t_trans,
+                                       ts,
+                                       u0,
+                                       s0) #(type, parent type, gene)
     
     tau = np.clip( t.reshape(t.shape[0],1,1,1) - ts.reshape(Ntype,1,G), 0, None) #(cell, type, gene)
     Uhat, Shat = predSUNumpy(tau,
@@ -829,8 +647,9 @@ def odeWeightedNumpy(t, y_onehot, w_onehot, **kwargs):
                              beta.reshape(Ntype, 1, G),
                              gamma.reshape(Ntype, 1, G))
     Uhat, Shat = np.sum(Uhat*y_onehot.reshape(N, Ntype, 1, 1), 1), np.sum(Shat*y_onehot.reshape(N, Ntype, 1, 1), 1)
-    Uhat, Shat = np.sum(Uhat*w_onehot.reshape(N, Ntype, 1), 1), np.sum(Shat*w_onehot.reshape(N, Ntype, 1), 1)
-    
+    Uhat, Shat = np.sum(Uhat*w_onehot.reshape(N, Ntype, 1), 1)*scaling, np.sum(Shat*w_onehot.reshape(N, Ntype, 1), 1)
+    if(get_init):
+        return Uhat, Shat, U0_hat, S0_hat
     return Uhat, Shat
 
 
@@ -958,7 +777,7 @@ def optimal_transport_duality_gap(C, G, lambda1, lambda2, epsilon, batch_size, t
                     a, b = np.ones(I), np.ones(J)
 
                 if current_iter >= max_iter:
-                    logger.warning("Reached max_iter with duality gap still above threshold. Returning")
+                    print("Reached max_iter with duality gap still above threshold. Returning")
                     return (K.T * a).T * b
 
             # The real dual variables. a and b are only the stabilized variables
@@ -980,6 +799,107 @@ def optimal_transport_duality_gap(C, G, lambda1, lambda2, epsilon, batch_size, t
         raise RuntimeError("Overflow encountered in duality gap computation, please report this incident")
     return R / C.shape[1]
 
+"""
+Pytorch Version
+"""
+def fdiv_ts(l, x, p, dx):
+    return l * torch.sum(dx * (x * (torch.log(x / p)) - x + p))
+
+
+def fdivstar_ts(l, u, p, dx):
+    return l * torch.sum((p * dx) * (torch.exp(u / l) - 1))
+
+
+def primal_ts(C, K, R, dx, dy, p, q, a, b, epsilon, lambda1, lambda2):
+    I = len(p)
+    J = len(q)
+    F1 = lambda x, y: fdiv_ts(lambda1, x, p, y)
+    F2 = lambda x, y: fdiv_ts(lambda2, x, q, y)
+    with np.errstate(divide='ignore'):
+        return F1(torch.sum(R*dy, 1), dx) + F2(torch.sum(R.T*dx, 1), dy) \
+               + (epsilon * torch.sum(R * torch.nan_to_num(torch.log(R)) - R + K) \
+                  + torch.sum(R * C)) / (I * J)
+
+
+def dual_ts(C, K, R, dx, dy, p, q, a, b, epsilon, lambda1, lambda2):
+    I = len(p)
+    J = len(q)
+    F1c = lambda u, v: fdivstar_ts(lambda1, u, p, v)
+    F2c = lambda u, v: fdivstar_ts(lambda2, u, q, v)
+    return - F1c(- epsilon * torch.log(a), dx) - F2c(- epsilon * torch.log(b), dy) \
+           - epsilon * torch.sum(R - K) / (I * J)
+
+
+# end @ Lénaïc Chizat
+
+def optimal_transport_duality_gap_ts(C, G, lambda1, lambda2, epsilon, batch_size, tolerance, tau,
+                                  epsilon0, max_iter, **ignored):
+    #C = C.double()
+    epsilon_scalings = 5
+    scale_factor = np.exp(- np.log(epsilon) / epsilon_scalings)
+
+    I, J = C.shape
+    dx, dy = torch.ones(I, device=C.device, dtype=C.dtype) / I, torch.ones(J, device=C.device, dtype=C.dtype) / J
+
+    p = G
+    q = torch.ones(C.shape[1], device=C.device, dtype=C.dtype) * (G.mean())
+
+    u, v = torch.zeros(I, device=C.device, dtype=C.dtype), torch.zeros(J, device=C.device, dtype=C.dtype)
+    a, b = torch.ones(I, device=C.device, dtype=C.dtype), torch.ones(J, device=C.device, dtype=C.dtype)
+
+    epsilon_i = epsilon0 * scale_factor
+    current_iter = 0
+
+    for e in range(epsilon_scalings + 1):
+        duality_gap = np.inf
+        u = u + epsilon_i * torch.log(a)
+        v = v + epsilon_i * torch.log(b)  # absorb
+        epsilon_i = epsilon_i / scale_factor
+        _K = torch.exp(-C / epsilon_i)
+        alpha1 = lambda1 / (lambda1 + epsilon_i)
+        alpha2 = lambda2 / (lambda2 + epsilon_i)
+        K = torch.exp((u.view(-1,1) - C + v.view(1,-1)) / epsilon_i)
+        a, b = torch.ones(I, device=C.device, dtype=C.dtype), torch.ones(J, device=C.device, dtype=C.dtype)
+        old_a, old_b = a, b
+        threshold = tolerance if e == epsilon_scalings else 1e-6
+
+        while duality_gap > threshold:
+            for i in range(batch_size if e == epsilon_scalings else 5):
+                current_iter += 1
+                old_a, old_b = a, b
+                a = (p / ( torch.sum(K * (b*dy), 1))).pow(alpha1) * torch.exp(-u / (lambda1 + epsilon_i))
+                b = (q / ( torch.sum(K.T*(a*dx), 1))).pow(alpha2) * torch.exp(-v / (lambda2 + epsilon_i))
+
+                # stabilization
+                if (max(torch.abs(a).max(), torch.abs(b).max()) > tau):
+                    u = u + epsilon_i * torch.log(a)
+                    v = v + epsilon_i * torch.log(b)  # absorb
+                    K = torch.exp((u.view(-1,1) - C + v.view(1,-1)) / epsilon_i)
+                    a, b = torch.ones(I, device=C.device, dtype=C.dtype), torch.ones(J, device=C.device, dtype=C.dtype)
+
+                if current_iter >= max_iter:
+                    print(f"Reached max_iter with duality gap still above threshold ({duality_gap:.5f}). Returning")
+                    return (K.T * a).T * b
+
+            # The real dual variables. a and b are only the stabilized variables
+            _a = a * torch.exp(u / epsilon_i)
+            _b = b * torch.exp(v / epsilon_i)
+
+            # Skip duality gap computation for the first epsilon scalings, use dual variables evolution instead
+            if e == epsilon_scalings:
+                R = (K.T * a).T * b
+                pri = primal_ts(C, _K, R, dx, dy, p, q, _a, _b, epsilon_i, lambda1, lambda2)
+                dua = dual_ts(C, _K, R, dx, dy, p, q, _a, _b, epsilon_i, lambda1, lambda2)
+                duality_gap = (pri - dua) / abs(pri)
+            else:
+                duality_gap = max(
+                    torch.norm(_a - old_a * torch.exp(u / epsilon_i)) / (1 + torch.norm(_a)),
+                    torch.norm(_b - old_b * torch.exp(v / epsilon_i)) / (1 + torch.norm(_b)))
+
+    if torch.isnan(duality_gap):
+        raise RuntimeError("Overflow encountered in duality gap computation, please report this incident")
+    return R / C.shape[1]
+
 
 ############################################################
 #Other Auxilliary Functions
@@ -988,12 +908,13 @@ def makeDir(file_path):
     directories = file_path.split('/')
     cur_path = ''
     for directory in directories:
-        cur_path += directory
-        if(directory=='.' or directory == '..' or directory==''):
+        if(directory==''):
             continue
-        if not os.path.exists(cur_path):
-            os.mkdir(cur_path)
+        cur_path += directory
         cur_path += '/'
+        if(not (directory=='.' or directory == '..') ):
+            if not os.path.exists(cur_path):
+                os.mkdir(cur_path)
 
 def getGeneIndex(genes_all, gene_list):
     gind = []
@@ -1021,3 +942,56 @@ def convertTime(t):
     second = int(t - hour*3600 - minute*60)
     
     return f"{hour:3d} h : {minute:2d} m : {second:2d} s"
+
+def knnX0(U, S, t, z, dt, k):
+    N = len(t)
+    u0 = np.zeros(U.shape)
+    s0 = np.zeros(S.shape)
+    t0 = np.ones((N))*t.min()
+    
+    order_idx = np.argsort(t)
+    _t = t[order_idx]
+    _z = z[order_idx]
+    _U = U[order_idx]
+    _S = S[order_idx]
+    
+    knn = np.ones((N,k))*np.nan
+    D = np.ones((N,k))*np.nan
+    ptr = 0
+    left, right = 0, 0
+    i = 0
+    while(left<N): #i as initial point x0
+        #Update left, right
+        if(_t[i]+dt[0]>=_t[-1]):
+            break;
+        for l in range(left, N):
+            if(_t[l]>=_t[i]+dt[0]):
+                left = l
+                break
+        for l in range(right, N):
+            if(_t[l]>=_t[i]+dt[1]):
+                right = l
+                break
+        
+        #Update KNN
+        for j in range(left, right): #j is the set of cell with i in the range [tj-dt,tj-dt/2]
+            dist = np.linalg.norm(z[i]-z[j])
+            pos_zero = np.where(np.isnan(knn[j]))[0]
+            if(len(pos_zero)>0): #there hasn't been k nearest neighbors for j yet
+                knn[j,pos_zero[0]] = i
+                D[j,pos_zero[0]] = dist
+            else:
+                idx_smallest = np.argmin(D[j])
+                if(dist<D[j,idx_smallest]):
+                    D[j,idx_smallest] = dist
+                    knn[j,idx_smallest] = i
+        i += 1
+    #Calculate initial time and conditions
+    for i in range(N):
+        if(np.all(np.isnan(knn[i]))):
+            continue
+        pos = np.where(~np.isnan(knn[i]))[0]
+        u0[order_idx[i]] = _U[knn[i,pos].astype(int)].mean(0)
+        s0[order_idx[i]] = _S[knn[i,pos].astype(int)].mean(0)
+        t0[order_idx[i]] = _t[knn[i,pos].astype(int)].mean()
+    return u0,s0,t0,knn
