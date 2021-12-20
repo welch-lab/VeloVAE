@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 
 from velovae.plotting import plotSig, plotTLatent, plotTrainLoss, plotTestLoss, plotCluster, plotLatentEmbedding
 
-from .model_util import  convertTime, initParams, getTsGlobal, reinitTypeParams, predSU, makeDir, getGeneIndex
-from .model_util import odeWeighted, optimal_transport_duality_gap
+from .model_util import  histEqual, convertTime, initParams, getTsGlobal, reinitTypeParams, predSU, getGeneIndex
+from .model_util import odeWeighted, optimal_transport_duality_gap, optimal_transport_duality_gap_ts
 from .TrainingData import SCLabeledData
 from .TransitionGraph import TransGraph, encodeType, str2int, int2str
 
@@ -46,52 +46,6 @@ def KLGaussian(mu1, std1, mu2, std2):
     Compute the KL divergence of two Gaussian distributions
     """
     return torch.mean(torch.sum(torch.log(std2/std1)+std1.pow(2)/(2*std2.pow(2))-0.5+(mu1-mu2).pow(2)/(2*std2.pow(2)),1))
-
-
-
-############################################################
-#Training Objective
-############################################################
-def VAERisk(u,
-            s,
-            uhat,
-            shat,
-            mu_tx, std_tx,
-            mu_t, std_t,
-            mu_zx, std_zx,
-            mu_z, std_z,
-            logit_y_tzx, pi_y,
-            sigma_u, sigma_s, 
-            weight=None):
-    """
-    This is an upper bound of the negative evidence lower bound.
-    1. u,s,uhat,shat: raw and predicted counts
-    2. w: [B x Ntype] parent mixture weight
-    3. mu_tx, std_tx: [B x 1] encoder output, conditional Gaussian parameters
-    4. mu_t, std_t: [1] Gaussian prior of time
-    5. mu_zx, std_zx: [B x Cz] encoder output, conditional Gaussian parameters
-    6. logit_y_tzx: [B x N type] type probability before softmax operation
-    7. pi_y: cell type prior (conditioned on time and z)
-    8. sigma_u, sigma_s : standard deviation of the Gaussian likelihood (decoder)
-    9. weight: sample weight
-    
-    
-    log(p(x|t,z,y)) = log(\sum_{k} w_k p(x|t,z,y,k))
-                   >= \sum_{k}w_k log(p(x|t,z,y,k))
-    """
-    
-    #KL divergence
-    kld_t = KLGaussian(mu_tx, std_tx, mu_t, std_t)
-    kld_z = KLGaussian(mu_zx, std_zx, mu_z, std_z)
-    kld_y = KLy(logit_y_tzx, pi_y)
-
-    log_gaussian = -((uhat-u)/sigma_u).pow(2)-((shat-s)/sigma_s).pow(2)-torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
-    
-    if( weight is not None):
-        log_gaussian = log_gaussian*weight.view(-1,1)
-    
-    err_rec = torch.mean(torch.sum(log_gaussian, 1))
-    return err_rec, kld_t, kld_z, kld_y
 
 
 
@@ -199,6 +153,33 @@ class encoder_part(nn.Module):
 #	graph, the ODE takes a probabilistic view of the predecessor
 #   of each cell type.
 ##############################################################
+class encoder_type(nn.Module):
+    def __init__(self, Cin, Cout, hidden_size=(500,250), device=torch.device('cpu')):
+        super(encoder_type, self).__init__()
+        self.fw = ResBlock(Cz, hidden_size[0], hidden_size[1]).to(device)
+        self.fc_yout = nn.Linear(hidden_size[1], Cout).to(device)
+        self.ky = torch.tensor([1e4]).double().to(device)
+        
+        self.init_weights()
+    
+    def init_weights(self):
+        for m in self.fw.modules():
+            if(isinstance(m, nn.Linear)):
+                nn.init.xavier_uniform_(m.weight,np.sqrt(2))
+                nn.init.constant_(m.bias, 0.0)
+            elif(isinstance(m, nn.BatchNorm1d)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        for m in [self.fc_yout]:
+                nn.init.xavier_uniform_(m.weight,np.sqrt(2))
+                nn.init.constant_(m.bias, 0.0)
+    
+    def forward(self, z, t, t_trans):
+        logit_y = self.fc_yout(self.fw(z)) - self.ky*F.relu(t_trans - t)
+        y = F.gumbel_softmax(logit_y, tau=temp, hard=True) 
+        return logit_y, y
+        
 class encoder(nn.Module):
     """
     Encoder Network
@@ -209,7 +190,10 @@ class encoder(nn.Module):
         try:
             hidden_t, hidden_z, hidden_y = hidden_size[0], hidden_size[1], hidden_size[2]
         except IndexError:
-            print(f'Expect hidden layer sizes of three networks, but got {len(hidden_size)} instead!')
+            try:
+                hidden_t, hidden_z = hidden_size[1], hidden_size[2]
+            except IndexError:
+                print(f'Expect hidden layer sizes of at least two networks, but got {len(hidden_size)} instead!')
             
         if(Cz is None):
             Cz = Ntype
@@ -222,9 +206,8 @@ class encoder(nn.Module):
         self.encoder_z = encoder_part(Cin, Cz, hidden_z[0], hidden_z[1], device)
 
         #q(Y | Z,T,X)
-        self.fw_Y_ZTX = ResBlock(Cz, hidden_y[0], hidden_y[1]).to(device)
-        self.fc_yout = nn.Linear(hidden_y[1], Ntype).to(device)
-        self.ky = torch.tensor([1e4]).double().to(device)
+        fix_cell_type = kwargs.pop('fix_cell_type', False)
+        self.nn_y = None if fix_cell_type else encoder_type(Cz, Ntype, hidden_y, device)
         
         if('checkpoint' in kwargs):
             self.load_state_dict(torch.load(kwargs['checkpoint'],map_location=device))
@@ -236,18 +219,8 @@ class encoder(nn.Module):
         #Initialize forward blocks
         self.encoder_t.init_weights()
         self.encoder_z.init_weights()
-
-        for m in self.fw_Y_ZTX.modules():
-            if(isinstance(m, nn.Linear)):
-                nn.init.xavier_uniform_(m.weight,np.sqrt(2))
-                nn.init.constant_(m.bias, 0.0)
-            elif(isinstance(m, nn.BatchNorm1d)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-        for m in [self.fc_yout]:
-                nn.init.xavier_uniform_(m.weight,np.sqrt(2))
-                nn.init.constant_(m.bias, 0.0)
+        if(self.nn_y is not None):
+            self.nn_y.init_weights()
     
     def reparameterize(self, mu, std):
         eps = torch.normal(mean=torch.zeros(mu.shape),std=torch.ones(mu.shape)).to(mu.device)
@@ -266,17 +239,17 @@ class encoder(nn.Module):
         z = self.reparameterize(mu_zx, std_zx)
 
         #q(Y | Z,T,X)
-        logit_y = self.fc_yout(self.fw_Y_ZTX(z)) - self.ky*F.relu(t_trans - t)
-        y = F.gumbel_softmax(logit_y, tau=temp, hard=True) 
-        
-        return mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y
+        if(self.nn_y is not None):
+            logit_y, y = self.nn_y.forward(z, t, t_trans)
+            return mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y
+        return mu_tx, std_tx, mu_zx, std_zx, None, t, z, None
 
 
 class decoder(nn.Module):
     """
     The ODE model that recovers the input data
     """
-    def __init__(self, adata, Tmax, device=torch.device('cpu'), p=95, tkey=None):
+    def __init__(self, adata, Tmax, device=torch.device('cpu'), p=95, tkey=None, nbin=40, q=0.01):
         super(decoder,self).__init__()
         
         U,S = adata.layers['Mu'], adata.layers['Ms']
@@ -297,8 +270,12 @@ class decoder(nn.Module):
             print(f"[:: Decoder ::] Using pretrained time with key '{tkey}'")
             self.t_init = adata.obs[f'{tkey}_time'].to_numpy()
         else:
-            t_init = np.quantile(T,0.5,1)
-            self.t_init = t_init/np.quantile(t_init, 0.99)*Tmax
+            T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
+            T_eq = np.zeros(T.shape)
+            Nbin = T.shape[0]//50+1
+            for i in range(T.shape[1]):
+                T_eq[:, i] = histEqual(T[:, i], Tmax, 0.9, Nbin)
+            self.t_init = np.quantile(T_eq,0.5,1)
         
         t_trans, t_end, dts = np.zeros((Ntype)), np.zeros((Ntype)), np.random.rand(Ntype, G)*0.01
         for y in self.cell_types:
@@ -329,7 +306,8 @@ class decoder(nn.Module):
         self.u0.requires_grad=False
         self.s0.requires_grad=False
         
-        self.updateWeight(adata.obsm['X_pca'], self.t_init, self.cell_labels)
+        self.updateWeight(adata.obsm['X_pca'], self.t_init, self.cell_labels, nbin=nbin, q=q)
+        
     
     def forward(self, t, y_onehot, train_mode=False, neg_slope=1e-4, temp=0.01):
         """
@@ -355,13 +333,18 @@ class decoder(nn.Module):
                                  scaling=torch.exp(self.scaling))
         return (Uhat*w_onehot.unsqueeze(-1)).sum(1), (Shat*w_onehot.unsqueeze(-1)).sum(1)
     
-    def updateWeight(self, X_pca, t, cell_labels, nbin=10, epsilon = 0.05, lambda1 = 1, lambda2 = 50, niter = 1, q = 0.01):
-        cell_types = np.unique(cell_labels)
+    def updateWeight(self, X_pca, t, cell_labels, nbin=20, epsilon = 0.05, lambda1 = 1, lambda2 = 50, max_iter = 2000, q = 0.01):
+        cell_types = np.unique(self.cell_labels)
         dt = (t.max()-t.min())/nbin
-        P = np.zeros((len(cell_types), len(cell_types)))
+        
+        P = torch.zeros((len(cell_types), len(cell_types)), device=self.alpha.device)
         for i, x in enumerate(cell_types): #child type
             mask = cell_labels==x
+            if(not np.any(mask)):
+                P[i,i] = 1.0
+                continue
             t0 = np.quantile(t[mask], q) #estimated transition time
+            
             mask1 = (t>=t0-dt) & (t<t0) 
             mask2 = (t>=t0) & (t<t0+dt)
             
@@ -370,19 +353,25 @@ class decoder(nn.Module):
                 C = sklearn.metrics.pairwise.pairwise_distances(X1,X2,metric='sqeuclidean', n_jobs=-1)
                 C = C/np.median(C)
                 G = np.ones((C.shape[0]))
-                Pi = optimal_transport_duality_gap(C, G, lambda1, lambda2, epsilon, 5, 1e-8, 10000,
-                                      1, 1000)
+                
+                Pi = optimal_transport_duality_gap_ts(torch.tensor(C, device=self.alpha.device), 
+                                                      torch.tensor(G, device=self.alpha.device), 
+                                                      lambda1, lambda2, epsilon, 5, 1e-3, 10000, 1, max_iter)
+                
+                #Pi_ = optimal_transport_duality_gap(C,G,lambda1, lambda2, epsilon, 5, 0.01, 10000, 1, max_iter)
                 
                 #Sum the weights of each cell type
                 cell_labels_1 = cell_labels[mask1]
                 cell_labels_2 = cell_labels[mask2]
                 for j, y in enumerate(cell_types): #parent
                     if(np.any(cell_labels_1==y) and np.any(cell_labels_2==x)):
-                        P[i,j] = np.sum(Pi[cell_labels_1==y])
+                        P[i,j] = torch.sum(Pi[cell_labels_1==y])
             if(P[i].sum()==0):
                 P[i,i] = 1.0
+            
             P[i] = P[i]/P[i].sum()
-        self.w = torch.tensor(P, device=self.alpha.device)
+        
+        self.w = P.to(self.alpha.device)
         return
     
     def printWeight(self):
@@ -391,7 +380,7 @@ class decoder(nn.Module):
                                'display.max_columns', None, 
                                'display.precision', 3,
                                'display.chop_threshold',1e-3,
-                               'display.width', None):
+                               'display.width', 200):
             w_dic = {}
             for i in range(len(self.cell_types)):
                 w_dic[self.label_dic_rev[i]] = w[:, i]
@@ -450,7 +439,7 @@ class decoder(nn.Module):
 
 
 
-class VAE():
+class BrVAE():
     """
     The final VAE object containing all sub-modules
     """
@@ -459,6 +448,7 @@ class VAE():
                  Cz=1,
                  hidden_size=[(1000,500),(1000,500),(1000,500)],
                  Tmax=20.0, 
+                 tprior=None,
                  device='cpu',
                  train_scaling=False,
                  **kwargs):
@@ -477,12 +467,16 @@ class VAE():
         self.setDevice(device)
         #Training Configuration
         self.config = {
-            "num_epochs":500, "learning_rate":1e-4, "learning_rate_ode":1e-4, "lambda":1e-3,\
-            "reg_t":1.0, "reg_z":2.0, "reg_y":2.0, "reg_w":1.0, "neg_slope":1e-4,\
+            "num_epochs":800, "learning_rate":1e-4, "learning_rate_ode":1e-4, "lambda":1e-3,\
+            "reg_t":1.0, "reg_z":1.0, "reg_y":1.0, "reg_w":1.0, "neg_slope":0.0,\
             "test_epoch":100, "save_epoch":100, "batch_size":128, "K_alt":0,\
+            "Nstart_ot":400, "Nupdate_ot":25, "nbin":20, "q_ot":0.01,
             "train_scaling":False, "train_std":False, "weight_sample":False, "anneal":True, 
-            "info_y":False, "info_t":False, "info_w":False
+            "yprior":None, "tprior":None, "fix_cell_type":False,\
+            "sparsify":2
         }
+        for key in kwargs:
+            self.config[key] = kwargs[key]
         
         N, G = adata.n_obs, adata.n_vars
         Ntype = len(np.unique(cell_labels_raw))
@@ -493,12 +487,19 @@ class VAE():
         else:
             tkey = None
         
-        self.decoder = decoder(adata, Tmax, device=self.device, tkey=tkey)
+        self.decoder = decoder(adata, Tmax, device=self.device, tkey=tkey, nbin=self.config['nbin'], q=self.config['q_ot'])
         self.Tmax=torch.tensor(Tmax,dtype=torch.double).to(self.device)
         
         #Prior distribution
-        self.mu_t = torch.tensor([Tmax*0.5]).double().to(self.device)
-        self.std_t = torch.tensor([Tmax*0.5]).double().to(self.device)
+        if(tprior is None):
+            self.mu_t = (torch.ones(U.shape[0],1)*Tmax*0.5).double().to(self.device)
+            self.std_t = (torch.ones(U.shape[0],1)*Tmax*0.25).double().to(self.device)
+        else:
+            print('Using informative time prior.')
+            t = adata.obs[tprior].to_numpy()
+            t = t/t.max()*Tmax
+            self.mu_t = torch.tensor(t).view(-1,1).double().to(self.device)
+            self.std_t = (torch.ones(self.mu_t.shape)*Tmax*0.25).double().to(self.device)
 
         self.mu_z = torch.zeros(Cz).double().to(self.device)
         self.std_z = torch.ones(Cz).double().to(self.device)
@@ -533,27 +534,34 @@ class VAE():
         eps = torch.normal(mean=0.0, std=1.0, size=(B,1)).double().to(self.device)
         return std*eps+mu
     
-    def forward(self, data_in, train_mode, temp=1.0):
+    def forward(self, data_in, y_onehot, temp=1.0):
         scaling = torch.exp(self.decoder.scaling)
         
-        mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y_onehot = self.encoder.forward(data_in, scaling, torch.exp(self.decoder.t_trans.detach()), temp=temp)
+        mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, _y_onehot = self.encoder.forward(data_in, scaling, torch.exp(self.decoder.t_trans.detach()), temp=temp)
+        if(_y_onehot is None):
+            _y_onehot = y_onehot
         
-        uhat, shat = self.decoder.forward(t, y_onehot.float(), train_mode, neg_slope=self.config['neg_slope'], temp=temp)
+        uhat, shat = self.decoder.forward(t, _y_onehot.float(), True, neg_slope=self.config['neg_slope'], temp=temp)
         
-        return mu_tx, std_tx, mu_zx, std_zx, logit_y, t, y_onehot, uhat, shat
+        return mu_tx, std_tx, mu_zx, std_zx, logit_y, t, _y_onehot, uhat, shat
     
-    def evalModel(self, data_in, gidx=None):
+    def evalModel(self, data_in, y_onehot, gidx=None):
         """
         Run the full model with determinisic parent types.
         """
         scaling = torch.exp(self.decoder.scaling)
         
-        mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y_onehot = self.encoder.forward(data_in, scaling, torch.exp(self.decoder.t_trans.detach()), temp=1e-4)
+        mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, _y_onehot = self.encoder.forward(data_in, scaling, torch.exp(self.decoder.t_trans.detach()), temp=1e-4)
         
         #Determine cell type
-        py_tzx = F.softmax(logit_y,1)
-        labels = torch.argmax(logit_y,1)
-        y_onehot_pred = F.one_hot(labels, self.Ntype).float() #B x Ntype
+        if(logit_y is not None):
+            py_tzx = F.softmax(logit_y,1)
+            labels = torch.argmax(logit_y,1)
+            y_onehot_pred = F.one_hot(labels, self.Ntype).float() #B x Ntype
+        else:
+            py_tzx = None
+            y_onehot_pred = y_onehot
+            labels = torch.argmax(y_onehot, 1)
         
         uhat, shat = self.decoder.predSU(mu_tx, y_onehot_pred, gidx)
         
@@ -580,7 +588,52 @@ class VAE():
             mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y_onehot = self.encoder.forward(data, scaling, torch.exp(self.decoder.t_trans.detach()), temp=1e-4)
                 
         t = mu_tx.detach().cpu().numpy().squeeze()
-        self.decoder.updateWeight(X_embed, t, self.decoder.cell_labels)
+        if(self.config["fix_cell_type"]):
+            self.decoder.updateWeight(X_embed, t, self.decoder.cell_labels, nbin=self.config['nbin'], q=self.config['q_ot'])
+        else:
+            y = torch.argmax(logit_y,1).detach().cpu().numpy()
+            self.decoder.updateWeight(X_embed, t, y, nbin=self.config['nbin'], q=self.config['q_ot'])
+        
+    
+    ############################################################
+    #Training Objective
+    ############################################################
+    def VAERisk(self,
+                u,
+                s,
+                uhat,
+                shat,
+                mu_tx, std_tx,
+                mu_t, std_t,
+                mu_zx, std_zx,
+                mu_z, std_z,
+                sigma_u, sigma_s, 
+                logit_y_tzx=None, pi_y=None,
+                weight=None):
+        """
+        1. u,s,uhat,shat: raw and predicted counts
+        2. w: [B x Ntype] parent mixture weight
+        3. mu_tx, std_tx: [B x 1] encoder output, conditional Gaussian parameters
+        4. mu_t, std_t: [1] Gaussian prior of time
+        5. mu_zx, std_zx: [B x Cz] encoder output, conditional Gaussian parameters
+        6. logit_y_tzx: [B x N type] type probability before softmax operation
+        7. pi_y: cell type prior (conditioned on time and z)
+        8. sigma_u, sigma_s : standard deviation of the Gaussian likelihood (decoder)
+        9. weight: sample weight
+        """
+        
+        #KL divergence
+        kld_t = KLGaussian(mu_tx, std_tx, mu_t, std_t)
+        kld_z = KLGaussian(mu_zx, std_zx, mu_z, std_z)
+        kld_y = 0 if ((logit_y_tzx is None) or (pi_y is None)) else KLy(logit_y_tzx, pi_y)
+    
+        log_gaussian = -((uhat-u)/sigma_u).pow(2)-((shat-s)/sigma_s).pow(2)-torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
+        
+        if( weight is not None):
+            log_gaussian = log_gaussian*weight.view(-1,1)
+        
+        err_rec = torch.mean(torch.sum(log_gaussian, 1))
+        return err_rec, kld_t, kld_z, kld_y
         
     def train_epoch(self, 
                     X_loader, 
@@ -591,8 +644,7 @@ class VAE():
                     K=2, 
                     reg_t=1.0, 
                     reg_z=1.0, 
-                    reg_y=1.0,
-                    yprior=False):
+                    reg_y=1.0):
         """
         Training in each epoch
         X_loader: Data loader of the input data
@@ -602,31 +654,43 @@ class VAE():
         iterX = iter(X_loader)
         B = len(iterX)
         loss_list = []
-        Nupdate = 100
+        Nupdate = B*5
+        cell_labels = torch.tensor(self.decoder.cell_labels).to(self.device)
         for i in range(B):
             tau = np.clip(np.exp(-3e-5*((counter+i+1)//Nupdate*Nupdate)), 0.5, None) if anneal else 0.5
             optimizer.zero_grad()
             if(optimizer2 is not None):
                 optimizer2.zero_grad()
             batch = iterX.next()
-            xbatch, label_batch, weight = batch[0].to(self.device), batch[1].to(self.device), batch[2].to(self.device)
-            mu_tx, std_tx, mu_zx, std_zx, logit_y, t, y_onehot, uhat, shat = self.forward(xbatch, True, temp=tau)
+            xbatch, label_batch, weight, idx = batch[0].to(self.device), batch[1].to(self.device), batch[2].to(self.device), batch[3].to(self.device)
             u, s = xbatch[:,:xbatch.shape[1]//2],xbatch[:,xbatch.shape[1]//2:]
             
-            if(yprior):
-                prior_y = self.getInformativePriorY(label_batch)
-            else:
-                prior_y = self.prior_y_default
+            y_onehot_fix = F.one_hot(cell_labels[idx], self.Ntype)
+            mu_tx, std_tx, mu_zx, std_zx, logit_y, t, y_onehot, uhat, shat = self.forward(xbatch, y_onehot_fix, temp=tau)
+           
             
-            err_rec, kld_t, kld_z, kld_y = VAERisk(u, s,
-                                                   uhat, shat,
-                                                   mu_tx, std_tx,
-                                                   self.mu_t, self.std_t,
-                                                   mu_zx, std_zx,
-                                                   self.mu_z, self.std_z,
-                                                   logit_y, prior_y,
-                                                   torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
-                                                   weight=None)
+            if(logit_y is None):
+                err_rec, kld_t, kld_z, kld_y = self.VAERisk(u, s,
+                                                            uhat, shat,
+                                                            mu_tx, std_tx,
+                                                            self.mu_t[idx], self.std_t[idx],
+                                                            mu_zx, std_zx,
+                                                            self.mu_z, self.std_z,
+                                                            torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
+            else:
+                if(self.config['yprior'] is not None):
+                    prior_y = self.getInformativePriorY(label_batch)
+                else:
+                    prior_y = self.prior_y_default
+                err_rec, kld_t, kld_z, kld_y = self.VAERisk(u, s,
+                                                            uhat, shat,
+                                                            mu_tx, std_tx,
+                                                            self.mu_t[idx], self.std_t[idx],
+                                                            mu_zx, std_zx,
+                                                            self.mu_z, self.std_z,
+                                                            torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
+                                                            logit_y, prior_y,
+                                                            weight=None)
             loss = - err_rec + reg_t * kld_t + reg_z * kld_z + reg_y * kld_y
             loss_list.append(loss.detach().cpu().item())
             loss.backward()
@@ -672,7 +736,7 @@ class VAE():
         
         
         if(plot):
-            makeDir(figure_path)
+            os.makedirs(figure_path, exist_ok=True)
             
             t = torch.tensor(self.decoder.t_init).to(self.device)
             y_onehot = F.one_hot(torch.tensor(self.decoder.cell_labels)).float().to(self.device)
@@ -691,7 +755,7 @@ class VAE():
                         cell_labels=self.decoder.cell_labels_raw,
                         cell_types=self.decoder.cell_types_raw,
                         labels_pred = self.decoder.cell_labels_raw,
-                        sparsify=2,
+                        sparsify=self.config["sparsify"],
                         t_trans=t_trans,
                         ts=ts[:,i])
             
@@ -744,8 +808,7 @@ class VAE():
                                                            self.config["K_alt"],  
                                                            self.config["reg_t"], 
                                                            self.config["reg_z"], 
-                                                           self.config["reg_y"],
-                                                           self.config["info_y"])
+                                                           self.config["reg_y"])
                 loss_train = loss_train+loss_list
                 loss_list, _, tau = self.train_epoch(data_loader, 
                                                      optimizer_ode, 
@@ -756,8 +819,7 @@ class VAE():
                                                      self.config["K_alt"], 
                                                      self.config["reg_t"], 
                                                      self.config["reg_z"], 
-                                                     self.config["reg_y"],
-                                                     self.config["info_y"])
+                                                     self.config["reg_y"])
                 
                 
                 loss_train = loss_train+loss_list
@@ -770,8 +832,7 @@ class VAE():
                                                            self.config["K_alt"], 
                                                            self.config["reg_t"], 
                                                            self.config["reg_z"], 
-                                                           self.config["reg_y"],
-                                                           self.config["info_y"])
+                                                           self.config["reg_y"])
                 loss_train = loss_train+loss_list
             
             if(epoch==0 or (epoch+1) % self.config["test_epoch"] == 0):
@@ -792,10 +853,10 @@ class VAE():
                 loss_test.append(loss)
                 err_test.append(err)
                 randidx_test.append(rand_idx)
+                self.decoder.printWeight()
             
-            #if( (epoch+1)>=100):
-            self.updateWeight(torch.tensor(X).to(self.device), adata.obsm['X_pca'])
-            self.decoder.printWeight()
+            if( (epoch+1)>=self.config['Nstart_ot'] and (epoch+1) % self.config['Nupdate_ot'] == 0):
+                self.updateWeight(torch.tensor(X).to(self.device), adata.obsm['X_pca'])
         
         print("***     Finished Training     ***")
         plotTrainLoss(loss_train,[i for i in range(len(loss_train))],True,figure_path,"vae")
@@ -812,26 +873,37 @@ class VAE():
         y = torch.empty(N)
         z = torch.empty(N, self.encoder.Cz)
         qy = torch.empty(N, self.Ntype)
-
+        
+        y_onehot_fix = F.one_hot(torch.tensor(self.decoder.cell_labels), self.Ntype).to(data.device)
         with torch.no_grad():
             B = self.config["batch_size"]
             Nb = N // B
             for i in range(Nb):
-                uhat, shat, mu_tx, mu_zx, py_tzx, labels = self.evalModel(data[i*B:(i+1)*B])
+                uhat, shat, mu_tx, mu_zx, py_tzx, labels = self.evalModel(data[i*B:(i+1)*B], y_onehot_fix[i*B:(i+1)*B])
                 Uhat[i*B:(i+1)*B] = uhat.cpu()
                 Shat[i*B:(i+1)*B] = shat.cpu()
                 t[i*B:(i+1)*B] = mu_tx.cpu().squeeze()
-                qy[i*B:(i+1)*B] = py_tzx.cpu()
-                y[i*B:(i+1)*B] = labels.cpu().squeeze()
                 z[i*B:(i+1)*B] = mu_zx.cpu()
+                if(py_tzx is None):
+                    qy[i*B:(i+1)*B] = y_onehot_fix[i*B:(i+1)*B].detach().cpu()
+                    y[i*B:(i+1)*B] = torch.argmax(qy[i*B:(i+1)*B],1)
+                else:
+                    qy[i*B:(i+1)*B] = py_tzx.cpu()
+                    y[i*B:(i+1)*B] = labels.cpu().squeeze()
+                
             if(N > B*Nb):
-                uhat, shat, mu_tx, mu_zx, py_tzx, labels = self.evalModel(data[B*Nb:])
+                uhat, shat, mu_tx, mu_zx, py_tzx, labels = self.evalModel(data[B*Nb:], y_onehot_fix[B*Nb:])
                 Uhat[Nb*B:] = uhat.cpu()
                 Shat[Nb*B:] = shat.cpu()
                 t[Nb*B:] = mu_tx.cpu().squeeze()
-                qy[Nb*B:] = py_tzx.cpu()
-                y[Nb*B:] = labels.cpu().squeeze()
                 z[Nb*B:] = mu_zx.cpu()
+                if(py_tzx is None):
+                    qy[Nb*B:] = y_onehot_fix[Nb*B:].detach().cpu()
+                    y[Nb*B:] = torch.argmax(qy[Nb*B:],1)
+                else:
+                    qy[Nb*B:] = py_tzx.cpu()
+                    y[Nb*B:] = labels.cpu().squeeze()
+                
         
         return Uhat, Shat, t, qy, y, z
     
@@ -900,7 +972,7 @@ class VAE():
                         cell_labels=self.decoder.cell_labels_raw,
                         cell_types=self.decoder.cell_types_raw,
                         labels_pred = int2str(y, self.decoder.label_dic_rev),
-                        sparsify=2,
+                        sparsify=self.config["sparsify"],
                         t_trans=t_trans,
                         ts=np.exp(self.decoder.dts[:,idx].detach().cpu().numpy()) + t_trans)
                 
@@ -912,7 +984,7 @@ class VAE():
         Save the encoder parameters to a .pt file.
         Save the decoder parameters to the anndata object.
         """
-        makeDir(file_path)
+        os.makedirs(file_path, exist_ok=True)
         torch.save(self.encoder.state_dict(), f"{file_path}/{enc_name}.pt")
         torch.save(self.decoder.state_dict(), f"{file_path}/{dec_name}.pt")
     
@@ -920,7 +992,7 @@ class VAE():
         """
         Save the ODE parameters and cell time to the anndata object and write it to disk.
         """
-        makeDir(file_path)
+        os.makedirs(file_path, exist_ok=True)
         
         U,S = adata.layers['Mu'], adata.layers['Ms']
         X = np.concatenate((U,S), 1)
@@ -935,20 +1007,22 @@ class VAE():
         adata.var[f"{key}_scaling"] = np.exp(self.decoder.scaling.detach().cpu().numpy())
         adata.var[f"{key}_sigma_u"] = np.exp(self.decoder.sigma_u.detach().cpu().numpy())
         adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
-        adata.uns[f"{key}_w"] = F.softmax(self.decoder.w.detach()).cpu().numpy()
+        adata.uns[f"{key}_w"] = self.decoder.w.detach().cpu().numpy()
         
         
         self.setMode('eval')
         mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y_onehot = self.encoder.forward(torch.tensor(X).to(self.device), torch.exp(self.decoder.scaling), torch.exp(self.decoder.t_trans), temp=1e-4)
-        p_type = F.softmax(logit_y)
-        p_type_onehot = F.one_hot(torch.argmax(p_type,1), self.Ntype)
-        labels = np.argmax(p_type.detach().cpu().numpy(), 1)
-        my_t = mu_tx.squeeze().detach().cpu().numpy()
+        if(logit_y is not None):
+            p_type = F.softmax(logit_y)
+            p_type_onehot = F.one_hot(torch.argmax(p_type,1), self.Ntype)
+            labels = np.argmax(p_type.detach().cpu().numpy(), 1)
+            adata.obsm[f"{key}_ptype"] = p_type.detach().cpu().numpy()
+            adata.obs[f"{key}_label"] = labels
         
+        my_t = mu_tx.squeeze().detach().cpu().numpy()
         adata.obs[f"{key}_time"] = my_t
         adata.obs[f"{key}_std_t"] = std_tx.squeeze().detach().cpu().numpy()
-        adata.obsm[f"{key}_ptype"] = p_type.detach().cpu().numpy()
-        adata.obs[f"{key}_label"] = labels
+        
         
         
         if(file_name is not None):
