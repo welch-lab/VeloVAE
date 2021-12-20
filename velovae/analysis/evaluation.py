@@ -12,7 +12,7 @@ from velovae.plotting import plotPhaseGrid, plotSigGrid, plotClusterGrid, plotTi
 
 
 
-def getMetric(adata, method, key):
+def getMetric(adata, method, key, scv_mask=True):
     """
     Get specific metrics given a method.
     """
@@ -22,14 +22,21 @@ def getMetric(adata, method, key):
     elif method=='vanilla':
         Uhat, Shat, logp = getPredictionVanilla(adata, key)
     elif method=='branching':
-        graph = adata.uns[f"{key}_transition_graph"]
-        init_types = adata.uns[f"{key}_init_types"]
-        Uhat, Shat, logp = getPredictionBranching(adata, key, graph, init_types)
-    elif method=='mix':
         Uhat, Shat, logp = getPredictionMix(adata, key)
+    U, S = adata.layers['Mu'], adata.layers['Ms']
     
-    stats['MSE'] = np.mean((adata.layers['Mu']-Uhat)**2+(adata.layers['Ms']-Shat)**2)
-    stats['MAE'] = np.mean(np.abs(adata.layers['Mu']-Uhat)+np.abs(adata.layers['Ms']-Shat))
+    if(scv_mask):
+        try:
+            gene_mask = ~np.isnan(adata.var['fit_alpha'].to_numpy())
+            stats['MSE'] = np.nanmean((U[:,gene_mask]-Uhat[:,gene_mask])**2+(S[:,gene_mask]-Shat[:,gene_mask])**2)
+            stats['MAE'] = np.nanmean(np.abs(U[:,gene_mask]-Uhat[:,gene_mask])+np.abs(S[:,gene_mask]-Shat[:,gene_mask]))
+        except KeyError:
+            print('Warning: scvelo fitting not found! Compute the full MSE/MAE instead.')
+            stats['MSE'] = np.nanmean((U-Uhat)**2+(S-Shat)**2)
+            stats['MAE'] = np.nanmean(np.abs(U-Uhat)+np.abs(S-Shat))
+    else:
+        stats['MSE'] = np.nanmean((U-Uhat)**2+(S-Shat)**2)
+        stats['MAE'] = np.nanmean(np.abs(U-Uhat)+np.abs(S-Shat))
     stats['LL'] = logp
     if('latent_time' in adata.obs):
         tscv = adata.obs['latent_time'].to_numpy()
@@ -144,11 +151,6 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
             t_i, Uhat_i, Shat_i = getPredictionVanillaDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = None
         elif(method=='branching'):
-            graph = adata.uns[f"{key}_transition_graph"]
-            init_types = adata.uns[f"{key}_init_types"]
-            t_i, y_i, Uhat_i, Shat_i = getPredictionBranchingDemo(adata, keys[i], graph, init_types, genes, Nplot)
-            Yhat[method] = y_i
-        elif(method=='mix'):
             t_i, y_i, Uhat_i, Shat_i = getPredictionMixDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = y_i
         That[method] = t_i

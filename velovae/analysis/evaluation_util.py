@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.stats import spearmanr
-from ..model.model_util import initParams, predSUNumpy, odeNumpy, odeBranchNumpy, odeWeightedNumpy, recoverTransitionTime, scvPred, scvPredSingle
+from ..model.model_util import initParams, predSUNumpy, odeNumpy, odeWeightedNumpy, scvPred, scvPredSingle
 
 def getMSE(U,S,Uhat,Shat):
     return np.mean((U-Uhat)**2+(S-Shat)**2)
@@ -36,15 +36,15 @@ def getPredictionSCV(adata, key='fit'):
 def getPredictionSCVDemo(adata, key='fit', genes=None, N=100):
     if(genes is None):
         genes = adata.var_names
-    alpha, beta, gamma = adata.var[f"{key}_alpha"].to_numpy(),adata.var[f"{key}_beta"].to_numpy(),adata.var[f"f{key}_gamma"].to_numpy()
+    alpha, beta, gamma = adata.var[f"{key}_alpha"].to_numpy(),adata.var[f"{key}_beta"].to_numpy(),adata.var[f"{key}_gamma"].to_numpy()
     toff = adata.var[f"{key}_t_"].to_numpy()
-    T = adata.layers[f"{key}_time"]
+    T = adata.layers[f"{key}_t"]
     scaling = adata.var[f"{key}_scaling"].to_numpy()
     Uhat, Shat = np.zeros((2*N,len(genes))), np.zeros((2*N,len(genes)))
     T_demo = np.zeros((2*N, len(genes)))
     for i, gene in enumerate(genes):
         idx = np.where(adata.var_names==gene)[0][0]
-        t_demo = np.concatenate((np.linspace(0,toff,N), np.linspace(toff,T[:,idx].max(),N)))
+        t_demo = np.concatenate((np.linspace(0,toff[i],N), np.linspace(toff[i],T[:,idx].max()+0.01,N)))
         T_demo[:,i] = t_demo
         uhat, shat = scvPredSingle(t_demo,alpha[idx],beta[idx],gamma[idx],toff[idx],scaling=scaling[idx], uinit=0, sinit=0)
         Uhat[:,i] = uhat
@@ -89,105 +89,7 @@ def getPredictionVanillaDemo(adata, key='vanilla', genes=None, N=100):
     return t_demo, Uhat_demo, Shat_demo
     
 
-def getPredictionBranching(adata, key, graph, init_types):
-    """
-    Given a key, the function finds the paraemeters from anndata and predicts U/S.
-    """
-    U, S = adata.layers["Mu"], adata.layers["Ms"]
-    Ntype = len(graph.keys())
-    #VAE
-    alpha = adata.varm[f"{key}_alpha"].T
-    beta = adata.varm[f"{key}_beta"].T
-    gamma = adata.varm[f"{key}_gamma"].T
-    t_trans = adata.uns[f"{key}_t_trans"]
-    ts = adata.varm[f"{key}_t_"].T
-    t = adata.obs[f"{key}_time"].to_numpy()
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
-    u0 = adata.varm[f"{key}_u0"].T
-    s0 = adata.varm[f"{key}_s0"].T
-    labels = adata.obs[f"{key}_label"].to_numpy()
-    sigma_u, sigma_s = adata.var[f"{key}_sigma_u"].to_numpy(), adata.var[f"{key}_sigma_s"].to_numpy()
 
-    Uhat, Shat = odeBranchNumpy(t.reshape(len(t),1),
-                               graph,
-                               init_types,
-                               alpha=alpha,
-                               beta=beta,
-                               gamma=gamma,
-                               t_trans=t_trans,
-                               ts=ts,
-                               scaling=scaling,
-                               u0=u0,
-                               s0=s0,
-                               cell_labels=labels,
-                               train_mode=False)
-    
-    
-
-    logp = -(U-Uhat)**2/(2*sigma_u**2)-(S-Shat)**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
-    logp = np.nanmean(logp.sum(1))
-    
-    
-    return Uhat, Shat, logp
-
-def getPredictionBranchingDemo(adata, key, graph, init_types, genes=None, N=100):
-    Ntype = len(graph.keys())
-    #VAE
-    alpha = adata.varm[f"{key}_alpha"].T
-    beta = adata.varm[f"{key}_beta"].T
-    gamma = adata.varm[f"{key}_gamma"].T
-    t_trans = adata.uns[f"{key}_t_trans"]
-    ts = adata.varm[f"{key}_t_"].T
-    t = adata.obs[f"{key}_time"].to_numpy()
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
-    u0 = adata.varm[f"{key}_u0"].T
-    s0 = adata.varm[f"{key}_s0"].T
-    
-    t = adata.obs[f"{key}_time"].to_numpy()
-    y = adata.obs[f"{key}_label"].to_numpy()
-    
-    t_demo = np.zeros((Ntype*N))
-    y_demo = np.zeros((Ntype*N))
-    t_trans_orig, ts_orig = recoverTransitionTime(t_trans, ts, graph, init_types)
-
-    for i in range(Ntype):
-        tmin = t_trans_orig[i]
-        if(len(self.transgraph.graph[i])>0):
-            tmax = np.max([t_trans_orig[j] for j in graph[i]])
-        else:
-            tmax = t[y==i].max()
-        t_demo[i*N:(i+1)*N] = torch.linspace(tmin, tmax, N)
-        y_demo[i*N:(i+1)*N] = i
-    if(genes is None):
-        Uhat_demo, Shat_demo = odeBranchNumpy(t_demo.reshape(len(t),1),
-                                               graph,
-                                               init_types,
-                                               alpha=alpha,
-                                               beta=beta,
-                                               gamma=gamma,
-                                               t_trans=t_trans,
-                                               ts=ts,
-                                               scaling=scaling,
-                                               u0=u0,
-                                               s0=s0,
-                                               cell_labels=y_demo,
-                                               train_mode=False)
-    else:
-        gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
-        Uhat_demo, Shat_demo = odeBranchNumpy(t_demo.reshape(len(t),1),
-                                               graph,
-                                               init_types,
-                                               alpha=alpha[:, gene_indices],
-                                               beta=beta[:, gene_indices],
-                                               gamma=gamma[:, gene_indices],
-                                               t_trans=t_trans,
-                                               ts=ts[:, gene_indices],
-                                               scaling=scaling[:, gene_indices],
-                                               u0=u0[:, gene_indices],
-                                               s0=s0[:, gene_indices],
-                                               cell_labels=y_demo,
-                                               train_mode=False)
-    return t_demo, y_demo, Uhat_demo, Shat_demo
 
 def getPredictionMix(adata, key):
     alpha = adata.varm[f"{key}_alpha"].T
@@ -197,21 +99,23 @@ def getPredictionMix(adata, key):
     t_trans = adata.uns[f"{key}_t_trans"]
     u0 = adata.varm[f"{key}_u0"].T
     s0 = adata.varm[f"{key}_s0"].T
-    sigma_u = adata.obs[f"{key}_sigma_u"].to_numpy()
-    sigma_s = adata.obs[f"{key}_sigma_s"].to_numpy()
-    scaling = adata.obs[f"{key}_scaling"].to_numpy()
+    sigma_u = adata.var[f"{key}_sigma_u"].to_numpy()
+    sigma_s = adata.var[f"{key}_sigma_s"].to_numpy()
+    scaling = adata.var[f"{key}_scaling"].to_numpy()
     w = adata.uns[f"{key}_w"]
-    
+    parents = np.argmax(w,1)
     
     t = adata.obs[f"{key}_time"].to_numpy()
     y = adata.obs[f"{key}_label"].to_numpy()
     y_onehot = np.zeros(adata.obsm[f"{key}_ptype"].shape)
+    w_onehot = np.zeros(adata.obsm[f"{key}_ptype"].shape)
     for i in range(alpha.shape[0]):
         y_onehot[y==i, i] = 1
+        w_onehot[y==i, i] = 1
     
     Uhat, Shat = odeWeightedNumpy(t,
                                   y_onehot,
-                                  w,
+                                  w_onehot,
                                   alpha=alpha,
                                   beta=beta,
                                   gamma=gamma,
@@ -220,7 +124,7 @@ def getPredictionMix(adata, key):
                                   u0=u0,
                                   s0=s0,
                                   scaling=scaling)
-    logp = -(U-Uhat)**2/(2*sigma_u**2)-(S-Shat)**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
+    logp = -(adata.layers['Mu']-Uhat)**2/(2*sigma_u**2)-(adata.layers['Ms']-Shat)**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
     logp = np.nanmean(logp.sum(1))
     return Uhat, Shat, logp
 
@@ -232,33 +136,35 @@ def getPredictionMixDemo(adata, key, genes=None, N=100):
     t_trans = adata.uns[f"{key}_t_trans"]
     u0 = adata.varm[f"{key}_u0"].T
     s0 = adata.varm[f"{key}_s0"].T
-    sigma_u = adata.obs[f"{key}_sigma_u"].to_numpy()
-    sigma_s = adata.obs[f"{key}_sigma_s"].to_numpy()
-    scaling = adata.obs[f"{key}_scaling"].to_numpy()
+    sigma_u = adata.var[f"{key}_sigma_u"].to_numpy()
+    sigma_s = adata.var[f"{key}_sigma_s"].to_numpy()
+    scaling = adata.var[f"{key}_scaling"].to_numpy()
     w = adata.uns[f"{key}_w"]
+    parents = np.argmax(w, 1)
     
     t = adata.obs[f"{key}_time"].to_numpy()
     y = adata.obs[f"{key}_label"].to_numpy()
     
     Ntype = alpha.shape[0]
-    par_mask = w>(1/Ntype)
     t_demo = np.zeros((Ntype*N))
     y_demo = np.zeros((Ntype*N))
-    y_onehot = np.zeros(adata.obsm[f"{key}_ptype"].shape)
+    w_onehot = np.zeros((Ntype*N, Ntype))
+    y_onehot = np.zeros((Ntype*N, Ntype))
     
     for i in range(Ntype):
         tmin = t_trans[i]
-        if(np.any(par_mask[:,i])):
-            tmax = np.max(t_trans[par_mask[:,i]])
+        if(np.any(parents==i)):
+            tmax = np.max(t_trans[np.where(parents==i)[0]])
         else:
             tmax = t[y==i].max()
-        t_demo[i*N:(i+1)*N] = torch.linspace(tmin, tmax, N)
+        t_demo[i*N:(i+1)*N] = np.linspace(tmin, tmax, N)
         y_demo[i*N:(i+1)*N] = i
         y_onehot[y_demo==i, i] = 1
+        w_onehot[y_demo==i, parents[i]] = 1
     
-    Uhat, Shat = odeWeightedNumpy(t_demo,
+    Uhat, Shat = odeWeightedNumpy(t_demo.reshape(-1,1),
                                   y_onehot,
-                                  w,
+                                  w_onehot,
                                   alpha=alpha,
                                   beta=beta,
                                   gamma=gamma,
