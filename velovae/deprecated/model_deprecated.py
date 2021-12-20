@@ -263,3 +263,169 @@ def odeBranchNumpy(t, graph, init_type, **kwargs):
         py[cell_labels==i,i,:] = 1
     uhat, shat = odeBranch(t, graph, init_type, True, **kwargs)
     return np.sum(py*(uhat*scaling), 1), np.sum(py*shat, 1)
+
+
+
+def getPredictionBranching(adata, key, graph, init_types):
+    """
+    Given a key, the function finds the paraemeters from anndata and predicts U/S.
+    """
+    U, S = adata.layers["Mu"], adata.layers["Ms"]
+    Ntype = len(graph.keys())
+    #VAE
+    alpha = adata.varm[f"{key}_alpha"].T
+    beta = adata.varm[f"{key}_beta"].T
+    gamma = adata.varm[f"{key}_gamma"].T
+    t_trans = adata.uns[f"{key}_t_trans"]
+    ts = adata.varm[f"{key}_t_"].T
+    t = adata.obs[f"{key}_time"].to_numpy()
+    scaling = adata.var[f"{key}_scaling"].to_numpy()
+    u0 = adata.varm[f"{key}_u0"].T
+    s0 = adata.varm[f"{key}_s0"].T
+    labels = adata.obs[f"{key}_label"].to_numpy()
+    sigma_u, sigma_s = adata.var[f"{key}_sigma_u"].to_numpy(), adata.var[f"{key}_sigma_s"].to_numpy()
+
+    Uhat, Shat = odeBranchNumpy(t.reshape(len(t),1),
+                               graph,
+                               init_types,
+                               alpha=alpha,
+                               beta=beta,
+                               gamma=gamma,
+                               t_trans=t_trans,
+                               ts=ts,
+                               scaling=scaling,
+                               u0=u0,
+                               s0=s0,
+                               cell_labels=labels,
+                               train_mode=False)
+    
+    
+
+    logp = -(U-Uhat)**2/(2*sigma_u**2)-(S-Shat)**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
+    logp = np.nanmean(logp.sum(1))
+    
+    
+    return Uhat, Shat, logp
+
+def getPredictionBranchingDemo(adata, key, graph, init_types, genes=None, N=100):
+    Ntype = len(graph.keys())
+    #VAE
+    alpha = adata.varm[f"{key}_alpha"].T
+    beta = adata.varm[f"{key}_beta"].T
+    gamma = adata.varm[f"{key}_gamma"].T
+    t_trans = adata.uns[f"{key}_t_trans"]
+    ts = adata.varm[f"{key}_t_"].T
+    t = adata.obs[f"{key}_time"].to_numpy()
+    scaling = adata.var[f"{key}_scaling"].to_numpy()
+    u0 = adata.varm[f"{key}_u0"].T
+    s0 = adata.varm[f"{key}_s0"].T
+    
+    t = adata.obs[f"{key}_time"].to_numpy()
+    y = adata.obs[f"{key}_label"].to_numpy()
+    
+    t_demo = np.zeros((Ntype*N))
+    y_demo = np.zeros((Ntype*N))
+    t_trans_orig, ts_orig = recoverTransitionTime(t_trans, ts, graph, init_types)
+
+    for i in range(Ntype):
+        tmin = t_trans_orig[i]
+        if(len(self.transgraph.graph[i])>0):
+            tmax = np.max([t_trans_orig[j] for j in graph[i]])
+        else:
+            tmax = t[y==i].max()
+        t_demo[i*N:(i+1)*N] = np.linspace(tmin, tmax, N)
+        y_demo[i*N:(i+1)*N] = i
+    if(genes is None):
+        Uhat_demo, Shat_demo = odeBranchNumpy(t_demo.reshape(len(t),1),
+                                               graph,
+                                               init_types,
+                                               alpha=alpha,
+                                               beta=beta,
+                                               gamma=gamma,
+                                               t_trans=t_trans,
+                                               ts=ts,
+                                               scaling=scaling,
+                                               u0=u0,
+                                               s0=s0,
+                                               cell_labels=y_demo,
+                                               train_mode=False)
+    else:
+        gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
+        Uhat_demo, Shat_demo = odeBranchNumpy(t_demo.reshape(len(t),1),
+                                               graph,
+                                               init_types,
+                                               alpha=alpha[:, gene_indices],
+                                               beta=beta[:, gene_indices],
+                                               gamma=gamma[:, gene_indices],
+                                               t_trans=t_trans,
+                                               ts=ts[:, gene_indices],
+                                               scaling=scaling[:, gene_indices],
+                                               u0=u0[:, gene_indices],
+                                               s0=s0[:, gene_indices],
+                                               cell_labels=y_demo,
+                                               train_mode=False)
+    return t_demo, y_demo, Uhat_demo, Shat_demo
+
+def rnaVelocityBranch(adata, key, use_raw=False, use_scv_genes=False):
+    """
+    Compute the velocity based on
+    ds/dt = beta_y * u - gamma_y * s, where y is the cell type
+    """
+    alpha = adata.varm[f"{key}_alpha"].T
+    beta = adata.varm[f"{key}_beta"].T
+    gamma = adata.varm[f"{key}_gamma"].T
+    t_trans = adata.uns[f"{key}_t_trans"]
+    ts = adata.varm[f"{key}_ts"].T
+    t = adata.obs[f"{key}_time"].to_numpy()
+    scaling = adata.var[f"{key}_scaling"].to_numpy()
+    u0 = adata.varm[f"{key}_u0"].T
+    s0 = adata.varm[f"{key}_s0"].T
+    w = adata.uns[f"{key}_w"]
+    cell_labels = adata.obs[f"{key}_label"].to_numpy()
+    N,G = adata.n_obs, adata.n_vars
+    Ntype = alpha.shape[0]
+    
+    if(use_raw):
+        U, S = adata.layers['Mu'], adata.layers['Ms']
+    else:
+        y_onehot = np.zeros((N, Ntype))
+        w_ = np.zeros((Ntype, Ntype))
+        for i in range(Ntype):
+            y_onehot[cell_labels==i, i] = 1
+            w_[i, np.argmax(w[i])] = 1
+        w_onehot = np.sum(y_onehot.reshape((N, Ntype, 1))*w_, 1)
+        U, S =  odeWeightedNumpy(t.reshape(len(t),1),
+                                 y_onehot,
+                                 w_onehot,
+                                 alpha=alpha,
+                                 beta=beta,
+                                 gamma=gamma,
+                                 t_trans=t_trans,
+                                 ts=ts,
+                                 scaling=scaling,
+                                 u0=u0,
+                                 s0=s0)
+        U = U/scaling
+        """
+        u0_hat, s0_hat = initAllPairsNumpy(alpha,
+                                           beta,
+                                           gamma,
+                                           t_trans,
+                                           ts,
+                                           u0,
+                                           s0)
+        u0_hat = np.sum( u0_hat * w_.reshape((Ntype,Ntype,1)), 1 )
+        s0_hat = np.sum( s0_hat * w_.reshape((Ntype,Ntype,1)), 1 )
+        """
+    V = np.zeros((N,G))
+    for i in range(Ntype):
+        cell_mask = cell_labels==i
+        tmask = (t[cell_mask].reshape(-1,1) >= ts[i])
+        V[cell_mask] = (beta[i]*U[cell_mask] - gamma[i]*S[cell_mask] )*tmask
+    
+    adata.layers[f"{key}_velocity"] = V
+    if(use_scv_genes):
+        gene_mask = np.isnan(adata.var['fit_scaling'].to_numpy())
+        V[:, gene_mask] = np.nan
+    
+    return V, U, S
