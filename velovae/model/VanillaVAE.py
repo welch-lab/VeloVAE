@@ -2,10 +2,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+import os
 import time
 from velovae.plotting import plotPhase, plotSig, plotTLatent, plotTrainLoss, plotTestLoss
 
-from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, ode, makeDir, getGeneIndex
+from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, ode, getGeneIndex
 from .TrainingData import SCData
 
 
@@ -14,7 +15,8 @@ from .TrainingData import SCData
 ############################################################
 def KLtime(t0, dt, Tmax, lamb=1):
     """
-    KL Divergence for the near-uniform model, current not adopted
+    <Deprecated>
+    KL Divergence for the near-uniform model
     """
     B = t0.shape[0]
     t1 = t0+dt
@@ -46,6 +48,13 @@ def KLGaussian(mu1, std1, mu2, std2):
 ##############################################################
 class encoder(nn.Module):
     def __init__(self, Cin, N1=500, N2=250, device=torch.device('cpu'), checkpoint=None):
+        """
+        Cin: Input Data Dimension
+        N1: Width of the First Hidden Layer
+        N2: Width of the Second Hidden Layer
+        device: (Optional) Model Device. [Default: cpu]
+        checkpoint: (Optional) Pretrained Model. [Default: None]
+        """
         super(encoder, self).__init__()
         self.fc1 = nn.Linear(Cin, N1).to(device)
         self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
@@ -55,8 +64,7 @@ class encoder(nn.Module):
         self.dpt2 = nn.Dropout(p=0.2).to(device)
         
         self.net = nn.Sequential(self.fc1, self.bn1, nn.LeakyReLU(), self.dpt1,
-                                 self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2,
-                                 )
+                                 self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2)
         
         self.fc_mu, self.spt1 = nn.Linear(N2,1).to(device), nn.Softplus()
         self.fc_std, self.spt2 = nn.Linear(N2,1).to(device), nn.Softplus()
@@ -85,6 +93,14 @@ class encoder(nn.Module):
 
 class decoder(nn.Module):
     def __init__(self, adata, Tmax, p=98, device=torch.device('cpu'), tkey=None, checkpoint=None):
+        """
+        adata: AnnData Object
+        Tmax: Maximum Cell Time (used in time initialization)
+        p: Top Percentile Threshold to Pick Steady-State Cells
+        device: (Optional) Model Device [Default: cpu]
+        tkey: (Optional) Key in adata.obs that containes some prior time estimation
+        checkpoint: (Optional) File path to a pretrained model
+        """
         super(decoder,self).__init__()
         #Dynamical Model Parameters
         if(checkpoint is not None):
@@ -104,9 +120,6 @@ class decoder(nn.Module):
             if(tkey is not None):
                 t_init = adata.obs['{tkey}_time'].to_numpy()
             else:
-                #t_init = np.quantile(T,0.5,1)
-                #t_init = np.clip(t_init, 0, np.quantile(t_init, 0.95))
-                #self.t_init = t_init/t_init.max()*Tmax
                 T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
                 T_eq = np.zeros(T.shape)
                 Nbin = T.shape[0]//50+1
@@ -132,10 +145,9 @@ class decoder(nn.Module):
         
         
         
-    def forward(self, t, train_mode=False, scale_back=True, neg_slope=1e-4):
-        Uhat, Shat = ode(t, torch.exp(self.alpha), torch.exp(self.beta), torch.exp(self.gamma), torch.exp(self.ton), torch.exp(self.toff), train_mode, neg_slope=neg_slope)
-        if(scale_back):
-            Uhat = Uhat * torch.exp(self.scaling)
+    def forward(self, t, neg_slope=1e-4):
+        Uhat, Shat = ode(t, torch.exp(self.alpha), torch.exp(self.beta), torch.exp(self.gamma), torch.exp(self.ton), torch.exp(self.toff), neg_slope=neg_slope)
+        Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
     
     def predSU(self,t):
@@ -143,7 +155,7 @@ class decoder(nn.Module):
         Unscaled version, used for plotting
         """
         scaling = torch.exp(self.scaling)
-        Uhat, Shat = ode(t, torch.exp(self.alpha), torch.exp(self.beta), torch.exp(self.gamma), torch.exp(self.ton), torch.exp(self.toff), False)
+        Uhat, Shat = ode(t, torch.exp(self.alpha), torch.exp(self.beta), torch.exp(self.gamma), torch.exp(self.ton), torch.exp(self.toff), neg_slope=0)
         return nn.functional.relu(Uhat*scaling), nn.functional.relu(Shat)
 
 class VanillaVAE():
@@ -151,7 +163,12 @@ class VanillaVAE():
         """
         adata: AnnData Object
         Tmax: (float/int) Time Range 
+        device: (Optional) Model Device [Default: cpu]
+        hidden_size: (Optional) Width of the first and second hidden layer [Default:(500, 250)]
+        tprior: (Optional) Key in adata.obs that contains the prior time estimation
+        checkpoints: (Optional) File path to the pretrained encoder and decoder models
         """
+        #Extract Input Data
         try:
             U,S = adata.layers['Mu'], adata.layers['Ms']
         except KeyError:
@@ -160,13 +177,16 @@ class VanillaVAE():
         self.setDevice(device)
         
         G = adata.n_vars
+        #Create an encoder
         try:
             self.encoder = encoder(2*G, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0])
         except IndexError:
             print('Please provide two dimensions!')
+        #Create a decoder
         self.decoder = decoder(adata, Tmax, device=self.device, checkpoint=checkpoints[1])
         self.Tmax=torch.tensor(Tmax).to(self.device)
         
+        #Time prior
         if(tprior is None):
             self.mu_t = (torch.ones(U.shape[0],1)*Tmax*0.5).double().to(self.device)
             self.std_t = (torch.ones(U.shape[0],1)*Tmax*0.25).double().to(self.device)
@@ -175,13 +195,14 @@ class VanillaVAE():
             t = adata.obs[tprior].to_numpy()
             t = t/t.max()*Tmax
             self.mu_t = torch.tensor(t).view(-1,1).double().to(self.device)
-            self.std_t = (torch.ones(self.mu_t.shape)*Tmax*0.25).double().to(self.device)
+            self.std_t = (torch.ones(self.mu_t.shape)*Tmax*0.1).double().to(self.device)
         
-        #Training Configuration
+        #Default Training Configuration
         self.config = config = {
             "num_epochs":500, "learning_rate":1e-4, "learning_rate_ode":1e-4, "lambda":1e-3, "reg_t":1.0, "neg_slope":0.0,\
             "test_epoch":100, "save_epoch":100, "batch_size":128, "K_alt":0,\
-            "train_scaling":False, "train_std":False, "weight_sample":False
+            "train_scaling":False, "train_std":False, "weight_sample":False,\
+            "sparsify":2,
         }
     
     def setDevice(self, device, device_number=None):
@@ -203,13 +224,20 @@ class VanillaVAE():
         eps = torch.rand(t0.shape).to(self.device)
         return eps*dt+t0
     
-    def forward(self, data_in, train_mode=False):
+    def forward(self, data_in):
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t = self.encoder.forward(data_in_scale)
         t_global = self.reparameterize(mu_t, std_t)
          
-        uhat, shat = self.decoder.forward(t_global,train_mode,neg_slope=self.config["neg_slope"]) #uhat is scaled
-        return mu_t, std_t, t_global, torch.exp(self.decoder.ton), torch.exp(self.decoder.toff), uhat, shat
+        uhat, shat = self.decoder.forward(t_global,neg_slope=self.config["neg_slope"]) #uhat is scaled
+        return mu_t, std_t, t_global, uhat, shat
+    
+    def evalModel(self, data_in):
+        data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
+        mu_t, std_t = self.encoder.forward(data_in_scale)
+        
+        uhat, shat = self.decoder.forward(mu_t,neg_slope=0.0) #uhat is scaled
+        return mu_t, uhat, shat
         
     def setMode(self,mode):
         if(mode=='train'):
@@ -242,7 +270,11 @@ class VanillaVAE():
         if( weight is not None):
             logp = logp*weight
         err_rec = torch.mean(torch.sum(logp,1))
-        
+        if(torch.isinf(err_rec)):
+            print((u-uhat).max())
+            print(sigma_u.min())
+            print((s-shat).max())
+            print(sigma_s.min())
         return (- err_rec + b*(kldt))
         
     def train_epoch(self, X_loader, optimizer, optimizer2=None, K=1, reg_t=1.0):
@@ -264,7 +296,7 @@ class VanillaVAE():
             xbatch, weight, idx = batch[0].float().to(self.device), batch[1].float().to(self.device), batch[2].to(self.device)
             u = xbatch[:,:xbatch.shape[1]//2]
             s = xbatch[:,xbatch.shape[1]//2:]
-            mu_tx, std_tx, t_global, ton, toff, uhat, shat = self.forward(xbatch,True)
+            mu_tx, std_tx, t_global, uhat, shat = self.forward(xbatch)
             
             loss = self.VAERisk(mu_tx, 
                                 std_tx, 
@@ -324,7 +356,7 @@ class VanillaVAE():
         gind, gene_plot = getGeneIndex(adata.var_names, gene_plot)
         
         if(plot):
-            makeDir(figure_path)
+            os.makedirs(figure_path, exist_ok=True)
             #Plot the initial estimate
             plotTLatent(self.decoder.t_init, Xembed, f"Initial Estimate", plot, figure_path, f"init-vanilla")
             
@@ -377,9 +409,9 @@ class VanillaVAE():
         for epoch in range(n_epochs):
             #Train the encoder
             if(self.config["K_alt"]==0):
-                loss_list = self.train_epoch(data_loader, optimizer)
+                loss_list = self.train_epoch(data_loader, optimizer, reg_t=self.config["reg_t"])
                 loss_train += loss_list
-                loss_list = self.train_epoch(data_loader, optimizer_ode)
+                loss_list = self.train_epoch(data_loader, optimizer_ode, reg_t=self.config["reg_t"])
                 loss_train += loss_list
             else:
                 loss_list = self.train_epoch(data_loader, optimizer,optimizer_ode,self.config["K_alt"],self.config["reg_t"])
@@ -407,6 +439,27 @@ class VanillaVAE():
         plotTestLoss(loss_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(loss_test))],True, figure_path,'vanilla')
         return
     
+    def predAll(self, data):
+        N, G = data.shape[0], data.shape[1]//2
+        Uhat, Shat = torch.empty(N,G), torch.empty(N,G)
+        t = torch.empty(N)
+
+        with torch.no_grad():
+            B = self.config["batch_size"]
+            Nb = N // B
+            for i in range(Nb):
+                mu_tx, uhat, shat = self.evalModel(data[i*B:(i+1)*B])
+                Uhat[i*B:(i+1)*B] = uhat.cpu()
+                Shat[i*B:(i+1)*B] = shat.cpu()
+                t[i*B:(i+1)*B] = mu_tx.cpu().squeeze()
+            if(N > B*Nb):
+                mu_tx, uhat, shat = self.evalModel(data[B*Nb:])
+                Uhat[Nb*B:] = uhat.cpu()
+                Shat[Nb*B:] = shat.cpu()
+                t[Nb*B:] = mu_tx.cpu().squeeze()
+
+        return Uhat, Shat, t
+    
     def test(self,
              data, 
              Xembed,
@@ -421,20 +474,21 @@ class VanillaVAE():
         data: ncell x ngene tensor
         """
         self.setMode('eval')
-        with torch.no_grad():
-            mu_t, std_t, t_global, ton, toff, Uhat, Shat = self.forward(data)
-        U,S = data[:,:data.shape[1]//2].detach().cpu().numpy(), data[:,data.shape[1]//2:].detach().cpu().numpy()
-        mse = np.mean((Uhat.detach().cpu().numpy()-U)**2+(Shat.detach().cpu().numpy()-S)**2)
+        Uhat, Shat, t = self.predAll(data)
+        Uhat = Uhat.numpy()
+        Shat = Shat.numpy()
+        t = t.numpy()
         
-        t = t_global.detach().cpu().numpy()
-        ton, toff = ton.detach().cpu().numpy(),toff.detach().cpu().numpy()
-        state = np.ones(ton.shape)*(t>toff)+np.ones(ton.shape)*2*(t<ton)
+        U,S = data[:,:data.shape[1]//2].detach().cpu().numpy(), data[:,data.shape[1]//2:].detach().cpu().numpy()
+        mse = np.mean((Uhat-U)**2+(Shat-S)**2)
+        
+        ton, toff = np.exp(self.decoder.ton.detach().cpu().numpy()), np.exp(self.decoder.toff.detach().cpu().numpy())
+        state = np.ones(toff.shape)*(t.reshape(-1,1)>toff)+np.ones(ton.shape)*2*(t.reshape(-1,1)<ton)
         if(plot):
             #Plot Time
             plotTLatent(t, Xembed, f"Training Epoch {testid}", plot, path, f"{testid}-vanilla")
             
             #Plot u/s-t and phase portrait for each gene
-            Uhat, Shat = Uhat.detach().cpu().numpy(), Shat.detach().cpu().numpy()
             for i in range(len(gind)):
                 idx = gind[i]
                 #track_idx = plotVAE.pickcell(U[:,i],S[:,i],cell_labels) if cell_labels is not None else None
@@ -457,7 +511,7 @@ class VanillaVAE():
                         path, 
                         f"{gene_plot[i]}-{testid}-vanilla",
                         cell_labels=cell_labels_raw,
-                        sparsify=5)
+                        sparsify=self.config["sparsify"])
         
         return mse, t.squeeze(), ton.squeeze(), toff.squeeze()
         
@@ -467,7 +521,7 @@ class VanillaVAE():
         Save the encoder parameters to a .pt file.
         Save the decoder parameters to the anndata object.
         """
-        makeDir(file_path)
+        os.makedirs(file_path, exist_ok=True)
         torch.save(self.encoder.state_dict(), f"{file_path}/{enc_name}.pt")
         torch.save(self.decoder.state_dict(), f"{file_path}/{dec_name}.pt")
         
@@ -475,7 +529,7 @@ class VanillaVAE():
         """
         Save the ODE parameters and cell time to the anndata object and write it to disk.
         """
-        makeDir(file_path)
+        os.makedirs(file_path, exist_ok=True)
         
         adata.var[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy())
         adata.var[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy())
