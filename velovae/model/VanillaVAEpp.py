@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import os
 from torch.utils.data import Dataset, DataLoader
 import time
-from velovae.plotting import plotPhase, plotSig, plotTLatent, plotTrainLoss, plotTestLoss
+from velovae.plotting import plotPhase, plotSig, plotSig_, plotTLatent, plotTrainLoss, plotTestLoss
 
 from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, getGeneIndex, optimal_transport_duality_gap
 from .model_util import predSU, ode, odeNumpy, knnX0
@@ -60,7 +60,7 @@ class encoder(nn.Module):
         return mu_tx, std_tx, mu_zx, std_zx
 
 class decoder(nn.Module):
-    def __init__(self, adata, Tmax, Cz, N1=250, N2=500, p=98, N_ind=8, device=torch.device('cpu'), tkey=None, checkpoint=None):
+    def __init__(self, adata, Tmax, Cz, N1=250, N2=500, p=98, coeff_t=[0.1,0.15], n_neighbor=50, device=torch.device('cpu'), tkey=None, checkpoint=None):
         super(decoder,self).__init__()
         G = adata.n_vars
         self.fc1 = nn.Linear(Cz, N1).to(device)
@@ -144,8 +144,8 @@ class decoder(nn.Module):
         self.sigma_u.requires_grad = False
         self.sigma_s.requires_grad = False
         
-        self.dt = [Tmax*0.1, Tmax*0.15]
-        self.n_neighbor = 30
+        self.dt = [Tmax*coeff_t[0], Tmax*coeff_t[1]]
+        self.n_neighbor = n_neighbor
         u0, s0, t0, knn = knnX0(U,S,self.t_init,adata.obsm["X_pca"],self.dt,self.n_neighbor)
         self.u0 = torch.tensor(u0, device=device).float()
         self.s0 = torch.tensor(s0, device=device).float()
@@ -191,9 +191,9 @@ class decoder(nn.Module):
         
         #Uhat, Shat = ode(t, alpha, torch.exp(self.beta), torch.exp(self.gamma), self.ton.exp(), self.toff.exp())
         if(neg_slope>0):
-            Uhat, Shat = predSU(F.leaky_relu(t-self.t0[sample_idx], neg_slope), self.u0[sample_idx], self.s0[sample_idx], alpha, self.beta.exp(), self.gamma.exp())
+            Uhat, Shat = predSU(F.leaky_relu(t-self.t0[sample_idx], neg_slope), self.u0[sample_idx]/self.scaling.exp(), self.s0[sample_idx], alpha, self.beta.exp(), self.gamma.exp())
         else:
-            Uhat, Shat = predSU(F.relu(t-self.t0[sample_idx]), self.u0[sample_idx], self.s0[sample_idx], alpha, self.beta.exp(), self.gamma.exp())
+            Uhat, Shat = predSU(F.relu(t-self.t0[sample_idx]), self.u0[sample_idx]/self.scaling.exp(), self.s0[sample_idx], alpha, self.beta.exp(), self.gamma.exp())
         Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
     
@@ -211,19 +211,19 @@ class decoder(nn.Module):
         
         if(gidx is None):
             if(sample_idx is None):
-                Uhat, Shat = predSU(F.relu(t-self.t0), self.u0, self.s0, alpha, self.beta.exp(), self.gamma.exp())
+                Uhat, Shat = predSU(F.relu(t-self.t0), self.u0/self.scaling.exp(), self.s0, alpha, self.beta.exp(), self.gamma.exp())
             else:
-                Uhat, Shat = predSU(F.relu(t-self.t0[sample_idx]), self.u0[sample_idx], self.s0[sample_idx], alpha, self.beta.exp(), self.gamma.exp())
+                Uhat, Shat = predSU(F.relu(t-self.t0[sample_idx]), self.u0[sample_idx]/self.scaling.exp(), self.s0[sample_idx], alpha, self.beta.exp(), self.gamma.exp())
         else:
             if(sample_idx is None):
-                Uhat, Shat = predSU(F.relu(t-self.t0), self.u0[:,gidx], self.s0[:,gidx], alpha[:,gidx], self.beta[gidx].exp(), self.gamma[gidx].exp())
+                Uhat, Shat = predSU(F.relu(t-self.t0), self.u0[:,gidx]/self.scaling[gidx].exp(), self.s0[:,gidx], alpha[:,gidx], self.beta[gidx].exp(), self.gamma[gidx].exp())
             else:
-                Uhat, Shat = predSU(F.relu(t-self.t0[sample_idx]), self.u0[sample_idx,gidx], self.s0[sample_idx,gidx], alpha[gidx], self.beta[gidx].exp(), self.gamma[gidx].exp())
+                Uhat, Shat = predSU(F.relu(t-self.t0[sample_idx]), self.u0[sample_idx,gidx]/self.scaling[gidx].exp(), self.s0[sample_idx,gidx], alpha[gidx], self.beta[gidx].exp(), self.gamma[gidx].exp())
             return nn.functional.relu(Uhat*scaling[gidx]), nn.functional.relu(Shat)
         return nn.functional.relu(Uhat*scaling), nn.functional.relu(Shat)
 
-class VanillaVAEpp(VanillaVAE):
-    def __init__(self, adata, Tmax, Cz, device='cpu', hidden_size=(500, 250, 250, 500), tprior=None, checkpoints=[None,None], N_ind=2):
+class VanillaVAEpp:
+    def __init__(self, adata, Tmax, Cz, device='cpu', hidden_size=(500, 250, 250, 500), tprior=None, checkpoints=[None,None], coeff_t=[0.1,0.15], n_neighbor=50):
         """
         adata: AnnData Object
         Tmax: (float/int) Time Range 
@@ -241,7 +241,15 @@ class VanillaVAEpp(VanillaVAE):
             self.encoder = encoder(2*G, Cz, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0])
         except IndexError:
             print('Please provide two dimensions!')
-        self.decoder = decoder(adata, Tmax, Cz, hidden_size[2], hidden_size[3], N_ind=N_ind ,device=self.device, checkpoint=checkpoints[1])
+        self.decoder = decoder(adata, 
+                               Tmax, 
+                               Cz, 
+                               hidden_size[2], 
+                               hidden_size[3], 
+                               coeff_t=coeff_t, 
+                               n_neighbor=n_neighbor ,
+                               device=self.device, 
+                               checkpoint=checkpoints[1])
         self.Tmax=torch.tensor(Tmax).to(self.device)
         
         if(tprior is None):
@@ -259,7 +267,7 @@ class VanillaVAEpp(VanillaVAE):
         #Training Configuration
         self.config = {
             "num_epochs":500, "learning_rate":1e-4, "learning_rate_ode":1e-4, "lambda":1e-3, "reg_t":1.0, "reg_z":1.0, "neg_slope":0.0,\
-            "test_epoch":100, "save_epoch":100, "batch_size":128, "K_alt":0,\
+            "test_epoch":100, "save_epoch":100, "batch_size":128, "K_alt":0, "N_knn":100, "knn":30,\
             "train_scaling":False, "train_std":False, "weight_sample":False,\
             "sparsify":2
         }
@@ -436,16 +444,18 @@ class VanillaVAEpp(VanillaVAE):
                                        save, 
                                        figure_path,
                                        cell_labels_raw)
-                #Update the initial conditions
-                if(epoch+1>=100):
-                    u0, s0, t0, knn = knnX0(U, S, t, z, self.decoder.dt, self.decoder.n_neighbor)
-                    self.decoder.u0 = torch.tensor(u0, device=self.device).to(float)
-                    self.decoder.s0 = torch.tensor(s0, device=self.device).to(float)
-                    self.t0 = torch.tensor(t0, device=self.device).to(float)
-                
                 print(f"Epoch {epoch+1}: Loss = {loss}, \t Total Time = {convertTime(time.time()-start)}")
                 loss_test.append(loss)
                 self.setMode('train')
+            
+            #Update the initial conditions
+            if( (epoch+1>=self.config["N_knn"]) and ((epoch+1) % 25 == 0) ):
+                u0, s0, t0, knn = knnX0(U, S, t, z, self.decoder.dt, self.decoder.n_neighbor)
+                self.decoder.u0 = torch.tensor(u0, device=self.device).to(float)
+                self.decoder.s0 = torch.tensor(s0, device=self.device).to(float)
+                self.decoder.t0 = torch.tensor(t0.reshape(-1,1), device=self.device).to(float)
+                
+                
         
         print("***     Finished Training     ***")
         
@@ -519,6 +529,13 @@ class VanillaVAEpp(VanillaVAE):
                         f"{gene_plot[i]}-{testid}-rho",
                         cell_labels=cell_labels_raw,
                         sparsify=self.config['sparsify'])
+                plotSig_(self.decoder.t0.squeeze().detach().cpu().numpy(), 
+                         self.decoder.u0[:,gind[i]].detach().cpu().numpy(), self.decoder.s0[:,gind[i]].detach().cpu().numpy(), 
+                         cell_labels=cell_labels_raw,
+                         title=gene_plot[i], 
+                         savefig=True, 
+                         path=path, 
+                         figname=f"{gene_plot[i]}-x0-{testid}")
         
         return mse, t.squeeze(), z
     
@@ -538,8 +555,8 @@ class VanillaVAEpp(VanillaVAE):
         adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
         U,S = adata.layers['Mu'], adata.layers['Ms']
         scaling = adata.var[f"{key}_scaling"].to_numpy()
-        D_sc = np.concatenate((U/scaling,S),axis=1)
-        mu_t, std_t, mu_z, std_z = self.encoder.forward(torch.tensor(D_sc).float().to(self.device))
+        data_in_scale = np.concatenate((U/scaling,S),1)
+        mu_t, std_t, mu_z, std_z = self.encoder.forward(torch.tensor(data_in_scale).float().to(self.device))
         my_t = (mu_t).squeeze().detach().cpu().numpy()
         my_z = mu_z.detach().cpu().numpy()
         
