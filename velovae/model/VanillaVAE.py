@@ -321,6 +321,7 @@ class VanillaVAE():
             if(key in self.config):
                 self.config[key] = config[key]
             else:
+                self.config[key] = config[key]
                 print(f"Warning: unknown hyperparameter: {key}")
         if(self.config["train_scaling"]):
             self.decoder.scaling.requires_grad = True
