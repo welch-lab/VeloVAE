@@ -10,7 +10,7 @@ import time
 from velovae.plotting import plotPhase, plotSig, plotSig_, plotTLatent, plotTrainLoss, plotTestLoss
 
 from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, getGeneIndex, optimal_transport_duality_gap
-from .model_util import predSU, ode, odeNumpy, knnX0, knnX0_random, knn_alt
+from .model_util import predSU, ode, odeNumpy, knnX0
 from .TrainingData import SCData
 from .VanillaVAE import VanillaVAE, KLGaussian
 from .velocity import rnaVelocityVAEpp
