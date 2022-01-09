@@ -39,22 +39,6 @@ def transitionTime(t, cell_labels, cell_types, graph, init_type, G, dt_min=1e-4)
         transitionTimeRec(t_trans, ts, t_type, x, graph, G, dt_min=dt_min)
     return t_trans, ts
 
-
-
-def linregMtx(u,s):
-    """
-    Performs linear regression ||U-kS||_2 while 
-    U and S are matrices and k is a vector.
-    Handles divide by zero by returninig some default value.
-    """
-    Q = np.sum(s*s, axis=0)
-    R = np.sum(u*s, axis=0)
-    k = R/Q
-    if np.isinf(k) or np.isnan(k):
-        k = 1.5
-    #k[np.isinf(k) | np.isnan(k)] = 1.5
-    return k
-
 def reinitTypeParams(U, S, t, ts, cell_labels, cell_types, init_types):
     """
     Applied under branching ODE
