@@ -1,46 +1,72 @@
 import numpy as np
-import torch 
-import torch.nn as nn
-import anndata
-import scvelo as scv
-import scanpy
+import pandas as pd
 from pandas import DataFrame, Index
-from ..model.model_util import scvPred, makeDir, predSUNumpy, odeWeightedNumpy
+from ..model.model_util import makeDir
 from .evaluation_util import *
 from velovae.plotting import plotPhaseGrid, plotSigGrid, plotClusterGrid, plotTimeGrid
 
 
 
 
-def getMetric(adata, method, key, scv_mask=True):
+def getMetric(adata, method, key, scv_key=None, scv_mask=True):
     """
     Get specific metrics given a method.
+    key: key for extracting the ODE parameters learned by the model
+    scv_key (optional): key of the scvelo fitting, used for filtering the genes (only effective if scv_mask=True)
+    scv_mask: whether to filter out the genes not fitted by scvelo (used for fairness in the comparison of different methods)
     """
     stats = {}
-    if method=='scvelo':
-        Uhat, Shat, logp = getPredictionSCV(adata, key)
-    elif method=='vanilla':
-        Uhat, Shat, logp = getPredictionVanilla(adata, key)
-    elif method=='branching':
-        Uhat, Shat, logp = getPredictionMix(adata, key)
+    if method=='scVelo':
+        Uhat, Shat, logp_train = getPredictionSCV(adata, key)
+        logp_test = "N/A"
+    elif method=='VAE':
+        Uhat, Shat, logp_train, logp_test = getPredictionVanilla(adata, key, scv_key)
+    elif method=='BrVAE' or method=='BrVAE++':
+        Uhat, Shat, logp_train, logp_test = getPredictionBranching(adata, key, scv_key)
+    elif method=='VAE++':
+        Uhat, Shat, logp_train, logp_test = getPredictionVAEpp(adata, key, scv_key)
+        
     U, S = adata.layers['Mu'], adata.layers['Ms']
-    
+    if(method=='scVelo'):
+        train_idx = np.array(range(adata.n_obs)).astype(int)
+        test_idx = np.array([])
+    else:
+        train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
     if(scv_mask):
         try:
             gene_mask = ~np.isnan(adata.var['fit_alpha'].to_numpy())
-            stats['MSE'] = np.nanmean((U[:,gene_mask]-Uhat[:,gene_mask])**2+(S[:,gene_mask]-Shat[:,gene_mask])**2)
-            stats['MAE'] = np.nanmean(np.abs(U[:,gene_mask]-Uhat[:,gene_mask])+np.abs(S[:,gene_mask]-Shat[:,gene_mask]))
+            stats['MSE Train'] = np.nanmean((U[train_idx][:,gene_mask]-Uhat[train_idx][:,gene_mask])**2+(S[train_idx][:,gene_mask]-Shat[train_idx][:,gene_mask])**2)
+            stats['MAE Train'] = np.nanmean(np.abs(U[train_idx][:,gene_mask]-Uhat[train_idx][:,gene_mask])+np.abs(S[train_idx][:,gene_mask]-Shat[train_idx][:,gene_mask]))
+            if(len(test_idx)>0):
+                stats['MSE Test'] = np.nanmean((U[test_idx][:,gene_mask]-Uhat[test_idx][:,gene_mask])**2+(S[test_idx][:,gene_mask]-Shat[test_idx][:,gene_mask])**2)
+                stats['MAE Test'] = np.nanmean(np.abs(U[test_idx][:,gene_mask]-Uhat[test_idx][:,gene_mask])+np.abs(S[test_idx][:,gene_mask]-Shat[test_idx][:,gene_mask]))
+            else:
+                stats['MSE Test'] = "N/A"
+                stats['MAE Test'] = "N/A"
         except KeyError:
             print('Warning: scvelo fitting not found! Compute the full MSE/MAE instead.')
-            stats['MSE'] = np.nanmean((U-Uhat)**2+(S-Shat)**2)
-            stats['MAE'] = np.nanmean(np.abs(U-Uhat)+np.abs(S-Shat))
+            stats['MSE Train'] = np.nanmean((U[train_idx]-Uhat[train_idx])**2+(S[train_idx]-Shat[train_idx])**2)
+            stats['MAE Train'] = np.nanmean(np.abs(U[train_idx]-Uhat[train_idx])+np.abs(S[train_idx]-Shat[train_idx]))
+            if(len(test_idx)>0):
+                stats['MSE Test'] = np.nanmean((U[test_idx]-Uhat[test_idx])**2+(S[test_idx]-Shat[test_idx])**2)
+                stats['MAE Test'] = np.nanmean(np.abs(U[test_idx]-Uhat[test_idx])+np.abs(S[test_idx]-Shat[test_idx]))
+            else:
+                stats['MSE Test'] = "N/A"
+                stats['MAE Test'] = "N/A"
     else:
-        stats['MSE'] = np.nanmean((U-Uhat)**2+(S-Shat)**2)
-        stats['MAE'] = np.nanmean(np.abs(U-Uhat)+np.abs(S-Shat))
-    stats['LL'] = logp
+        stats['MSE Train'] = np.nanmean((U[train_idx]-Uhat[train_idx])**2+(S[train_idx]-Shat[train_idx])**2)
+        stats['MAE Train'] = np.nanmean(np.abs(U[train_idx]-Uhat[train_idx])+np.abs(S[train_idx]-Shat[train_idx]))
+        if(len(test_idx)>0):
+            stats['MSE Test'] = np.nanmean((U[test_idx]-Uhat[test_idx])**2+(S[test_idx]-Shat[test_idx])**2)
+            stats['MAE Test'] = np.nanmean(np.abs(U[test_idx]-Uhat[test_idx])+np.abs(S[test_idx]-Shat[test_idx]))
+        else:
+            stats['MSE Test'] = "N/A"
+            stats['MAE Test'] = "N/A"
+    stats['LL Train'] = logp_train
+    stats['LL Test'] = logp_test
     if('latent_time' in adata.obs):
         tscv = adata.obs['latent_time'].to_numpy()
-        if(method=='scvelo'):
+        if(method=='scVelo'):
             T_scv = adata.layers["fit_t"]
             mask = ~(np.isnan(adata.var['fit_alpha'].to_numpy()))
             corr, pval = 0, 0
@@ -56,63 +82,6 @@ def getMetric(adata, method, key, scv_mask=True):
             corr, pval = spearmanr(t, tscv)
         stats['corr'] = corr
     return stats
-
-def testAllTransition(adata, key, k=2):
-    U, S = adata.layers["Mu"], adata.layers["Ms"]
-    alpha = adata.varm[f"{key}_alpha"].T
-    beta = adata.varm[f"{key}_beta"].T
-    gamma = adata.varm[f"{key}_gamma"].T
-    ts = adata.varm[f"{key}_ts"].T
-    t_trans = adata.uns[f"{key}_t_trans"]
-    u0 = adata.varm[f"{key}_u0"].T
-    s0 = adata.varm[f"{key}_s0"].T
-    sigma_u = adata.var[f"{key}_sigma_u"].to_numpy()
-    sigma_s = adata.var[f"{key}_sigma_s"].to_numpy()
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
-    w = adata.uns[f"{key}_w"]
-    
-    t = adata.obs[f"{key}_time"].to_numpy()
-    y = adata.obs[f"{key}_label"].to_numpy()
-    
-    
-    #Get the best k parents
-    Ntype, G = alpha.shape
-    E = np.eye(Ntype)
-    y_onehot = E[y]
-    parents = np.zeros((Ntype, k))
-    for i in range(Ntype):
-        idx_w = np.flip(np.argsort(w[i]))
-        parents[i] = idx_w[:k]
-    print(parents)
-    
-    #Try every possible graph and print out the log likelihood
-    logp = np.zeros((int(k**Ntype)))
-    for i in range(int(k**Ntype)):
-        w_onehot = np.zeros((Ntype, Ntype))
-        m = i
-        for j in range(Ntype):
-            idx = m % 2
-            w_onehot[j, int(parents[j, idx])] = 1
-            m = m//2
-        w_onehot = w_onehot[y]
-        Uhat, Shat = odeWeightedNumpy(t, y_onehot,
-                                      w_onehot,
-                                      alpha=alpha,
-                                      beta=beta,
-                                      gamma=gamma,
-                                      t_trans=t_trans,
-                                      ts=ts,
-                                      u0=u0,
-                                      s0=s0,
-                                      sigma_u = sigma_u,
-                                      sigma_s = sigma_s,
-                                      scaling=scaling)
-        logp[i] = np.sum(np.mean((U-Uhat)**2/(2*sigma_u**2)+(S-Shat)**2/(2*sigma_s**2)+np.log(sigma_u)+np.log(sigma_s)+np.log(2*np.pi), 0))
-        print(i,'\t', logp[i])
-    idx_p = np.flip(np.argsort(logp))
-    print(idx_p[:10])
-    
-    return
 
 def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500, embed="umap", grid_size=(1,1), save_path="figures"):
     """
@@ -136,34 +105,47 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
     
     Ntype = len(cell_types_raw)
     
-    methods = np.unique(methods)
     stats = {}
     Uhat, Shat = {},{}
     That, Yhat = {},{}
     
+    scv_idx = np.where(methods=='scVelo')[0]
+    scv_key = keys[scv_idx[0]] if(len(scv_idx)>0) else "fit"
     for i, method in enumerate(methods):
-        stats_i = getMetric(adata, method, keys[i])
+        stats_i = getMetric(adata, method, keys[i], scv_key)
         stats[method] = stats_i
-        if(method=='scvelo'):
+        if(method=='scVelo'):
             t_i, Uhat_i, Shat_i = getPredictionSCVDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = np.concatenate((np.zeros((Nplot)), np.ones((Nplot))))
-        elif(method=='vanilla'):
+        elif(method=='VAE'):
             t_i, Uhat_i, Shat_i = getPredictionVanillaDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = None
-        elif(method=='branching'):
-            t_i, y_i, Uhat_i, Shat_i = getPredictionMixDemo(adata, keys[i], genes, Nplot)
+        elif(method=='BrVAE' or method=='BrVAE++'):
+            t_i, y_i, Uhat_i, Shat_i = getPredictionBranchingDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = y_i
+        elif(method=='VAE++'):
+            Uhat_i, Shat_i, logp_train, logp_test = getPredictionVAEpp(adata, keys[i], None)
+            
+            t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
+            cell_labels_raw = adata.obs["clusters"].to_numpy()
+            cell_types_raw = np.unique(cell_labels_raw)
+            cell_labels = np.zeros((len(cell_labels_raw)))
+            for i in range(len(cell_types_raw)):
+                cell_labels[cell_labels_raw==cell_types_raw[i]] = i
+            Yhat[method] = cell_labels
         That[method] = t_i
-        Uhat[method] = Uhat_i
-        Shat[method] = Shat_i
+        Uhat[method] = Uhat_i[:,gene_indices] if method=='VAE++' else Uhat_i
+        Shat[method] = Shat_i[:,gene_indices] if method=='VAE++' else Shat_i
     
     print("---     Post Analysis     ---")
+    print(f"Dataset Size: {adata.n_obs} cells, {adata.n_vars} genes")
     for method in stats:
         metrics = list(stats[method].keys())
         break
     stats_df = DataFrame({}, index=Index(metrics))
     for i, method in enumerate(methods):
         stats_df.insert(i, method, [stats[method][x] for x in metrics])
+    pd.set_option("precision", 4)
     print(stats_df)
     
     print("---   Plotting  Results   ---")
@@ -172,7 +154,7 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
         p_given = np.zeros((len(cell_labels),Ntype))
         for i in range(Ntype):
             p_given[cell_labels==i, i] = 1
-        Y = {"Labels": p_given}
+        Y = {"True": p_given}
         
         for i, method in enumerate(methods):
             if(f"{keys[i]}_ptype" in adata.obsm):
@@ -192,7 +174,7 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
         T = {}
         std_t = {}
         for i, method in enumerate(methods):
-            if(method=='scvelo'):
+            if(method=='scVelo'):
                 T[method] = adata.obs["latent_time"].to_numpy()
                 std_t[method] = np.zeros((adata.n_obs))
             else:
@@ -211,7 +193,7 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
         Labels_phase = {}
         Legends_phase = {}
         for i, method in enumerate(methods):
-            if(method=='vanilla' or method=='scvelo'):
+            if(method=='VAE' or method=='scVelo'):
                 Labels_phase[method] = cellState(adata, method, keys[i], gene_indices)
                 Legends_phase[method] = ['Induction', 'Repression', 'Off']
             else:
@@ -236,15 +218,15 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
         Labels_sig = {}
         Legends_sig = {}
         for i, method in enumerate(methods):
-            if(method=='scvelo'):
+            if(method=='scVelo'):
                 methods_ = np.concatenate((methods,['scVelo Global']))
                 T[method] = adata.layers[f"{keys[i]}_t"][:,gene_indices]
-                T['scvelo Global'] = adata.obs["latent_time"].to_numpy()*20
+                T['scVelo Global'] = adata.obs["latent_time"].to_numpy()*20
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs["clusters"].to_numpy()])
-                Labels_sig['scvelo Global'] = Labels_sig[method]
+                Labels_sig['scVelo Global'] = Labels_sig[method]
                 Legends_sig[method] = cell_types_raw
-                Legends_sig['scvelo Global'] = cell_types_raw
-            elif(method=='vanilla'):
+                Legends_sig['scVelo Global'] = cell_types_raw
+            elif(method=='VAE' or method=='VAE++'):
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs["clusters"].to_numpy()])
                 Legends_sig[method] = cell_types_raw
