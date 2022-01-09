@@ -87,7 +87,7 @@ def predSUNumpy(tau, u0, s0, alpha, beta, gamma):
     u0, s0: [G] or [N type x G] initial conditions
     alpha, beta, gamma: [G] or [N type x G] generation, splicing and degradation rates
     """
-    unstability = (np.abs(beta-gamma) < 1e-3)
+    unstability = (np.abs(beta-gamma) < 1e-6)
     expb, expg = np.exp(-beta*tau), np.exp(-gamma*tau)
     
     upred = u0*expb+alpha/beta*(1-expb)
@@ -342,7 +342,7 @@ def predSteadyNumpy(ts,alpha,beta,gamma):
     """
     alpha_, beta_, gamma_ = np.clip(alpha,a_min=0,a_max=None), np.clip(beta,a_min=0,a_max=None), np.clip(gamma,a_min=0,a_max=None)
     eps = 1e-6
-    unstability = np.abs(beta-gamma) < 1e-3
+    unstability = np.abs(beta-gamma) < 1e-6
     
     ts_ = ts.squeeze()
     expb, expg = np.exp(-beta*ts_), np.exp(-gamma*ts_)
@@ -357,7 +357,7 @@ def predSteady(tau_s, alpha, beta, gamma):
     tau_s: [G] time duration from ton to toff
     alpha, beta, gamma: [G] generation, splicing and degradation rates
     """
-    unstability = (torch.abs(beta - gamma) < 1e-3).long()
+    unstability = (torch.abs(beta - gamma) < 1e-6).long()
     eps = 1e-6
     
     expb, expg = torch.exp(-beta*tau_s), torch.exp(-gamma*tau_s)
@@ -366,7 +366,7 @@ def predSteady(tau_s, alpha, beta, gamma):
     
     return u0,s0
 
-def odeNumpy(t,alpha,beta,gamma,to,ts,scaling=None):
+def odeNumpy(t,alpha,beta,gamma,to,ts,scaling=None, k=10.0):
     """
     (Numpy Version)
     ODE Solution
@@ -375,22 +375,26 @@ def odeNumpy(t,alpha,beta,gamma,to,ts,scaling=None):
     alpha, beta, gamma: [G] generation, splicing and degradation rates
     to, ts: [G] switch-on and -off time
     """
-    unstability = (np.abs(beta - gamma) < 1e-3)
+    unstability = (np.abs(beta - gamma) < 1e-6)
     eps = 1e-6
     
     o = (t<=ts).astype(int)
     #Induction
-    tau_on = np.clip(t-to,a_min=0,a_max=None)
+    #tau_on = np.clip(t-to,a_min=0,a_max=None)
+    tau_on = F.softplus(torch.tensor(t-to), beta=k).numpy()
+    assert np.all(~np.isnan(tau_on))
     expb, expg = np.exp(-beta*tau_on), np.exp(-gamma*tau_on)
     uhat_on = alpha/(beta+eps)*(1.0-expb)
     shat_on = alpha/(gamma+eps)*(1.0-expg)+alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability)+alpha*tau_on*unstability
     
     #Repression
-    u0_,s0_ = predSteadyNumpy(ts-to,alpha,beta,gamma) #[G]
+    u0_,s0_ = predSteadyNumpy(np.clip(ts-to,0,None),alpha,beta,gamma) #[G]
     if(ts.ndim==2 and to.ndim==2):
         u0_ = u0_.reshape(-1,1)
         s0_ = s0_.reshape(-1,1)
-    tau_off = np.clip(t-ts,a_min=0,a_max=None)
+    #tau_off = np.clip(t-ts,a_min=0,a_max=None)
+    tau_off = F.softplus(torch.tensor(t-ts), beta=k).numpy()
+    assert np.all(~np.isnan(tau_off))
     expb, expg = np.exp(-beta*tau_off), np.exp(-gamma*tau_off)
     uhat_off = u0_*expb
     shat_off = s0_*expg+(-beta*u0_)/(gamma-beta+eps)*(expg-expb)*(1-unstability)
@@ -400,7 +404,7 @@ def odeNumpy(t,alpha,beta,gamma,to,ts,scaling=None):
         uhat *= scaling
     return uhat, shat 
 
-def ode(t,alpha,beta,gamma,to,ts,neg_slope=0):
+def ode(t,alpha,beta,gamma,to,ts,neg_slope=0.0):
     """
     (PyTorch Version)
     ODE Solution
@@ -409,30 +413,24 @@ def ode(t,alpha,beta,gamma,to,ts,neg_slope=0):
     alpha, beta, gamma: [G] generation, splicing and degradation rates
     to, ts: [G] switch-on and -off time
     """
-    unstability = (torch.abs(beta - gamma) < 1e-3).long()
+    unstability = (torch.abs(beta - gamma) < 1e-6).long()
     eps = 1e-6
     o = (t<=ts).int()
     
     #Induction
-    tau_on = nn.functional.leaky_relu(t-to, negative_slope=neg_slope)
+    tau_on = F.leaky_relu(t-to, negative_slope=neg_slope)
     expb, expg = torch.exp(-beta*tau_on), torch.exp(-gamma*tau_on)
     uhat_on = alpha/(beta+eps)*(torch.tensor([1.0]).to(alpha.device)-expb)
     shat_on = alpha/(gamma+eps)*(torch.tensor([1.0]).to(alpha.device)-expg)+ (alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability) + alpha*tau_on*expg * unstability)
     
-    assert not torch.any(torch.isnan(uhat_on))
-    assert not torch.any(torch.isnan(shat_on))
-    
     #Repression
-    u0_,s0_ = predSteady(nn.functional.leaky_relu(ts-to, neg_slope),alpha,beta,gamma)
-    assert not torch.any(torch.isnan(u0_))
-    assert not torch.any(torch.isnan(s0_))
-    tau_off = nn.functional.leaky_relu(t-ts, negative_slope=neg_slope)
+    u0_,s0_ = predSteady(F.relu(ts-to),alpha,beta,gamma)
+    
+    tau_off = F.leaky_relu(t-ts, negative_slope=neg_slope)
     expb, expg = torch.exp(-beta*tau_off), torch.exp(-gamma*tau_off)
     uhat_off = u0_*expb
     shat_off = s0_*expg+(-beta*u0_)/(gamma-beta+eps)*(expg-expb) * (1-unstability)
     
-    assert not torch.any(torch.isnan(uhat_off))
-    assert not torch.any(torch.isnan(shat_off))
     return (uhat_on*o + uhat_off*(1-o)),(shat_on*o + shat_off*(1-o)) 
 
 
@@ -443,6 +441,20 @@ def ode(t,alpha,beta,gamma,to,ts,neg_slope=0):
 ############################################################
 #Branching VAE
 ############################################################
+def linregMtx(u,s):
+    """
+    Performs linear regression ||U-kS||_2 while 
+    U and S are matrices and k is a vector.
+    Handles divide by zero by returninig some default value.
+    """
+    Q = np.sum(s*s, axis=0)
+    R = np.sum(u*s, axis=0)
+    k = R/Q
+    if np.isinf(k) or np.isnan(k):
+        k = 1.5
+    #k[np.isinf(k) | np.isnan(k)] = 1.5
+    return k
+
 def reinitTypeParams(U, S, t, ts, cell_labels, cell_types, init_types):
     """
     Applied under branching ODE
@@ -508,8 +520,7 @@ def initAllPairs(alpha,
                  ts,
                  u0,
                  s0,
-                 train_mode=False,
-                 neg_slope=1e-4):
+                 neg_slope=0.0):
     """
     Notice: t_trans and ts are all the absolute values, not relative values
     """
@@ -517,10 +528,104 @@ def initAllPairs(alpha,
     G = alpha.shape[1]
     
     #Compute different initial conditions
-    tau0 = F.leaky_relu(t_trans.view(-1,1,1) - ts, neg_slope) if train_mode else F.relu(t_trans.view(-1,1,1) - ts)
+    tau0 = F.leaky_relu(t_trans.view(-1,1,1) - ts, neg_slope)
     U0_hat, S0_hat = predSU(tau0, u0, s0, alpha, beta, gamma) #initial condition of the current type considering all possible parent types
     
     return F.relu(U0_hat), F.relu(S0_hat)
+
+
+
+def odeBr(t, y_onehot, neg_slope=0, **kwargs):
+    """
+    Compute the ODE solution given every possible parent cell type
+    """
+    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
+    t_trans, ts = kwargs['t_trans'], kwargs['ts']
+    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
+    sigma_u = kwargs['sigma_u']
+    sigma_s = kwargs['sigma_s']
+    scaling=kwargs["scaling"]
+    
+    Ntype, G = alpha.shape
+    N = y_onehot.shape[0]
+    
+    U0_hat, S0_hat = initAllPairs(alpha,
+                                  beta,
+                                  gamma,
+                                  t_trans,
+                                  ts,
+                                  u0,
+                                  s0,
+                                  neg_slope) #(type, parent type, gene)
+    
+    tau = F.leaky_relu( t.view(N,1,1,1) - ts.view(Ntype,1,G), neg_slope) #(cell, type, parent type, gene)
+    Uhat, Shat = predSU(tau,
+                        U0_hat,
+                        S0_hat,
+                        alpha.view(Ntype, 1, G),
+                        beta.view(Ntype, 1, G),
+                        gamma.view(Ntype, 1, G))
+    
+    return ((Uhat*y_onehot.view(N,Ntype,1,1)).sum(1))*scaling, (Shat*y_onehot.view(N,Ntype,1,1)).sum(1)
+
+def initAllPairsNumpy(alpha,
+                      beta,
+                      gamma,
+                      t_trans,
+                      ts,
+                      u0,
+                      s0,
+                      k=10):
+    """
+    Notice: t_trans and ts are all the absolute values, not relative values
+    """
+    Ntype = alpha.shape[0]
+    G = alpha.shape[1]
+    
+    #Compute different initial conditions
+    tau0 = F.softplus(torch.tensor(t_trans.reshape(-1,1,1) - ts), beta=k).numpy()
+    U0_hat, S0_hat = predSUNumpy(tau0, u0, s0, alpha, beta, gamma) #initial condition of the current type considering all possible parent types
+    
+    return np.clip(U0_hat, 0, None), np.clip(S0_hat, 0, None)
+
+def odeBrNumpy(t, y, w, get_init=False, k=10, **kwargs):
+    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
+    t_trans, ts = kwargs['t_trans'], kwargs['ts']
+    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
+    scaling=kwargs.pop("scaling", None)
+    
+    Ntype, G = alpha.shape
+    N = len(y)
+    
+    U0_hat, S0_hat = initAllPairsNumpy(alpha,
+                                       beta,
+                                       gamma,
+                                       t_trans,
+                                       ts,
+                                       u0,
+                                       s0,
+                                       k) #(type, parent type, gene)
+    Uhat, Shat = np.zeros((N,G)), np.zeros((N,G))
+    for i in range(Ntype):
+        parent = np.argmax(w[i])
+        tau = F.softplus( torch.tensor(t[y==i] - ts[i]), beta=k).numpy() #(cell, type, gene)
+        Uhat_type, Shat_type = predSUNumpy(tau,
+                                           U0_hat[i, parent],
+                                           S0_hat[i, parent], 
+                                           alpha[i],
+                                           beta[i],
+                                           gamma[i])
+        
+        Uhat[y==i] = Uhat_type
+        Shat[y==i] = Shat_type
+    if(scaling is not None):
+        Uhat = Uhat * scaling
+    if(get_init):
+        return Uhat, Shat, U0_hat, S0_hat
+    return Uhat, Shat
+
+
+
 
 def computeMixWeight(mu_t, sigma_t,
                      cell_labels,
@@ -566,93 +671,6 @@ def computeMixWeight(mu_t, sigma_t,
     logit_w = - tscore/mu_tscore - xscore/mu_xscore
     
     return logit_w, tscore, xscore
-
-
-
-def odeWeighted(t, y_onehot, train_mode=False, neg_slope=0, **kwargs):
-    """
-    Compute the ODE solution given every possible parent cell type
-    """
-    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
-    t_trans, ts = kwargs['t_trans'], kwargs['ts']
-    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
-    sigma_u = kwargs['sigma_u']
-    sigma_s = kwargs['sigma_s']
-    scaling=kwargs["scaling"]
-    
-    Ntype, G = alpha.shape
-    N = y_onehot.shape[0]
-    
-    U0_hat, S0_hat = initAllPairs(alpha,
-                                  beta,
-                                  gamma,
-                                  t_trans,
-                                  ts,
-                                  u0,
-                                  s0,
-                                  train_mode,
-                                  neg_slope) #(type, parent type, gene)
-    
-    tau = F.leaky_relu( t.view(N,1,1,1) - ts.view(Ntype,1,G), neg_slope) if train_mode else F.relu( t.view(N,1,1,1) - ts.view(Ntype,1,G) ) #(cell, type, parent type, gene)
-    Uhat, Shat = predSU(tau,
-                        U0_hat,
-                        S0_hat,
-                        alpha.view(Ntype, 1, G),
-                        beta.view(Ntype, 1, G),
-                        gamma.view(Ntype, 1, G))
-    
-    return ((Uhat*y_onehot.view(N,Ntype,1,1)).sum(1))*scaling, (Shat*y_onehot.view(N,Ntype,1,1)).sum(1)
-
-def initAllPairsNumpy(alpha,
-                      beta,
-                      gamma,
-                      t_trans,
-                      ts,
-                      u0,
-                      s0):
-    """
-    Notice: t_trans and ts are all the absolute values, not relative values
-    """
-    Ntype = alpha.shape[0]
-    G = alpha.shape[1]
-    
-    #Compute different initial conditions
-    tau0 = np.clip(t_trans.reshape(-1,1,1) - ts, 0, None)
-    U0_hat, S0_hat = predSUNumpy(tau0, u0, s0, alpha, beta, gamma) #initial condition of the current type considering all possible parent types
-    
-    return np.clip(U0_hat, 0, None), np.clip(S0_hat, 0, None)
-
-def odeWeightedNumpy(t, y_onehot, w_onehot, get_init=False, **kwargs):
-    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
-    t_trans, ts = kwargs['t_trans'], kwargs['ts']
-    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
-    scaling=kwargs["scaling"]
-    
-    Ntype, G = alpha.shape
-    N = y_onehot.shape[0]
-    
-    U0_hat, S0_hat = initAllPairsNumpy(alpha,
-                                       beta,
-                                       gamma,
-                                       t_trans,
-                                       ts,
-                                       u0,
-                                       s0) #(type, parent type, gene)
-    
-    tau = np.clip( t.reshape(t.shape[0],1,1,1) - ts.reshape(Ntype,1,G), 0, None) #(cell, type, gene)
-    Uhat, Shat = predSUNumpy(tau,
-                             U0_hat,
-                             S0_hat, 
-                             alpha.reshape(Ntype, 1, G),
-                             beta.reshape(Ntype, 1, G),
-                             gamma.reshape(Ntype, 1, G))
-    Uhat, Shat = np.sum(Uhat*y_onehot.reshape(N, Ntype, 1, 1), 1), np.sum(Shat*y_onehot.reshape(N, Ntype, 1, 1), 1)
-    Uhat, Shat = np.sum(Uhat*w_onehot.reshape(N, Ntype, 1), 1)*scaling, np.sum(Shat*w_onehot.reshape(N, Ntype, 1), 1)
-    if(get_init):
-        return Uhat, Shat, U0_hat, S0_hat
-    return Uhat, Shat
-
-
 
 ############################################################
 #  Optimal Transport
@@ -942,12 +960,13 @@ def convertTime(t):
     second = int(t - hour*3600 - minute*60)
     
     return f"{hour:3d} h : {minute:2d} m : {second:2d} s"
+    
 
-def knnX0(U, S, t, z, dt, k):
-    N = len(t)
-    u0 = np.zeros(U.shape)
-    s0 = np.zeros(S.shape)
-    t0 = np.ones((N))*t.min()
+def knnX0(U, S, t, z, t_query, z_query, dt, k):
+    N, Nq = len(t), len(t_query)
+    u0 = np.zeros((Nq, U.shape[1]))
+    s0 = np.zeros((Nq, S.shape[1]))
+    t0 = np.ones((Nq))*(t.min() - dt[0])
     
     order_idx = np.argsort(t)
     _t = t[order_idx]
@@ -955,43 +974,52 @@ def knnX0(U, S, t, z, dt, k):
     _U = U[order_idx]
     _S = S[order_idx]
     
-    knn = np.ones((N,k))*np.nan
-    D = np.ones((N,k))*np.nan
+    order_query = np.argsort(t_query)
+    _t_query = t_query[order_query]
+    _z_query = z_query[order_query]
+    
+    knn = np.ones((Nq,k))*np.nan
+    knn_orig = np.ones((Nq,k))*np.nan
+    D = np.ones((Nq,k))*np.nan
     ptr = 0
-    left, right = 0, 0
+    left, right = 0, 0 #pointer in the query sequence
     i = 0
-    while(left<N): #i as initial point x0
+    while(left<Nq and i<N): #i as initial point x0
         #Update left, right
-        if(_t[i]+dt[0]>=_t[-1]):
+        if(_t[i]+dt[0]>=_t_query[-1]):
             break;
-        for l in range(left, N):
-            if(_t[l]>=_t[i]+dt[0]):
+        for l in range(left, Nq):
+            if(_t_query[l]>=_t[i]+dt[0]):
                 left = l
                 break
-        for l in range(right, N):
-            if(_t[l]>=_t[i]+dt[1]):
+        for l in range(right, Nq):
+            if(_t_query[l]>=_t[i]+dt[1]):
                 right = l
                 break
         
         #Update KNN
         for j in range(left, right): #j is the set of cell with i in the range [tj-dt,tj-dt/2]
-            dist = np.linalg.norm(z[i]-z[j])
-            pos_zero = np.where(np.isnan(knn[j]))[0]
-            if(len(pos_zero)>0): #there hasn't been k nearest neighbors for j yet
-                knn[j,pos_zero[0]] = i
-                D[j,pos_zero[0]] = dist
+            dist = np.linalg.norm(_z[i]-_z_query[j])
+            pos_nan = np.where(np.isnan(knn[j]))[0]
+            if(len(pos_nan)>0): #there hasn't been k nearest neighbors for j yet
+                knn[j,pos_nan[0]] = i
+                knn_orig[order_query[j],pos_nan[0]] = order_idx[i]
+                D[j,pos_nan[0]] = dist
             else:
-                idx_smallest = np.argmin(D[j])
-                if(dist<D[j,idx_smallest]):
-                    D[j,idx_smallest] = dist
-                    knn[j,idx_smallest] = i
+                idx_largest = np.argmax(D[j])
+                if(dist<D[j,idx_largest]):
+                    D[j,idx_largest] = dist
+                    knn[j,idx_largest] = i
+                    knn_orig[order_query[j],idx_largest] = order_idx[i]
         i += 1
     #Calculate initial time and conditions
-    for i in range(N):
+    for i in range(Nq):
         if(np.all(np.isnan(knn[i]))):
             continue
         pos = np.where(~np.isnan(knn[i]))[0]
-        u0[order_idx[i]] = _U[knn[i,pos].astype(int)].mean(0)
-        s0[order_idx[i]] = _S[knn[i,pos].astype(int)].mean(0)
-        t0[order_idx[i]] = _t[knn[i,pos].astype(int)].mean()
-    return u0,s0,t0,knn
+        u0[order_query[i]] = _U[knn[i,pos].astype(int)].mean(0)
+        s0[order_query[i]] = _S[knn[i,pos].astype(int)].mean(0)
+        t0[order_query[i]] = _t[knn[i,pos].astype(int)].mean()
+    #u0 = np.convolve(u0[order_idx], np.ones((k))*(1/k), mode='same')
+    #s0 = np.convolve(s0[order_idx], np.ones((k))*(1/k), mode='same')
+    return u0,s0,t0,knn_orig
