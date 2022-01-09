@@ -13,9 +13,10 @@ import matplotlib.pyplot as plt
 from velovae.plotting import plotSig, plotTLatent, plotTrainLoss, plotTestLoss, plotCluster, plotLatentEmbedding
 
 from .model_util import  histEqual, convertTime, initParams, getTsGlobal, reinitTypeParams, predSU, getGeneIndex
-from .model_util import odeWeighted, optimal_transport_duality_gap, optimal_transport_duality_gap_ts
-from .TrainingData import SCLabeledData
+from .model_util import odeBr, optimal_transport_duality_gap, optimal_transport_duality_gap_ts
+from .TrainingData import SCData
 from .TransitionGraph import TransGraph, encodeType, str2int, int2str
+from .velocity import rnaVelocityBrVAE
 
 ############################################################
 #KL Divergence
@@ -175,7 +176,7 @@ class encoder_type(nn.Module):
                 nn.init.xavier_uniform_(m.weight,np.sqrt(2))
                 nn.init.constant_(m.bias, 0.0)
     
-    def forward(self, z, t, t_trans):
+    def forward(self, z, t, t_trans, temp):
         logit_y = self.fc_yout(self.fw(z)) - self.ky*F.relu(t_trans - t)
         y = F.gumbel_softmax(logit_y, tau=temp, hard=True) 
         return logit_y, y
@@ -206,7 +207,7 @@ class encoder(nn.Module):
         self.encoder_z = encoder_part(Cin, Cz, hidden_z[0], hidden_z[1], device)
 
         #q(Y | Z,T,X)
-        fix_cell_type = kwargs.pop('fix_cell_type', False)
+        fix_cell_type = kwargs.pop('fix_cell_type', True)
         self.nn_y = None if fix_cell_type else encoder_type(Cz, Ntype, hidden_y, device)
         
         if('checkpoint' in kwargs):
@@ -240,7 +241,7 @@ class encoder(nn.Module):
 
         #q(Y | Z,T,X)
         if(self.nn_y is not None):
-            logit_y, y = self.nn_y.forward(z, t, t_trans)
+            logit_y, y = self.nn_y.forward(z, t, t_trans, temp)
             return mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y
         return mu_tx, std_tx, mu_zx, std_zx, None, t, z, None
 
@@ -249,19 +250,17 @@ class decoder(nn.Module):
     """
     The ODE model that recovers the input data
     """
-    def __init__(self, adata, Tmax, device=torch.device('cpu'), p=95, tkey=None, nbin=40, q=0.01):
+    def __init__(self, adata, Tmax, train_idx, device=torch.device('cpu'), p=95, tkey=None, nbin=40, q=0.01):
         super(decoder,self).__init__()
         
-        U,S = adata.layers['Mu'], adata.layers['Ms']
+        U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
         X = np.concatenate((U,S),1) 
-        self.cell_labels_raw = adata.obs["clusters"].to_numpy() if "clusters" in adata.obs else None
-        self.cell_types_raw = np.unique(self.cell_labels_raw)
-        N, G = U.shape
-        Ntype = len(self.cell_types_raw)
+        N, G = len(train_idx), adata.n_vars
         
-        self.label_dic, self.label_dic_rev = encodeType(self.cell_types_raw)
-        self.cell_labels = np.array([self.label_dic[self.cell_labels_raw[i]] for i in range(len(self.cell_labels_raw))])
-        self.cell_types = np.unique(self.cell_labels)
+        cell_labels = adata.obs["clusters_int"].to_numpy()
+        self.cell_labels = cell_labels[train_idx]
+        self.cell_types = adata.uns["types_int"]
+        Ntype = len(self.cell_types)
         self.Tmax = Tmax
         
         #Dynamical Model Parameters
@@ -277,10 +276,9 @@ class decoder(nn.Module):
                 T_eq[:, i] = histEqual(T[:, i], Tmax, 0.9, Nbin)
             self.t_init = np.quantile(T_eq,0.5,1)
         
-        t_trans, t_end, dts = np.zeros((Ntype)), np.zeros((Ntype)), np.random.rand(Ntype, G)*0.01
+        t_trans, dts = np.zeros((Ntype)), np.random.rand(Ntype, G)*0.01
         for y in self.cell_types:
             t_trans[y] = np.quantile(self.t_init[self.cell_labels==y], 0.01)
-            t_end[y] = np.quantile(self.t_init[self.cell_labels==y], 0.99)
         ts = t_trans.reshape(-1,1) + dts
         
         alpha, beta, gamma, u0, s0 = reinitTypeParams(U/scaling, S, self.t_init, ts, self.cell_labels, self.cell_types, self.cell_types)
@@ -292,7 +290,6 @@ class decoder(nn.Module):
         
         self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
         self.t_trans = nn.Parameter(torch.tensor(np.log(t_trans+1e-10), device=device).double())
-        self.t_end = nn.Parameter(torch.tensor(np.log(t_end+1e-10), device=device).double())
         self.dts = nn.Parameter(torch.tensor(np.log(dts+1e-10), device=device).double())
         self.u0 = nn.Parameter(torch.tensor(np.log(u0), device=device).double())
         self.s0 = nn.Parameter(torch.tensor(np.log(s0), device=device).double())
@@ -306,10 +303,10 @@ class decoder(nn.Module):
         self.u0.requires_grad=False
         self.s0.requires_grad=False
         
-        self.updateWeight(adata.obsm['X_pca'], self.t_init, self.cell_labels, nbin=nbin, q=q)
+        self.updateWeight(adata.obsm['X_pca'][train_idx], self.t_init, self.cell_labels, nbin=nbin, q=q)
         
     
-    def forward(self, t, y_onehot, train_mode=False, neg_slope=1e-4, temp=0.01):
+    def forward(self, t, y_onehot, train_mode=False, neg_slope=0.0, temp=0.01):
         """
         t: [B x 1]
         y_onehot: [B x Ntype]
@@ -318,30 +315,29 @@ class decoder(nn.Module):
         w = torch.sum(self.w*y_onehot.unsqueeze(-1), 1)
         w_onehot = F.one_hot(torch.argmax(w, 1), y_onehot.shape[1])
         
-        Uhat, Shat = odeWeighted(t, y_onehot,
-                                 train_mode=False,
-                                 neg_slope=neg_slope,
-                                 alpha=torch.exp(self.alpha),
-                                 beta=torch.exp(self.beta),
-                                 gamma=torch.exp(self.gamma),
-                                 t_trans=torch.exp(self.t_trans),
-                                 ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
-                                 u0=torch.exp(self.u0),
-                                 s0=torch.exp(self.s0),
-                                 sigma_u = torch.exp(self.sigma_u),
-                                 sigma_s = torch.exp(self.sigma_s),
-                                 scaling=torch.exp(self.scaling))
+        Uhat, Shat = odeBr(t, y_onehot,
+                           neg_slope=neg_slope,
+                           alpha=torch.exp(self.alpha),
+                           beta=torch.exp(self.beta),
+                           gamma=torch.exp(self.gamma),
+                           t_trans=torch.exp(self.t_trans),
+                           ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
+                           u0=torch.exp(self.u0),
+                           s0=torch.exp(self.s0),
+                           sigma_u = torch.exp(self.sigma_u),
+                           sigma_s = torch.exp(self.sigma_s),
+                           scaling=torch.exp(self.scaling))
         return (Uhat*w_onehot.unsqueeze(-1)).sum(1), (Shat*w_onehot.unsqueeze(-1)).sum(1)
     
     def updateWeight(self, X_pca, t, cell_labels, nbin=20, epsilon = 0.05, lambda1 = 1, lambda2 = 50, max_iter = 2000, q = 0.01):
-        cell_types = np.unique(self.cell_labels)
+        Ntype = len(self.cell_types)
         dt = (t.max()-t.min())/nbin
         
-        P = torch.zeros((len(cell_types), len(cell_types)), device=self.alpha.device)
-        for i, x in enumerate(cell_types): #child type
+        P = torch.zeros((Ntype, Ntype), device=self.alpha.device)
+        for i, x in enumerate(self.cell_types): #child type
             mask = cell_labels==x
             if(not np.any(mask)):
-                P[i,i] = 1.0
+                P[x,x] = 1.0
                 continue
             t0 = np.quantile(t[mask], q) #estimated transition time
             
@@ -363,29 +359,16 @@ class decoder(nn.Module):
                 #Sum the weights of each cell type
                 cell_labels_1 = cell_labels[mask1]
                 cell_labels_2 = cell_labels[mask2]
-                for j, y in enumerate(cell_types): #parent
+                for j, y in enumerate(self.cell_types): #parent
                     if(np.any(cell_labels_1==y) and np.any(cell_labels_2==x)):
-                        P[i,j] = torch.sum(Pi[cell_labels_1==y])
-            if(P[i].sum()==0):
-                P[i,i] = 1.0
+                        P[x,y] = torch.sum(Pi[cell_labels_1==y])
+            if(P[x].sum()==0):
+                P[x,x] = 1.0
             
-            P[i] = P[i]/P[i].sum()
+            P[x] = P[x]/P[x].sum()
         
         self.w = P.to(self.alpha.device)
         return
-    
-    def printWeight(self):
-        w = self.w.cpu().numpy()
-        with pd.option_context('display.max_rows', None, 
-                               'display.max_columns', None, 
-                               'display.precision', 3,
-                               'display.chop_threshold',1e-3,
-                               'display.width', 200):
-            w_dic = {}
-            for i in range(len(self.cell_types)):
-                w_dic[self.label_dic_rev[i]] = w[:, i]
-            w_df = pd.DataFrame(w_dic, index=pd.Index([self.label_dic_rev[i] for i in range(len(self.cell_types))]))
-            print(w_df)
     
     def predSU(self, t, y_onehot, gidx=None):
         Ntype = y_onehot.shape[1]
@@ -393,31 +376,31 @@ class decoder(nn.Module):
         w = torch.sum(self.w*y_onehot.unsqueeze(-1), 1)
         w_onehot = F.one_hot(torch.argmax(w, 1), y_onehot.shape[1])
         if(gidx is None):
-            Uhat, Shat, = odeWeighted(t, y_onehot,
-                                      train_mode=False,
-                                      alpha=torch.exp(self.alpha),
-                                      beta=torch.exp(self.beta),
-                                      gamma=torch.exp(self.gamma),
-                                      t_trans=torch.exp(self.t_trans),
-                                      ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
-                                      u0=torch.exp(self.u0),
-                                      s0=torch.exp(self.s0),
-                                      sigma_u = torch.exp(self.sigma_u),
-                                      sigma_s = torch.exp(self.sigma_s),
-                                      scaling=torch.exp(self.scaling))
+            Uhat, Shat, = odeBr(t, y_onehot,
+                                neg_slope=0.0,
+                                alpha=torch.exp(self.alpha),
+                                beta=torch.exp(self.beta),
+                                gamma=torch.exp(self.gamma),
+                                t_trans=torch.exp(self.t_trans),
+                                ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
+                                u0=torch.exp(self.u0),
+                                s0=torch.exp(self.s0),
+                                sigma_u = torch.exp(self.sigma_u),
+                                sigma_s = torch.exp(self.sigma_s),
+                                scaling=torch.exp(self.scaling))
         else:
-            Uhat, Shat = odeWeighted(t, y_onehot, 
-                                     train_mode=False,
-                                     alpha=torch.exp(self.alpha[:,gidx]),
-                                     beta=torch.exp(self.beta[:,gidx]),
-                                     gamma=torch.exp(self.gamma[:,gidx]),
-                                     t_trans=torch.exp(self.t_trans),
-                                     ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts[:,gidx]),
-                                     u0=torch.exp(self.u0[:,gidx]),
-                                     s0=torch.exp(self.s0[:,gidx]),
-                                     sigma_u = torch.exp(self.sigma_u[gidx]),
-                                     sigma_s = torch.exp(self.sigma_s[gidx]),
-                                     scaling=torch.exp(self.scaling[gidx]))
+            Uhat, Shat = odeBr(t, y_onehot, 
+                               neg_slope=0.0,
+                               alpha=torch.exp(self.alpha[:,gidx]),
+                               beta=torch.exp(self.beta[:,gidx]),
+                               gamma=torch.exp(self.gamma[:,gidx]),
+                               t_trans=torch.exp(self.t_trans),
+                               ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts[:,gidx]),
+                               u0=torch.exp(self.u0[:,gidx]),
+                               s0=torch.exp(self.s0[:,gidx]),
+                               sigma_u = torch.exp(self.sigma_u[gidx]),
+                               sigma_s = torch.exp(self.sigma_s[gidx]),
+                               scaling=torch.exp(self.scaling[gidx]))
         return (Uhat*w_onehot.unsqueeze(-1)).sum(1), (Shat*w_onehot.unsqueeze(-1)).sum(1)
     
     def getTimeDistribution(self):
@@ -461,43 +444,76 @@ class BrVAE():
         try:
             U,S = adata.layers['Mu'], adata.layers['Ms']
             cell_labels_raw = adata.obs["clusters"].to_numpy()
+            self.cell_types_raw = np.unique(cell_labels_raw)
         except KeyError:
             print('Please run the preprocessing step!')
         
         self.setDevice(device)
+        
         #Training Configuration
         self.config = {
-            "num_epochs":800, "learning_rate":1e-4, "learning_rate_ode":1e-4, "lambda":1e-3,\
-            "reg_t":1.0, "reg_z":1.0, "reg_y":1.0, "reg_w":1.0, "neg_slope":0.0,\
-            "test_epoch":100, "save_epoch":100, "batch_size":128, "K_alt":0,\
-            "Nstart_ot":400, "Nupdate_ot":25, "nbin":20, "q_ot":0.01,
-            "train_scaling":False, "train_std":False, "weight_sample":False, "anneal":True, 
-            "yprior":None, "tprior":None, "fix_cell_type":False,\
+            "Cz":5,
+            'hidden_size':[(500,250), (500,250), (500,250)],
+            "num_epochs":800, 
+            "learning_rate":1e-4, 
+            "learning_rate_ode":1e-4, 
+            "lambda":1e-3,
+            "reg_t":1.0, 
+            "reg_z":1.0, 
+            "reg_y":1.0, 
+            "neg_slope":0.0,
+            "test_epoch":100, 
+            "save_epoch":100, 
+            "batch_size":128, 
+            "train_test_split":0.7,
+            "K_alt":0,
+            "Nstart_ot":400, 
+            "Nupdate_ot":25, 
+            "nbin":40, 
+            "q_ot":0.01,
+            "fix_cell_type":True,
+            "train_scaling":False, 
+            "train_std":False, 
+            "weight_sample":False, 
+            "anneal":True, 
+            "yprior":None, 
+            "tprior":None,
             "sparsify":2
         }
+        
+        self.label_dic, self.label_dic_rev = encodeType(self.cell_types_raw)
+        self.cell_labels = np.array([self.label_dic[x] for x in cell_labels_raw])
+        self.cell_types = np.unique(self.cell_labels)
+        adata.obs["clusters_int"] = self.cell_labels
+        adata.uns["types_int"] = self.cell_types
+        adata.uns["label_dic"] = self.label_dic
+        adata.uns["label_dic_rev"] = self.label_dic_rev
+
+        self.splitTrainTest(adata.n_obs)
+        
         for key in kwargs:
             self.config[key] = kwargs[key]
         
         N, G = adata.n_obs, adata.n_vars
         Ntype = len(np.unique(cell_labels_raw))
         self.Ntype = Ntype
-        self.encoder = encoder(2*G, Ntype, Cz, device=self.device, **kwargs).double()
+        self.encoder = encoder(2*G, Ntype, Cz, device=self.device, fix_cell_type=self.config["fix_cell_type"], **kwargs).double()
         if('tkey' in kwargs):
             tkey = kwargs['tkey']
         else:
             tkey = None
         
-        self.decoder = decoder(adata, Tmax, device=self.device, tkey=tkey, nbin=self.config['nbin'], q=self.config['q_ot'])
-        self.Tmax=torch.tensor(Tmax,dtype=torch.double).to(self.device)
+        self.decoder = decoder(adata, Tmax, self.train_idx, device=self.device, tkey=tkey, nbin=self.config['nbin'], q=self.config['q_ot'])
+        self.Tmax=Tmax
         
         #Prior distribution
         if(tprior is None):
-            self.mu_t = (torch.ones(U.shape[0],1)*Tmax*0.5).double().to(self.device)
-            self.std_t = (torch.ones(U.shape[0],1)*Tmax*0.25).double().to(self.device)
+            self.mu_t = (torch.ones(len(self.train_idx),1)*Tmax*0.5).double().to(self.device)
+            self.std_t = (torch.ones(len(self.train_idx),1)*Tmax*0.25).double().to(self.device)
         else:
             print('Using informative time prior.')
             t = adata.obs[tprior].to_numpy()
-            t = t/t.max()*Tmax
+            t = t[self.train_idx]/t.max()*Tmax
             self.mu_t = torch.tensor(t).view(-1,1).double().to(self.device)
             self.std_t = (torch.ones(self.mu_t.shape)*Tmax*0.25).double().to(self.device)
 
@@ -505,23 +521,24 @@ class BrVAE():
         self.std_z = torch.ones(Cz).double().to(self.device)
         
         self.prior_y_default = (torch.ones(Ntype)*(1/Ntype)).double().to(self.device)
-        self.prior_w_default = (torch.ones(Ntype,Ntype)*(1/Ntype)).double().to(self.device)
-        self.prior_w = None
-        if('wprior' in kwargs):
-            self.prior_w = torch.tensor(kwargs['wprior']).double().to(self.device)
-        
-        
-    def setDevice(self, device, device_number=None):
-        if(device=='gpu'):
+    
+    def setDevice(self, device):
+        if('cuda' in device):
             if(torch.cuda.is_available()):
-                self.device_number = device_number if (isinstance(device_number,int)) else torch.cuda.current_device()
-                self.device = torch.device('cuda:'+str(self.device_number))
+                self.device = torch.device(device)
             else:
                 print('Warning: GPU not detected. Using CPU as the device.')
                 self.device = torch.device('cpu')
         else:
             self.device = torch.device('cpu')
     
+    def splitTrainTest(self, N):
+        rand_perm = np.random.permutation(N)
+        n_train = int(N*self.config["train_test_split"])
+        self.train_idx = rand_perm[:n_train]
+        self.test_idx = rand_perm[n_train:]
+        
+        return
     
     def getInformativePriorY(self, label_batch, delta=0.001):
         label_batch = label_batch.squeeze()
@@ -565,7 +582,7 @@ class BrVAE():
         
         uhat, shat = self.decoder.predSU(mu_tx, y_onehot_pred, gidx)
         
-        return uhat, shat, mu_tx, mu_zx, py_tzx, labels
+        return uhat, shat, mu_tx, std_tx, mu_zx, std_zx, py_tzx, labels
     
     def setMode(self,mode):
         if(mode=='train'):
@@ -634,7 +651,7 @@ class BrVAE():
         
         err_rec = torch.mean(torch.sum(log_gaussian, 1))
         return err_rec, kld_t, kld_z, kld_y
-        
+      
     def train_epoch(self, 
                     X_loader, 
                     optimizer, 
@@ -655,7 +672,6 @@ class BrVAE():
         B = len(iterX)
         loss_list = []
         Nupdate = B*5
-        cell_labels = torch.tensor(self.decoder.cell_labels).to(self.device)
         for i in range(B):
             tau = np.clip(np.exp(-3e-5*((counter+i+1)//Nupdate*Nupdate)), 0.5, None) if anneal else 0.5
             optimizer.zero_grad()
@@ -665,7 +681,7 @@ class BrVAE():
             xbatch, label_batch, weight, idx = batch[0].to(self.device), batch[1].to(self.device), batch[2].to(self.device), batch[3].to(self.device)
             u, s = xbatch[:,:xbatch.shape[1]//2],xbatch[:,xbatch.shape[1]//2:]
             
-            y_onehot_fix = F.one_hot(cell_labels[idx], self.Ntype)
+            y_onehot_fix = F.one_hot(label_batch, self.Ntype)
             mu_tx, std_tx, mu_zx, std_zx, logit_y, t, y_onehot, uhat, shat = self.forward(xbatch, y_onehot_fix, temp=tau)
            
             
@@ -701,6 +717,33 @@ class BrVAE():
         
         return loss_list, counter+B, tau
     
+    def loadConfig(self, config):
+        #We don't have to specify all the hyperparameters. Just pass the ones we want to modify.
+        for key in config:
+            if(key in self.config):
+                self.config[key] = config[key]
+            else:
+                self.config[key] = config[key]
+                print(f"Added new hyperparameter: {key}")
+        if(self.config["train_scaling"]):
+            self.decoder.scaling.requires_grad = True
+        if(self.config["train_std"]):
+            self.decoder.sigma_u.requires_grad = True
+            self.decoder.sigma_s.requires_grad = True
+    
+    def printWeight(self):
+        w = self.decoder.w.cpu().numpy()
+        with pd.option_context('display.max_rows', None, 
+                               'display.max_columns', None, 
+                               'display.precision', 3,
+                               'display.chop_threshold',1e-3,
+                               'display.width', 200):
+            w_dic = {}
+            for i, x in enumerate(self.cell_types):
+                w_dic[self.label_dic_rev[x]] = w[:, x]
+            w_df = pd.DataFrame(w_dic, index=pd.Index([self.label_dic_rev[x] for x in self.cell_types]))
+            print(w_df)
+    
     def train(self, 
               adata, 
               config={}, 
@@ -709,12 +752,7 @@ class BrVAE():
               figure_path="figures", 
               embed="umap"):
         
-        #We don't have to specify all the hyperparameters. Just pass the ones we want to modify.
-        for key in config:
-            if(key in self.config):
-                self.config[key] = config[key]
-            else:
-                print(f"Warning: unknown hyperparameter: {key}")
+        self.loadConfig(config)
         
         if(self.config["train_scaling"]):
             self.decoder.scaling.requires_grad = True
@@ -730,46 +768,24 @@ class BrVAE():
             Xembed = adata.obsm[f"X_{embed}"]
         except KeyError:
             print("Embedding not found! Please run the corresponding preprocessing step!")
-        plotTLatent(self.decoder.t_init, Xembed, 'Vanilla VAE', True, figure_path, 'vanilla')
+        plotTLatent(self.decoder.t_init, Xembed[self.train_idx], 'Vanilla VAE', True, figure_path, 'vanilla')
         
         gind, gene_plot = getGeneIndex(adata.var_names, gene_plot)
         
+        print("*** Creating Training/Validation Datasets ***")
+        train_set = SCData(X[self.train_idx], self.cell_labels[self.train_idx], self.decoder.Rscore[self.train_idx]) if self.config['weight_sample'] else SCData(X[self.train_idx], self.cell_labels[self.train_idx])
+        test_set = None
+        if(len(self.test_idx)>0):
+            test_set = SCData(X[self.test_idx], self.cell_labels[self.test_idx], self.decoder.Rscore[self.test_idx]) if self.config['weight_sample'] else SCData(X[self.test_idx], self.cell_labels[self.test_idx])
+        data_loader = torch.utils.data.DataLoader(train_set, batch_size=self.config["batch_size"], shuffle=True)
+        print('***           Finished.         ***')
         
         if(plot):
             os.makedirs(figure_path, exist_ok=True)
-            
-            t = torch.tensor(self.decoder.t_init).to(self.device)
-            y_onehot = F.one_hot(torch.tensor(self.decoder.cell_labels)).float().to(self.device)
-            #Plot the initial guess
-            Uhat_init, Shat_init = self.decoder.predSU(t.unsqueeze(-1), y_onehot, gidx=torch.tensor(gind,device=self.device))
-            t_trans = np.exp(self.decoder.t_trans.detach().cpu().numpy())
-            ts = t_trans.reshape(-1,1) + np.exp(self.decoder.dts.detach().cpu().numpy())
-            for i in range(len(gene_plot)):
-                idx = gind[i]
-                plotSig(self.decoder.t_init, 
-                        U[:,idx], S[:,idx], 
-                        Uhat_init[:,i].detach().cpu().numpy(), Shat_init[:,i].detach().cpu().numpy(), gene_plot[i], 
-                        True, 
-                        figure_path, 
-                        f"{gene_plot[i]}-init",
-                        cell_labels=self.decoder.cell_labels_raw,
-                        cell_types=self.decoder.cell_types_raw,
-                        labels_pred = self.decoder.cell_labels_raw,
-                        sparsify=self.config["sparsify"],
-                        t_trans=t_trans,
-                        ts=ts[:,i])
-            
-        
-        print("***      Creating  Dataset      ***")
-        dataset = SCLabeledData(X, self.decoder.cell_labels, Rscore) if self.config['weight_sample'] else SCLabeledData(X, self.decoder.cell_labels)
-        data_loader = torch.utils.data.DataLoader(dataset, batch_size=self.config["batch_size"], shuffle=True)
-        print("***          Finished.          ***")
     
         #define optimizer
         print("***    Creating  optimizers     ***")
         learning_rate = self.config["learning_rate"]
-        #param_nn = list(self.encoder.encoder_z.parameters())+list(self.encoder.fw_Y_ZTX.parameters())+list(self.encoder.fc_yout.parameters())
-        #param_nn_t = self.encoder.encoder_t.parameters()
         param_nn = list(self.encoder.parameters())
         param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma,
                     self.decoder.t_trans, self.decoder.dts, self.decoder.u0, self.decoder.s0]
@@ -779,7 +795,6 @@ class BrVAE():
             param_ode = param_ode+[self.decoder.sigma_u, self.decoder.sigma_s]
     
         optimizer = torch.optim.Adam(param_nn, lr=self.config["learning_rate"], weight_decay=self.config["lambda"])
-        #optimizer_t = torch.optim.Adam(param_nn_t, lr=self.config["learning_rate"]*0.05, weight_decay=self.config["lambda"])
         optimizer_ode = torch.optim.Adam(param_ode, lr=self.config["learning_rate_ode"])
         print('***           Finished.         ***')
         
@@ -792,8 +807,7 @@ class BrVAE():
         print("***        Start training       ***")
         print(f"Total Number of Iterations Per Epoch: {len(data_loader)}")
         n_epochs, n_save = self.config["num_epochs"], self.config["save_epoch"]
-        loss_train, loss_test, err_test, randidx_test = [],[],[],[]
-        
+        loss_train, loss_test, err_train, err_test, randidx_train, randidx_test = [],[],[],[],[],[]
         
         start = time.time()
         
@@ -809,7 +823,6 @@ class BrVAE():
                                                            self.config["reg_t"], 
                                                            self.config["reg_z"], 
                                                            self.config["reg_y"])
-                loss_train = loss_train+loss_list
                 loss_list, _, tau = self.train_epoch(data_loader, 
                                                      optimizer_ode, 
                                                      None, 
@@ -822,7 +835,6 @@ class BrVAE():
                                                      self.config["reg_y"])
                 
                 
-                loss_train = loss_train+loss_list
             else:
                 loss_list, counter, tau = self.train_epoch(data_loader, 
                                                            optimizer, 
@@ -833,57 +845,78 @@ class BrVAE():
                                                            self.config["reg_t"], 
                                                            self.config["reg_z"], 
                                                            self.config["reg_y"])
-                loss_train = loss_train+loss_list
-            
+
             if(epoch==0 or (epoch+1) % self.config["test_epoch"] == 0):
                 print(f'temperature = {tau}')
                 save = (epoch+1)%n_save==0 or epoch==0
-                loss, t, err, rand_idx = self.test(torch.tensor(X).double().to(self.device),
-                                                   Xembed,
-                                                   self.decoder.cell_labels,
-                                                   epoch+1, 
-                                                   gind, 
-                                                   False,
-                                                   gene_plot,
-                                                   save, 
-                                                   figure_path
-                                                   )
-                    
-                print(f"Epoch {epoch+1}: Train Loss = {loss_train[-1]:.2f}, Test Loss = {loss:.2f}, err_type = {err:.3f}, rand index = {rand_idx:.3f} \t Total Time = {convertTime(time.time()-start)}")
-                loss_test.append(loss)
-                err_test.append(err)
-                randidx_test.append(rand_idx)
-                self.decoder.printWeight()
+                mse_train, t, err_train, rand_idx_train = self.test(train_set,
+                                                                    Xembed[self.train_idx],
+                                                                    f"train{epoch+1}", 
+                                                                    gind, 
+                                                                    False,
+                                                                    gene_plot,
+                                                                    save, 
+                                                                    figure_path)
+                mse_test, err_test, rand_idx_test = 'N/A', 'N/A', 'N/A'
+                if(test_set is not None):
+                    mse_test, t, err_test, rand_idx_test = self.test(test_set,
+                                                                     Xembed[self.test_idx],
+                                                                     f"test{epoch+1}", 
+                                                                     gind, 
+                                                                     False,
+                                                                     gene_plot,
+                                                                     save, 
+                                                                     figure_path)
+                loss_train.append(mse_train)
+                loss_test.append(mse_test)
+                if(not self.config["fix_cell_type"]):
+                    err_train.append(err_train)
+                    randidx_train.append(rand_idx_train)
+                    err_test.append(err_test)
+                    randidx_test.append(rand_idx_test)
+                
+                print(f"Epoch {epoch+1}: Train MSE = {mse_train:.2f}, Test MSE = {mse_test:.2f}, \t Total Time = {convertTime(time.time()-start)}")
+                if(not self.config["fix_cell_type"]):
+                    print(f"Train Type Error: {err_train:.3f}, Test Type Error: {err_test:.3f}")
+                
+                self.printWeight()
             
             if( (epoch+1)>=self.config['Nstart_ot'] and (epoch+1) % self.config['Nupdate_ot'] == 0):
-                self.updateWeight(torch.tensor(X).to(self.device), adata.obsm['X_pca'])
+                self.updateWeight(torch.tensor(X[self.train_idx]).to(self.device), adata.obsm['X_pca'][self.train_idx])
         
         print("***     Finished Training     ***")
-        plotTrainLoss(loss_train,[i for i in range(len(loss_train))],True,figure_path,"vae")
-        plotTestLoss(loss_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(loss_test))],True,figure_path,"vae")
-        plotTestLoss(err_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(err_test))],True,figure_path,"err-vae")
-        plotTestLoss(randidx_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(randidx_test))],True,figure_path,"rand_idx-vae")
+        plotTrainLoss(loss_train,[i for i in range(len(loss_train))],True,figure_path,"train-brvae")
+        plotTestLoss(loss_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(loss_test))],True,figure_path,"test-brvae")
+        if(not self.config["fix_cell_type"]):
+            plotTestLoss(err_train,[1]+[i*self.config["test_epoch"] for i in range(1,len(err_train))],True,figure_path,"train-err-brvae")
+            plotTestLoss(randidx_train,[1]+[i*self.config["test_epoch"] for i in range(1,len(randidx_train))],True,figure_path,"train-randidx-brvae")
+            plotTestLoss(err_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(err_test))],True,figure_path,"test-err-brvae")
+            plotTestLoss(randidx_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(randidx_test))],True,figure_path,"test-randidx-brvae")
         return
     
     
-    def predAll(self, data):
+    def predAll(self, data, cell_labels):
         N, G = data.shape[0], data.shape[1]//2
         Uhat, Shat = torch.empty(N,G), torch.empty(N,G)
         t = torch.empty(N)
+        std_t = torch.empty(N)
         y = torch.empty(N)
         z = torch.empty(N, self.encoder.Cz)
+        std_z = torch.empty(N, self.encoder.Cz)
         qy = torch.empty(N, self.Ntype)
         
-        y_onehot_fix = F.one_hot(torch.tensor(self.decoder.cell_labels), self.Ntype).to(data.device)
+        y_onehot_fix = F.one_hot(torch.tensor(cell_labels), self.Ntype).to(data.device)
         with torch.no_grad():
-            B = self.config["batch_size"]
+            B = min(N//10, 1000)
             Nb = N // B
             for i in range(Nb):
-                uhat, shat, mu_tx, mu_zx, py_tzx, labels = self.evalModel(data[i*B:(i+1)*B], y_onehot_fix[i*B:(i+1)*B])
+                uhat, shat, mu_tx, std_tx, mu_zx, std_zx, py_tzx, labels = self.evalModel(data[i*B:(i+1)*B], y_onehot_fix[i*B:(i+1)*B])
                 Uhat[i*B:(i+1)*B] = uhat.cpu()
                 Shat[i*B:(i+1)*B] = shat.cpu()
                 t[i*B:(i+1)*B] = mu_tx.cpu().squeeze()
+                std_t[i*B:(i+1)*B] = std_tx.cpu().squeeze()
                 z[i*B:(i+1)*B] = mu_zx.cpu()
+                std_z[i*B:(i+1)*B] = std_zx.cpu()
                 if(py_tzx is None):
                     qy[i*B:(i+1)*B] = y_onehot_fix[i*B:(i+1)*B].detach().cpu()
                     y[i*B:(i+1)*B] = torch.argmax(qy[i*B:(i+1)*B],1)
@@ -892,11 +925,13 @@ class BrVAE():
                     y[i*B:(i+1)*B] = labels.cpu().squeeze()
                 
             if(N > B*Nb):
-                uhat, shat, mu_tx, mu_zx, py_tzx, labels = self.evalModel(data[B*Nb:], y_onehot_fix[B*Nb:])
+                uhat, shat, mu_tx, std_tx, mu_zx, std_zx, py_tzx, labels = self.evalModel(data[B*Nb:], y_onehot_fix[B*Nb:])
                 Uhat[Nb*B:] = uhat.cpu()
                 Shat[Nb*B:] = shat.cpu()
                 t[Nb*B:] = mu_tx.cpu().squeeze()
+                std_t[Nb*B:] = std_tx.cpu().squeeze()
                 z[Nb*B:] = mu_zx.cpu()
+                std_z[Nb*B:] = std_zx.cpu()
                 if(py_tzx is None):
                     qy[Nb*B:] = y_onehot_fix[Nb*B:].detach().cpu()
                     y[Nb*B:] = torch.argmax(qy[Nb*B:],1)
@@ -905,12 +940,11 @@ class BrVAE():
                     y[Nb*B:] = labels.cpu().squeeze()
                 
         
-        return Uhat, Shat, t, qy, y, z
+        return Uhat, Shat, t, std_t, qy, y, z, std_z
     
     def test(self,
-             data, 
+             dataset, 
              Xembed,
-             cell_labels, 
              testid=0, 
              gind=None,
              update_sigma=False,
@@ -923,8 +957,9 @@ class BrVAE():
         """
         
         self.setMode('eval')
+        data = torch.tensor(dataset.data).double().to(self.device)
         U,S = data[:,:data.shape[1]//2], data[:,data.shape[1]//2:]
-        Uhat, Shat, t, qy, y, z = self.predAll(data)
+        Uhat, Shat, t, std_t, qy, y, z, std_z = self.predAll(data, dataset.labels)
         t = t.numpy()
         qy = qy.numpy()
         y = y.numpy()
@@ -939,25 +974,27 @@ class BrVAE():
         
         t_trans = np.exp(self.decoder.t_trans.detach().cpu().numpy())
         
-        err = 1.0 - np.sum(y==self.decoder.cell_labels)/len(self.decoder.cell_labels)
-        rand_idx = adjusted_rand_score(self.decoder.cell_labels, y)
+        err = 1.0 - np.sum(y==dataset.labels)/len(dataset.labels)
+        rand_idx = adjusted_rand_score(dataset.labels, y)
+        cell_labels_raw = np.array([self.label_dic_rev[x] for x in dataset.labels])
         if(plot):
-            plotCluster(Xembed,
-                        qy,
-                        self.decoder.cell_labels_raw,
-                        False,
-                        path,
-                        f"{testid}")
+            if(not self.config["fix_cell_type"]):
+                plotCluster(Xembed,
+                            qy,
+                            cell_labels_raw,
+                            False,
+                            path,
+                            f"{testid}")
+                plotLatentEmbedding(z, 
+                                    self.Ntype, 
+                                    y,
+                                    self.label_dic_rev,
+                                    path=path,
+                                    figname=f"{testid}_yhat")
             plotLatentEmbedding(z, 
                                 self.Ntype, 
-                                y,
-                                self.decoder.label_dic_rev,
-                                path=path,
-                                figname=f"{testid}_yhat")
-            plotLatentEmbedding(z, 
-                                self.Ntype, 
-                                self.decoder.cell_labels,
-                                self.decoder.label_dic_rev,
+                                dataset.labels,
+                                self.label_dic_rev,
                                 path=path,
                                 figname=f"{testid}_y")
             plotTLatent(t, Xembed, f"Training Epoch {testid}", plot, path, f"{testid}")
@@ -969,9 +1006,9 @@ class BrVAE():
                         True, 
                         path, 
                         f"{gene_plot[i]}-{testid}",
-                        cell_labels=self.decoder.cell_labels_raw,
-                        cell_types=self.decoder.cell_types_raw,
-                        labels_pred = int2str(y, self.decoder.label_dic_rev),
+                        cell_labels=cell_labels_raw,
+                        cell_types=self.cell_types_raw,
+                        labels_pred = int2str(y, self.label_dic_rev),
                         sparsify=self.config["sparsify"],
                         t_trans=t_trans,
                         ts=np.exp(self.decoder.dts[:,idx].detach().cpu().numpy()) + t_trans)
@@ -1011,19 +1048,20 @@ class BrVAE():
         
         
         self.setMode('eval')
-        mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y_onehot = self.encoder.forward(torch.tensor(X).to(self.device), torch.exp(self.decoder.scaling), torch.exp(self.decoder.t_trans), temp=1e-4)
-        if(logit_y is not None):
-            p_type = F.softmax(logit_y)
-            p_type_onehot = F.one_hot(torch.argmax(p_type,1), self.Ntype)
-            labels = np.argmax(p_type.detach().cpu().numpy(), 1)
-            adata.obsm[f"{key}_ptype"] = p_type.detach().cpu().numpy()
-            adata.obs[f"{key}_label"] = labels
+        Uhat, Shat, t, std_t, qy, y, z, std_z = self.predAll(torch.tensor(np.concatenate((adata.layers['Mu'], adata.layers['Ms']),axis=1)).float().to(self.device), adata.obs["clusters_int"].to_numpy())
+        adata.obsm[f"{key}_ptype"] = qy.numpy()
+        adata.obs[f"{key}_label"] = y.numpy()
+        adata.obs[f"{key}_time"] = t.numpy()
+        adata.obs[f"{key}_std_t"] = std_t.numpy()
+        adata.obsm[f"{key}_z"] = z.numpy()
+        adata.obsm[f"{key}_std_z"] = std_z.numpy()
+        adata.layers[f"{key}_uhat"] = Uhat.numpy()
+        adata.layers[f"{key}_shat"] = Shat.numpy()
         
-        my_t = mu_tx.squeeze().detach().cpu().numpy()
-        adata.obs[f"{key}_time"] = my_t
-        adata.obs[f"{key}_std_t"] = std_tx.squeeze().detach().cpu().numpy()
+        adata.uns[f"{key}_train_idx"] = self.train_idx
+        adata.uns[f"{key}_test_idx"] = self.test_idx
         
-        
+        rnaVelocityBrVAE(adata, key)
         
         if(file_name is not None):
             adata.write_h5ad(f"{file_path}/{file_name}")
