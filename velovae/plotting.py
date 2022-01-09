@@ -231,7 +231,7 @@ def plotPhase(u, s,
     else:
         for i, type_ in enumerate(types):
             ax.scatter(s[labels==i],u[labels==i],c=colors[i],alpha=0.3,label=type_)
-            ax.scatter(spred[labels==i],upred[labels==i],c=colors[i],label=type_+" ode")
+    ax.plot(spred,upred,'k.',label="ode")
     #Plot the correspondence
     if(track_idx is None):
         rng = np.random.default_rng()
@@ -371,27 +371,6 @@ def plotTLatent(t_latent, X_umap, title, savefig=False, path=None, figname="gene
             fig.savefig(f"{path}/tlatent_{figname}.png")
         except FileNotFoundError:
             print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
-
-def plotLatentEmbedding(X,  n_cluster, labels=None, savefig=False, path=None, figname="gene"):
-    #Y = TSNE().fit_transform(X)
-    reducer = umap.UMAP(random_state=100)
-    Y = reducer.fit_transform(X)
-    fig, ax = plt.subplots()
-    if(labels is None):
-        spec_cluster = SpectralClustering(n_clusters=n_cluster)
-        labels = spec_cluster.fit_predict(Y)
-    
-    for i in range(n_cluster):
-        ax.plot(Y[labels==i,0], Y[labels==i,1], '.', c=colors[i])
-    
-    ax.set_title("Umap Plot of the Latent Variable")
-    plt.show()
-    if(savefig):
-        if(path is None):
-            fig.savefig(f"figures/umap_{figname}.png")
-        else:
-            fig.savefig(f"{path}/umap_{figname}.png")
     plt.close(fig)
 
 #########################################################################
@@ -543,6 +522,30 @@ def plotSigAxis(ax,
         ax.set_title(title, fontsize=12)
     return ax
 
+def plotSigPredAxis(ax,
+                t,
+                x,
+                labels=None,
+                legends=None,
+                marker='.',
+                a=1.0,
+                D=1,
+                show_legend=False,
+                title=None):
+    if(labels is None or legends is None):
+        ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)
+    else:
+        for i in range(len(legends)):
+            mask = labels==i
+            if(np.any(mask)):
+                if(show_legend):
+                    ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color='k', alpha=a, label=legends[i])
+                else:
+                    ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color='k', alpha=a)
+    if(title is not None):
+        ax.set_title(title, fontsize=12)
+    return ax
+
 def plotSigGrid(Nr, 
                 Nc, 
                 gene_list,
@@ -577,13 +580,12 @@ def plotSigGrid(Nr,
     
     #Detect whether multiple figures are needed
     Nfig = len(gene_list) // (Nr*Nc)
-    if(Nfig*Nr*Nc < Nfig):
+    if(Nfig * Nr * Nc < len(gene_list)):
         Nfig += 1
-
+    
     #Plotting
     for l in range(Nfig):
         fig_sig, ax_sig = plt.subplots(2*Nr,M*Nc,figsize=(W*M*Nc+1.0, 2*H*Nr))
-        print(ax_sig.shape)
         if(M*Nc==1):
             for i in range(min(Nr,len(gene_list)-l*Nr)):
                 idx = l*Nr+i
@@ -592,8 +594,9 @@ def plotSigGrid(Nr,
                 plotSigAxis(ax_sig[2*i], t, U[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, sparsify, True, f"{gene_list[idx]} ({methods[0]})")
                 plotSigAxis(ax_sig[2*i+1], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, sparsify)
                 try:
-                    plotSigAxis(ax_sig[2*i], that, Uhat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1, True, f"{gene_list[idx]} ({methods[0]})")
-                    plotSigAxis(ax_sig[2*i+1], that, Shat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
+                    marker = '.' if methods[0]=='vaepp' else '-'
+                    plotSigPredAxis(ax_sig[2*i], that, Uhat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], marker, 1.0, 1)
+                    plotSigPredAxis(ax_sig[2*i+1], that, Shat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], marker, 1.0, 1)
                 except (KeyError, TypeError):
                     print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                     pass
@@ -619,8 +622,9 @@ def plotSigGrid(Nr,
                         plotSigAxis(ax_sig[2*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, sparsify, True, f"{gene_list[idx]} ({method})")
                         plotSigAxis(ax_sig[2*i+1, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', alpha, sparsify)
                         try:
-                            plotSigAxis(ax_sig[2*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1, True, f"{gene_list[idx]} ({method})")
-                            plotSigAxis(ax_sig[2*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
+                            marker = '.' if method=='VAE++' else '-'
+                            plotSigPredAxis(ax_sig[2*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], marker, 1.0, 1)
+                            plotSigPredAxis(ax_sig[2*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], marker, 1.0, 1)
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
@@ -702,6 +706,7 @@ def plotClusterGrid(X_umap,
             ax.set_title(f'{method} Labels')
             ax.set_xlabel('Umap 1') 
             ax.set_ylabel('Umap 2') 
+    fig.subplots_adjust(hspace = 0.25, wspace=0.1)
     if(savefig):
         try:
             fig.savefig(f'{path}/{figname}.png')
@@ -743,14 +748,15 @@ def plotTimeGrid(T,
         var_t = std_t[method]**2
         
         #Plot the Time Variance in a Colormap
-        ax_var = fig_time.add_subplot(gs_time[1,i])
-        ax_var.scatter(X_emb[:,0], X_emb[:,1], c=var_t, cmap='Reds')
-        norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
-        sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
-        cbar1 = fig_time.colorbar(sm1,ax=ax_var)
-        cbar1.ax.get_yaxis().labelpad = 15
-        cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
-        ax_var.axis('off')
+        if(np.any(var_t>0)):
+            ax_var = fig_time.add_subplot(gs_time[1,i])
+            ax_var.scatter(X_emb[:,0], X_emb[:,1], c=var_t, cmap='Reds')
+            norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
+            sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
+            cbar1 = fig_time.colorbar(sm1,ax=ax_var)
+            cbar1.ax.get_yaxis().labelpad = 15
+            cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
+            ax_var.axis('off')
     
     if(savefig):
         try:
