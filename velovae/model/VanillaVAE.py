@@ -1,5 +1,7 @@
 import numpy as np
+np.random.seed(42)
 import torch
+torch.manual_seed(42)
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import os
@@ -8,6 +10,7 @@ from velovae.plotting import plotPhase, plotSig, plotTLatent, plotTrainLoss, plo
 
 from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, ode, getGeneIndex
 from .TrainingData import SCData
+from .velocity import rnaVelocityVAE
 
 
 ############################################################
@@ -92,7 +95,7 @@ class encoder(nn.Module):
         return mu_zx, std_zx
 
 class decoder(nn.Module):
-    def __init__(self, adata, Tmax, p=98, device=torch.device('cpu'), tkey=None, checkpoint=None):
+    def __init__(self, adata, Tmax, train_idx, p=98, device=torch.device('cpu'), tkey=None, param_key=None):
         """
         adata: AnnData Object
         Tmax: Maximum Cell Time (used in time initialization)
@@ -103,18 +106,17 @@ class decoder(nn.Module):
         """
         super(decoder,self).__init__()
         #Dynamical Model Parameters
-        if(checkpoint is not None):
-            self.alpha = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
-            self.beta = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
-            self.gamma = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
-            self.scaling = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
-            self.ton = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
-            self.toff = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
-            self.sigma_u = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
-            self.sigma_s = nn.Parameter(torch.empty(adata.n_vars, device=device).float())
-            self.load_state_dict(torch.load(checkpoint,map_location=device))
+        if(param_key is not None):
+            self.alpha = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_alpha"].to_numpy()), device=device).float())
+            self.beta = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_beta"].to_numpy()), device=device).float())
+            self.gamma = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_gamma"].to_numpy()), device=device).float())
+            self.scaling = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_scaling"].to_numpy()), device=device).float())
+            self.ton = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_ton"].to_numpy()), device=device).float())
+            self.toff = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_toff"].to_numpy()), device=device).float())
+            self.sigma_u = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_sigma_u"].to_numpy()), device=device).float())
+            self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_sigma_s"].to_numpy()), device=device).float())
         else:
-            U,S = adata.layers['Mu'], adata.layers['Ms']
+            U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
             X = np.concatenate((U,S),1)
             alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
             if(tkey is not None):
@@ -137,29 +139,29 @@ class decoder(nn.Module):
             self.toff = nn.Parameter(torch.tensor(np.log(toff+1e-10), device=device).float())
             self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
             self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-            self.Rscore = Rscore
-            
+
         self.scaling.requires_grad = False
         self.sigma_u.requires_grad = False
         self.sigma_s.requires_grad = False
-        
-        
-        
-    def forward(self, t, neg_slope=1e-4):
+    
+    def forward(self, t, neg_slope=0.0):
         Uhat, Shat = ode(t, torch.exp(self.alpha), torch.exp(self.beta), torch.exp(self.gamma), torch.exp(self.ton), torch.exp(self.toff), neg_slope=neg_slope)
         Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
     
-    def predSU(self,t):
+    def predSU(self, t, gidx=None):
         """
         Unscaled version, used for plotting
         """
         scaling = torch.exp(self.scaling)
-        Uhat, Shat = ode(t, torch.exp(self.alpha), torch.exp(self.beta), torch.exp(self.gamma), torch.exp(self.ton), torch.exp(self.toff), neg_slope=0)
+        if(gidx is not None):
+            Uhat, Shat = ode(t, torch.exp(self.alpha[gidx]), torch.exp(self.beta[gidx]), torch.exp(self.gamma[gidx]), torch.exp(self.ton[gidx]), torch.exp(self.toff[gidx]), neg_slope=0.0)
+            return nn.functional.relu(Uhat*scaling[gidx]), nn.functional.relu(Shat)
+        Uhat, Shat = ode(t, torch.exp(self.alpha), torch.exp(self.beta), torch.exp(self.gamma), torch.exp(self.ton), torch.exp(self.toff), neg_slope=0.0)
         return nn.functional.relu(Uhat*scaling), nn.functional.relu(Shat)
 
 class VanillaVAE():
-    def __init__(self, adata, Tmax, device='cpu', hidden_size=(500, 250), tprior=None, checkpoints=[None,None]):
+    def __init__(self, adata, Tmax, device='cpu', hidden_size=(500, 250), tprior=None, tkey=None, checkpoints=None, param_key=None):
         """
         adata: AnnData Object
         Tmax: (float/int) Time Range 
@@ -173,17 +175,44 @@ class VanillaVAE():
             U,S = adata.layers['Mu'], adata.layers['Ms']
         except KeyError:
             print('Unspliced/Spliced count matrices not found in the layers! Exit the program...')
-            
+        
+        #Default Training Configuration
+        self.config = {
+            #Model Parameters
+            "tmax":Tmax,
+            "hidden_size":hidden_size,
+            "tprior":tprior,
+            "tkey":tkey,
+            #Training Parameters
+            "num_epochs":500, 
+            "learning_rate":1e-4, 
+            "learning_rate_ode":1e-4, 
+            "lambda":1e-3, 
+            "reg_t":1.0, 
+            "neg_slope":0.0,
+            "test_epoch":100, 
+            "save_epoch":100,
+            "N_warmup":50,
+            "batch_size":128,
+            "train_test_split":0.7,
+            "K_alt":0,
+            "train_scaling":False, 
+            "train_std":False, 
+            "weight_sample":False,
+            "sparsify":1
+        }
+        
         self.setDevice(device)
+        self.splitTrainTest(adata.n_obs)
         
         G = adata.n_vars
         #Create an encoder
         try:
-            self.encoder = encoder(2*G, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0])
+            self.encoder = encoder(2*G, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints)
         except IndexError:
             print('Please provide two dimensions!')
         #Create a decoder
-        self.decoder = decoder(adata, Tmax, device=self.device, checkpoint=checkpoints[1])
+        self.decoder = decoder(adata, Tmax, self.train_idx, device=self.device, tkey=tkey, param_key=param_key)
         self.Tmax=torch.tensor(Tmax).to(self.device)
         
         #Time prior
@@ -197,19 +226,12 @@ class VanillaVAE():
             self.mu_t = torch.tensor(t).view(-1,1).double().to(self.device)
             self.std_t = (torch.ones(self.mu_t.shape)*Tmax*0.1).double().to(self.device)
         
-        #Default Training Configuration
-        self.config = config = {
-            "num_epochs":500, "learning_rate":1e-4, "learning_rate_ode":1e-4, "lambda":1e-3, "reg_t":1.0, "neg_slope":0.0,\
-            "test_epoch":100, "save_epoch":100, "batch_size":128, "K_alt":0,\
-            "train_scaling":False, "train_std":False, "weight_sample":False,\
-            "sparsify":2,
-        }
+        
     
     def setDevice(self, device, device_number=None):
-        if(device=='gpu'):
+        if('cuda' in device):
             if(torch.cuda.is_available()):
-                self.device_number = device_number if (isinstance(device_number,int)) else torch.cuda.current_device()
-                self.device = torch.device('cuda:'+str(self.device_number))
+                self.device = torch.device(device)
             else:
                 print('Warning: GPU not detected. Using CPU as the device.')
                 self.device = torch.device('cpu')
@@ -229,15 +251,15 @@ class VanillaVAE():
         mu_t, std_t = self.encoder.forward(data_in_scale)
         t_global = self.reparameterize(mu_t, std_t)
          
-        uhat, shat = self.decoder.forward(t_global,neg_slope=self.config["neg_slope"]) #uhat is scaled
+        uhat, shat = self.decoder.forward(t_global, neg_slope=self.config["neg_slope"]) #uhat is scaled
         return mu_t, std_t, t_global, uhat, shat
     
     def evalModel(self, data_in):
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t = self.encoder.forward(data_in_scale)
         
-        uhat, shat = self.decoder.forward(mu_t,neg_slope=0.0) #uhat is scaled
-        return mu_t, uhat, shat
+        uhat, shat = self.decoder.predSU(mu_t) #uhat is scaled
+        return mu_t, std_t, uhat, shat
         
     def setMode(self,mode):
         if(mode=='train'):
@@ -270,11 +292,7 @@ class VanillaVAE():
         if( weight is not None):
             logp = logp*weight
         err_rec = torch.mean(torch.sum(logp,1))
-        if(torch.isinf(err_rec)):
-            print((u-uhat).max())
-            print(sigma_u.min())
-            print((s-shat).max())
-            print(sigma_s.min())
+        
         return (- err_rec + b*(kldt))
         
     def train_epoch(self, X_loader, optimizer, optimizer2=None, K=1, reg_t=1.0):
@@ -293,7 +311,7 @@ class VanillaVAE():
             if(optimizer2 is not None):
                 optimizer2.zero_grad()
             batch = iterX.next()
-            xbatch, weight, idx = batch[0].float().to(self.device), batch[1].float().to(self.device), batch[2].to(self.device)
+            xbatch, weight, idx = batch[0].float().to(self.device), batch[2].float().to(self.device), batch[3].to(self.device)
             u = xbatch[:,:xbatch.shape[1]//2]
             s = xbatch[:,xbatch.shape[1]//2:]
             mu_tx, std_tx, t_global, uhat, shat = self.forward(xbatch)
@@ -329,6 +347,14 @@ class VanillaVAE():
             self.decoder.sigma_u.requires_grad = True
             self.decoder.sigma_s.requires_grad = True
     
+    def splitTrainTest(self, N):
+        rand_perm = np.random.permutation(N)
+        n_train = int(N*self.config["train_test_split"])
+        self.train_idx = rand_perm[:n_train]
+        self.test_idx = rand_perm[n_train:]
+        
+        return
+    
     def train(self, 
               adata, 
               config={}, 
@@ -349,45 +375,21 @@ class VanillaVAE():
             print("Embedding not found! Please run the corresponding preprocessing step!")
         
         cell_labels_raw = adata.obs["clusters"].to_numpy() if "clusters" in adata.obs else np.array(['Unknown' for i in range(adata.n_obs)])
-        print("***      Creating  Dataset      ***")
-        dataset = SCData(X, Rscore) if self.config['weight_sample'] else SCData(X)
-        data_loader = torch.utils.data.DataLoader(dataset, batch_size=self.config["batch_size"], shuffle=True)
-        print("***          Finished.          ***")
+        
+        print("*********        Creating Training/Validation Datasets        *********")
+        train_set = SCData(X[self.train_idx], cell_labels_raw[self.train_idx], self.decoder.Rscore[self.train_idx]) if self.config['weight_sample'] else SCData(X[self.train_idx], cell_labels_raw[self.train_idx])
+        test_set = None
+        if(len(self.test_idx)>0):
+            test_set = SCData(X[self.test_idx], cell_labels_raw[self.test_idx], self.decoder.Rscore[self.test_idx]) if self.config['weight_sample'] else SCData(X[self.test_idx], cell_labels_raw[self.test_idx])
+        data_loader = torch.utils.data.DataLoader(train_set, batch_size=self.config["batch_size"], shuffle=True)
+        print("*********                      Finished.                      *********")
         
         gind, gene_plot = getGeneIndex(adata.var_names, gene_plot)
         
-        if(plot):
-            os.makedirs(figure_path, exist_ok=True)
-            #Plot the initial estimate
-            plotTLatent(self.decoder.t_init, Xembed, f"Initial Estimate", plot, figure_path, f"init-vanilla")
-            
-            Uhat_init, Shat_init = self.decoder.predSU(torch.tensor(self.decoder.t_init.reshape(-1,1), device=self.device, dtype=self.decoder.alpha.dtype))
-            for i in range(len(gind)):
-                idx = gind[i]
-                track_idx = None
-                state = (self.decoder.t_init>=np.exp(self.decoder.toff[idx].detach().cpu().item())) + 2*(self.decoder.t_init<np.exp(self.decoder.ton[idx].detach().cpu().item()))
-                plotPhase(U[:,idx], S[:,idx], 
-                          Uhat_init[:,idx].detach().cpu().numpy(), Shat_init[:,idx].detach().cpu().numpy(), 
-                          gene_plot[i], 
-                          track_idx, 
-                          state, 
-                          ['Induction', 'Repression', 'Off'],
-                          True, figure_path,
-                          f"{gene_plot[i]}-init")
-                
-                plotSig(self.decoder.t_init, 
-                        U[:,idx], S[:,idx], 
-                        Uhat_init[:,idx].detach().cpu().numpy(), Shat_init[:,idx].detach().cpu().numpy(), 
-                        gene_plot[i], 
-                        True, 
-                        figure_path, 
-                        f"{gene_plot[i]}-init-vanilla",
-                        cell_labels=cell_labels_raw)
-        
-        
+        os.makedirs(figure_path, exist_ok=True)
         
         #define optimizer
-        print("***     Creating optimizers     ***")
+        print("*********                 Creating optimizers                 *********")
         param_nn = list(self.encoder.parameters())
         param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma, self.decoder.ton, self.decoder.toff] 
         if(self.config['train_scaling']):
@@ -397,13 +399,14 @@ class VanillaVAE():
 
         optimizer = torch.optim.Adam(param_nn, lr=self.config["learning_rate"], weight_decay=self.config["lambda"])
         optimizer_ode = torch.optim.Adam(param_ode, lr=self.config["learning_rate_ode"])
-        print("***          Finished.          ***")
+        print("*********                      Finished.                      *********")
       
         #Main Training Process
-        print("***        Start training       ***")
+        print("*********                    Start training                   *********")
         print(f"Total Number of Iterations Per Epoch: {len(data_loader)}")
         
         n_epochs, n_save = self.config["num_epochs"], self.config["save_epoch"]
+        n_warmup = self.config["N_warmup"]
         loss_train, loss_test = [],[]
         
         start = time.time()
@@ -411,71 +414,83 @@ class VanillaVAE():
             #Train the encoder
             if(self.config["K_alt"]==0):
                 loss_list = self.train_epoch(data_loader, optimizer, reg_t=self.config["reg_t"])
-                loss_train += loss_list
-                loss_list = self.train_epoch(data_loader, optimizer_ode, reg_t=self.config["reg_t"])
-                loss_train += loss_list
+                if(epoch>=n_warmup):
+                    loss_list = self.train_epoch(data_loader, optimizer_ode, reg_t=self.config["reg_t"])
             else:
-                loss_list = self.train_epoch(data_loader, optimizer,optimizer_ode,self.config["K_alt"],self.config["reg_t"])
-                loss_train += loss_list
-            
+                if(epoch>=n_warmup):
+                    loss_list = self.train_epoch(data_loader, optimizer,optimizer_ode,self.config["K_alt"],self.config["reg_t"])
+                else:
+                    loss_list = self.train_epoch(data_loader, optimizer,None,self.config["K_alt"],self.config["reg_t"])
+
             if(epoch==0 or (epoch+1) % self.config["test_epoch"] == 0):
                 save = (epoch+1)%n_save==0 or epoch==0
-                loss, t_global, ton, toff = self.test(torch.tensor(X).float().to(self.device),
-                                                       Xembed,
-                                                       epoch+1, 
+                mse_train, t, ton, toff = self.test(train_set,
+                                                    Xembed[self.train_idx],
+                                                    f"train{epoch+1}", 
+                                                    gind, 
+                                                    gene_plot,
+                                                    save and plot, 
+                                                    figure_path)
+                mse_test = 'N/A'
+                if(test_set is not None):
+                    mse_test, t, ton, toff = self.test(test_set,
+                                                       Xembed[self.test_idx],
+                                                       f"test{epoch+1}", 
                                                        gind, 
                                                        gene_plot,
-                                                       save, 
-                                                       figure_path,
-                                                       cell_labels_raw)
+                                                       save and plot, 
+                                                       figure_path)
                 
                 
-                print(f"Epoch {epoch+1}: Loss = {loss}, \t Total Time = {convertTime(time.time()-start)}")
-                loss_test.append(loss)
+                print(f"Epoch {epoch+1}: Train MSE = {mse_train:.3f}, Test MSE = {mse_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
+                loss_train.append(mse_train)
+                loss_test.append(mse_test)
                 self.setMode('train')
-        
-        print("***     Finished Training     ***")
-        
-        plotTrainLoss(loss_train,[i for i in range(len(loss_train))],True, figure_path,'vanilla')
-        plotTestLoss(loss_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(loss_test))],True, figure_path,'vanilla')
+        print("*********                      Finished.                      *********")
+        if(plot):
+            plotTrainLoss(loss_train,[i for i in range(len(loss_train))],True, figure_path,'vanilla')
+            plotTestLoss(loss_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(loss_test))],True, figure_path,'vanilla')
         return
     
     def predAll(self, data):
         N, G = data.shape[0], data.shape[1]//2
         Uhat, Shat = torch.empty(N,G), torch.empty(N,G)
         t = torch.empty(N)
+        std_t = torch.empty(N)
 
         with torch.no_grad():
-            B = self.config["batch_size"]
+            B = min(N//10, 1000)
             Nb = N // B
             for i in range(Nb):
-                mu_tx, uhat, shat = self.evalModel(data[i*B:(i+1)*B])
+                mu_tx, std_tx, uhat, shat = self.evalModel(data[i*B:(i+1)*B])
                 Uhat[i*B:(i+1)*B] = uhat.cpu()
                 Shat[i*B:(i+1)*B] = shat.cpu()
                 t[i*B:(i+1)*B] = mu_tx.cpu().squeeze()
+                std_t[i*B:(i+1)*B] = std_tx.cpu().squeeze()
             if(N > B*Nb):
-                mu_tx, uhat, shat = self.evalModel(data[B*Nb:])
+                mu_tx, std_tx, uhat, shat = self.evalModel(data[B*Nb:])
                 Uhat[Nb*B:] = uhat.cpu()
                 Shat[Nb*B:] = shat.cpu()
                 t[Nb*B:] = mu_tx.cpu().squeeze()
+                std_t[Nb*B:] = std_tx.cpu().squeeze()
 
-        return Uhat, Shat, t
+        return Uhat, Shat, t, std_t
     
     def test(self,
-             data, 
+             test_set, 
              Xembed,
              testid=0, 
              gind=None, 
              gene_plot=None,
              plot=False, 
              path='figures', 
-             cell_labels_raw=None,
              **kwargs):
         """
         data: ncell x ngene tensor
         """
         self.setMode('eval')
-        Uhat, Shat, t = self.predAll(data)
+        data = torch.tensor(test_set.data).float().to(self.device)
+        Uhat, Shat, t, std_t = self.predAll(data)
         Uhat = Uhat.numpy()
         Shat = Shat.numpy()
         t = t.numpy()
@@ -511,7 +526,7 @@ class VanillaVAE():
                         True, 
                         path, 
                         f"{gene_plot[i]}-{testid}-vanilla",
-                        cell_labels=cell_labels_raw,
+                        cell_labels=test_set.labels,
                         sparsify=self.config["sparsify"])
         
         return mse, t.squeeze(), ton.squeeze(), toff.squeeze()
@@ -535,19 +550,24 @@ class VanillaVAE():
         adata.var[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy())
         adata.var[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy())
         adata.var[f"{key}_gamma"] = np.exp(self.decoder.gamma.detach().cpu().numpy())
-        adata.var[f"{key}_t_"] = np.exp(self.decoder.toff.detach().cpu().numpy())
+        adata.var[f"{key}_toff"] = np.exp(self.decoder.toff.detach().cpu().numpy())
         adata.var[f"{key}_ton"] = np.exp(self.decoder.ton.detach().cpu().numpy())
         adata.var[f"{key}_scaling"] = np.exp(self.decoder.scaling.detach().cpu().numpy())
         adata.var[f"{key}_sigma_u"] = np.exp(self.decoder.sigma_u.detach().cpu().numpy())
         adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
-        U,S = adata.layers['Mu'], adata.layers['Ms']
         scaling = adata.var[f"{key}_scaling"].to_numpy()
-        D_sc = np.concatenate((U/scaling,S),axis=1)
-        mu_t, std_t = self.encoder.forward(torch.tensor(D_sc).float().to(self.device))
-        my_t = (mu_t).squeeze().detach().cpu().numpy()
         
-        adata.obs[f"{key}_time"] = my_t
-        adata.obs[f"{key}_std_t"] = std_t.squeeze().detach().cpu().numpy()
+        Uhat, Shat, t, std_t = self.predAll(torch.tensor(np.concatenate((adata.layers['Mu'], adata.layers['Ms']),axis=1)).float().to(self.device))
+        
+        adata.obs[f"{key}_time"] = t.numpy()
+        adata.obs[f"{key}_std_t"] = std_t.numpy()
+        adata.layers[f"{key}_uhat"] = Uhat.numpy()
+        adata.layers[f"{key}_shat"] = Shat.numpy()
+        
+        adata.uns[f"{key}_train_idx"] = self.train_idx
+        adata.uns[f"{key}_test_idx"] = self.test_idx
+        
+        rnaVelocityVAE(adata, key)
         
         if(file_name is not None):
             adata.write_h5ad(f"{file_path}/{file_name}")
