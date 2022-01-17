@@ -1,7 +1,6 @@
 import numpy as np
 import sklearn
 import torch
-torch.manual_seed(42)
 import torch.nn as nn
 import torch.nn.functional as F
 import os
@@ -10,7 +9,7 @@ import time
 from velovae.plotting import plotPhase, plotSig, plotSig_, plotTLatent, plotTrainLoss, plotTestLoss
 
 from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, getGeneIndex, optimal_transport_duality_gap
-from .model_util import predSU, ode, odeNumpy, knnX0
+from .model_util import predSU, ode, odeNumpy, knnX0, knnX0_alt
 from .TrainingData import SCData
 from .VanillaVAE import VanillaVAE, KLGaussian
 from .velocity import rnaVelocityVAEpp
@@ -53,7 +52,7 @@ class encoder(nn.Module):
         for m in [self.fc_mu_t, self.fc_std_t, self.fc_mu_z, self.fc_std_z]:
             nn.init.xavier_uniform_(m.weight)
             nn.init.constant_(m.bias, 0.0)
-
+    
     def forward(self, data_in):
         h = self.net(data_in)
         mu_tx, std_tx = self.spt1(self.fc_mu_t(h)), self.spt2(self.fc_std_t(h))
@@ -75,6 +74,18 @@ class decoder(nn.Module):
         
         self.net_rho = nn.Sequential(self.fc1, self.bn1, nn.LeakyReLU(), self.dpt1,
                                      self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2)
+        
+        self.fc3 = nn.Linear(Cz, N1).to(device)
+        self.bn3 = nn.BatchNorm1d(num_features=N1).to(device)
+        self.dpt3 = nn.Dropout(p=0.2).to(device)
+        self.fc4 = nn.Linear(N1, N2).to(device)
+        self.bn4 = nn.BatchNorm1d(num_features=N2).to(device)
+        self.dpt4 = nn.Dropout(p=0.2).to(device)
+        
+        self.fc_out2 = nn.Linear(N2, G).to(device)
+        
+        self.net_rho2 = nn.Sequential(self.fc3, self.bn3, nn.LeakyReLU(), self.dpt3,
+                                      self.fc4, self.bn4, nn.LeakyReLU(), self.dpt4)
         
         if(checkpoint is not None):
             self.load_state_dict(torch.load(checkpoint, map_location=device))
@@ -130,18 +141,27 @@ class decoder(nn.Module):
             elif(isinstance(m, nn.BatchNorm1d)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+        for m in self.net_rho2.modules():
+            if(isinstance(m, nn.Linear)):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0.0)
+            elif(isinstance(m, nn.BatchNorm1d)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
         
-        for m in [self.fc_out1]:
+        for m in [self.fc_out1, self.fc_out2]:
             nn.init.xavier_normal_(m.weight)
             nn.init.constant_(m.bias, 0.0)
         
     def forward(self, t, z, u0=None, s0=None, t0=None, neg_slope=0.0):
-        rho = F.sigmoid(self.fc_out1(self.net_rho(z)))
-        alpha = self.alpha.exp()*rho
-        
         if(u0 is None or s0 is None or t0 is None):
-            Uhat, Shat = ode(t, alpha, torch.exp(self.beta), torch.exp(self.gamma), self.ton.exp(), self.toff.exp(), neg_slope)
+            rho = F.sigmoid(self.fc_out1(self.net_rho(z)))
+            alpha = self.alpha.exp()*rho
+            #Uhat, Shat = ode(t, alpha, torch.exp(self.beta), torch.exp(self.gamma), self.ton.exp(), self.toff.exp(), neg_slope)
+            Uhat, Shat = predSU(F.leaky_relu(t - self.ton.exp(), neg_slope), 0, 0, alpha, self.beta.exp(), self.gamma.exp())
         else:
+            rho = F.sigmoid(self.fc_out2(self.net_rho2(z)))
+            alpha = self.alpha.exp()*rho
             Uhat, Shat = predSU(F.leaky_relu(t-t0, neg_slope), u0/self.scaling.exp(), s0, alpha, self.beta.exp(), self.gamma.exp())
         Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
@@ -169,10 +189,11 @@ class VanillaVAEpp(VanillaVAE):
             "dt": (0.03,0.05),
             
             #Training Parameters
-            "num_epochs":250, 
-            "num_epochs_post":250,
+            "N_epochs":250, 
+            "N_epochs_post":250,
             "learning_rate":1e-4, 
             "learning_rate_ode":1e-4, 
+            "learning_rate_post":2e-5,
             "lambda":1e-3, 
             "lambda_rho":1e-3,
             "reg_t":1.0, 
@@ -181,6 +202,7 @@ class VanillaVAEpp(VanillaVAE):
             "test_epoch":100, 
             "save_epoch":100, 
             "N_warmup":50,
+            "N_warmup_post":50,
             "batch_size":128, 
             "train_test_split":0.7,
             "K_alt":0, 
@@ -217,10 +239,10 @@ class VanillaVAEpp(VanillaVAE):
             print('Using informative time prior.')
             t = adata.obs[tprior].to_numpy()
             t = t/t.max()*Tmax
-            self.mu_t = torch.tensor(t).view(-1,1).double().to(self.device)
-            self.std_t = (torch.ones(self.mu_t.shape)*Tmax*0.25).double().to(self.device)
-        self.mu_z = (torch.zeros(U.shape[0],Cz)).double().to(self.device)
-        self.std_z = (torch.ones(U.shape[0],Cz)*0.01).double().to(self.device)
+            self.mu_t = torch.tensor(t[self.train_idx]).view(-1,1).double().to(self.device)
+            self.std_t = (torch.ones(len(self.train_idx),1)*Tmax*0.25).double().to(self.device)
+        self.mu_z = (torch.zeros(len(self.train_idx),Cz)).double().to(self.device)
+        self.std_z = (torch.ones(len(self.train_idx),Cz)*0.01).double().to(self.device)
         
         self.use_knn = False
         self.u0 = None
@@ -323,14 +345,25 @@ class VanillaVAEpp(VanillaVAE):
         Estimate the initial conditions using KNN
         U is unscaled
         """
+        self.setMode('eval')
         Uhat, Shat, t, std_t, z, std_z = self.predAll(torch.tensor(np.concatenate((U,S),1)).float().to(self.device), "both")
         t = t.numpy()
-        dt = (self.config["dt"][0]*self.Tmax, self.config["dt"][1]*self.Tmax)
-        u0, s0, t0, knn = knnX0(U[self.train_idx], S[self.train_idx], t[self.train_idx], z[self.train_idx].numpy(), t, z.numpy(), self.config["dt"], self.config["n_neighbors"])
+        dt = (self.config["dt"][0]*(t.max()-t.min()), self.config["dt"][1]*(t.max()-t.min()))
+        u0, s0, t0, knn = knnX0_alt(U[self.train_idx], S[self.train_idx], t[self.train_idx], z[self.train_idx].numpy(), t, z.numpy(), dt, self.config["n_neighbors"])
         self.u0 = torch.tensor(u0, device=self.device).to(float)
         self.s0 = torch.tensor(s0, device=self.device).to(float)
         self.t0 = torch.tensor(t0.reshape(-1,1), device=self.device).to(float)
+        if(self.u0.requires_grad==True):
+            print("u0 requires grad")
+            self.u0.requires_grad==False
+        if(self.s0.requires_grad==True):
+            print("s0 requires grad")
+            self.s0.requires_grad==False
+        if(self.s0.requires_grad==True):
+            print("u0 requires grad")
+            self.t0.requires_grad==False
         self.knn = knn
+        return t
         
     def train(self, 
               adata, 
@@ -368,7 +401,7 @@ class VanillaVAEpp(VanillaVAE):
         #define optimizer
         print("*********                 Creating optimizers                 *********")
         param_nn = list(self.encoder.parameters())+list(self.decoder.net_rho.parameters())+list(self.decoder.fc_out1.parameters())
-        param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma, self.decoder.ton, self.decoder.toff] 
+        param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma] 
         if(self.config['train_scaling']):
             param_ode = param_ode+[self.decoder.scaling]
         if(self.config['train_std']):
@@ -383,7 +416,7 @@ class VanillaVAEpp(VanillaVAE):
         print("*********                      Stage  1                       *********")
         print(f"Total Number of Iterations Per Epoch: {len(data_loader)}")
         
-        n_epochs, n_save = self.config["num_epochs"], self.config["save_epoch"]
+        n_epochs, n_save = self.config["N_epochs"], self.config["save_epoch"]
         loss_train, loss_test = [],[]
         
         start = time.time()
@@ -400,24 +433,24 @@ class VanillaVAEpp(VanillaVAE):
                     loss_list = self.train_epoch(data_loader, optimizer, None, self.config["K_alt"], self.config["reg_t"], self.config["reg_z"])
             if(epoch==0 or (epoch+1) % self.config["test_epoch"] == 0):
                 save = (epoch+1) % n_save==0 or epoch==0
-                mse_train, t, z = self.test(train_set,
-                                            Xembed[self.train_idx],
-                                            f"train{epoch+1}", 
-                                            False,
-                                            gind, 
-                                            gene_plot,
-                                            save and plot, 
-                                            figure_path)
+                mse_train, t1, z = self.test(train_set,
+                                             Xembed[self.train_idx],
+                                             f"train{epoch+1}", 
+                                             False,
+                                             gind, 
+                                             gene_plot,
+                                             save and plot, 
+                                             figure_path)
                 mse_test = 'N/A'
                 if(test_set is not None):
-                    mse_test, t, z = self.test(test_set,
-                                               Xembed[self.test_idx],
-                                               f"test{epoch+1}", 
-                                               True,
-                                               gind, 
-                                               gene_plot,
-                                               save and plot, 
-                                               figure_path)
+                    mse_test, t2, z = self.test(test_set,
+                                                Xembed[self.test_idx],
+                                                f"test{epoch+1}", 
+                                                True,
+                                                gind, 
+                                                gene_plot,
+                                                save and plot, 
+                                                figure_path)
                 print(f"Epoch {epoch+1}: Train MSE = {mse_train:.3f}, Test MSE = {mse_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
                 loss_train.append(mse_train)
                 loss_test.append(mse_test)
@@ -425,11 +458,13 @@ class VanillaVAEpp(VanillaVAE):
                 
         
         print("*********                      Stage  2                       *********")
-        self.decoder.init_weights()
-        self.updateX0(U, S)
+        self.encoder.eval()
+        self.t_stage1 = self.updateX0(U, S)
         self.use_knn = True
+        self.decoder.init_weights()
         #Plot the initial conditions
         if(plot):
+            plotTLatent(self.t0.detach().cpu().numpy().squeeze(), Xembed, f"Initial Time", True, figure_path, f"t0")
             for i in range(len(gind)):
                 idx = gind[i]
                 t0_plot = self.t0[self.train_idx].squeeze().detach().cpu().numpy()
@@ -453,14 +488,18 @@ class VanillaVAEpp(VanillaVAE):
                          path=figure_path, 
                          figname=f"{gene_plot[i]}-x0")
         
-        param_post = list(self.decoder.net_rho.parameters())+list(self.decoder.fc_out1.parameters())
-        optimizer_post = torch.optim.Adam(param_post, lr=self.config["learning_rate"], weight_decay=self.config["lambda_rho"])
-        for epoch in range(self.config["num_epochs_post"]):
+        param_post = list(self.decoder.net_rho2.parameters())+list(self.decoder.fc_out2.parameters())
+        optimizer_post = torch.optim.Adam(param_post, lr=self.config["learning_rate_post"], weight_decay=self.config["lambda_rho"])
+        for epoch in range(self.config["N_epochs_post"]):
             if(self.config["K_alt"]==0):
                 loss_list = self.train_epoch(data_loader, optimizer_post, reg_t=self.config["reg_t"], reg_z=self.config["reg_z"])
-                loss_list = self.train_epoch(data_loader, optimizer_ode, reg_t=self.config["reg_t"], reg_z=self.config["reg_z"])
+                if(epoch>=self.config["N_warmup_post"]):
+                    loss_list = self.train_epoch(data_loader, optimizer_ode, reg_t=self.config["reg_t"], reg_z=self.config["reg_z"])
             else:
-                loss_list = self.train_epoch(data_loader, optimizer_post, optimizer_ode, self.config["K_alt"], self.config["reg_t"], self.config["reg_z"])
+                if(epoch>=self.config["N_warmup_post"]):
+                    loss_list = self.train_epoch(data_loader, optimizer_post, optimizer_ode, self.config["K_alt"], self.config["reg_t"], self.config["reg_z"])
+                else:
+                    loss_list = self.train_epoch(data_loader, optimizer_post, None, self.config["K_alt"], self.config["reg_t"], self.config["reg_z"])
             
             if(epoch==0 or (epoch+1) % self.config["test_epoch"] == 0):
                 save = (epoch+1)%n_save==0 or epoch==0
@@ -483,13 +522,14 @@ class VanillaVAEpp(VanillaVAE):
                                                gene_plot,
                                                save and plot, 
                                                figure_path)
+                
                 print(f"Epoch {epoch+1+n_epochs}: Train MSE = {mse_train}, Test MSE = {mse_test}, \t Total Time = {convertTime(time.time()-start)}")
                 loss_train.append(mse_train)
                 loss_test.append(mse_test)
-                self.setMode('train')
+                self.decoder.train()
         print("*********                      Finished.                      *********")
         if(plot):
-            plotTrainLoss(loss_train,[i for i in range(len(loss_train))],True, figure_path,'rho')
+            plotTrainLoss(loss_train,[i*self.config["test_epoch"] for i in range(len(loss_train))],True, figure_path,'rho')
             plotTestLoss(loss_test,[1]+[i*self.config["test_epoch"] for i in range(1,len(loss_test))],True, figure_path,'rho')
         return
     
@@ -600,6 +640,7 @@ class VanillaVAEpp(VanillaVAE):
         """
         Save the ODE parameters and cell time to the anndata object and write it to disk.
         """
+        self.setMode('eval')
         os.makedirs(file_path, exist_ok=True)
         
         adata.var[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy())
@@ -623,10 +664,9 @@ class VanillaVAEpp(VanillaVAE):
         adata.layers[f"{key}_uhat"] = Uhat.numpy()
         adata.layers[f"{key}_shat"] = Shat.numpy()
         
-        rho = F.sigmoid(self.decoder.fc_out1(self.decoder.net_rho(z.to(self.device))))
+        rho = F.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(z.to(self.device))))
         
         adata.layers[f"{key}_rho"] = rho.detach().cpu().numpy()
-        
         adata.obs[f"{key}_t0"] = self.t0.squeeze().detach().cpu().numpy()
         adata.layers[f"{key}_u0"] = self.u0.detach().cpu().numpy()
         adata.layers[f"{key}_s0"] = self.s0.detach().cpu().numpy()
