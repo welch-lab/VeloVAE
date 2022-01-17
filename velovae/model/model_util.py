@@ -105,8 +105,8 @@ def predSU(tau, u0, s0, alpha, beta, gamma):
     alpha, beta, gamma: [G] or [N type x G] generation, splicing and degradation rates
     """
     expb, expg = torch.exp(-beta*tau), torch.exp(-gamma*tau)
-    unstability = (torch.abs(beta-gamma) < 1e-3).long()
     eps = 1e-6
+    unstability = (torch.abs(beta-gamma) < eps).long()
     
     upred = u0*expb+alpha/beta*(1-expb)
     spred = s0*expg+alpha/gamma*(1-expg)+(alpha-beta*u0)/(gamma-beta+eps)*(expg-expb)*(1-unstability)+(alpha-beta*u0)*tau*expg*unstability
@@ -342,7 +342,7 @@ def predSteadyNumpy(ts,alpha,beta,gamma):
     """
     alpha_, beta_, gamma_ = np.clip(alpha,a_min=0,a_max=None), np.clip(beta,a_min=0,a_max=None), np.clip(gamma,a_min=0,a_max=None)
     eps = 1e-6
-    unstability = np.abs(beta-gamma) < 1e-6
+    unstability = np.abs(beta-gamma) < eps
     
     ts_ = ts.squeeze()
     expb, expg = np.exp(-beta*ts_), np.exp(-gamma*ts_)
@@ -357,8 +357,8 @@ def predSteady(tau_s, alpha, beta, gamma):
     tau_s: [G] time duration from ton to toff
     alpha, beta, gamma: [G] generation, splicing and degradation rates
     """
-    unstability = (torch.abs(beta - gamma) < 1e-6).long()
     eps = 1e-6
+    unstability = (torch.abs(beta - gamma) < eps).long()
     
     expb, expg = torch.exp(-beta*tau_s), torch.exp(-gamma*tau_s)
     u0 = alpha/(beta+eps)*(torch.tensor([1.0]).to(alpha.device)-expb)
@@ -375,8 +375,8 @@ def odeNumpy(t,alpha,beta,gamma,to,ts,scaling=None, k=10.0):
     alpha, beta, gamma: [G] generation, splicing and degradation rates
     to, ts: [G] switch-on and -off time
     """
-    unstability = (np.abs(beta - gamma) < 1e-6)
     eps = 1e-6
+    unstability = (np.abs(beta - gamma) < eps)
     
     o = (t<=ts).astype(int)
     #Induction
@@ -413,8 +413,8 @@ def ode(t,alpha,beta,gamma,to,ts,neg_slope=0.0):
     alpha, beta, gamma: [G] generation, splicing and degradation rates
     to, ts: [G] switch-on and -off time
     """
-    unstability = (torch.abs(beta - gamma) < 1e-6).long()
     eps = 1e-6
+    unstability = (torch.abs(beta - gamma) < eps).long()
     o = (t<=ts).int()
     
     #Induction
@@ -1047,7 +1047,7 @@ def knnX0_alt(U, S, t, z, t_query, z_query, dt, k):
                 knn_model.fit(z[indices])
                 dist, ind = knn_model.kneighbors(z_query[i:i+1])
                 knn[i] = indices[ind.squeeze()]
-                u0[i] = U[knn[i].astype(int)].mean(0)
-                s0[i] = S[knn[i].astype(int)].mean(0)
-                t0[i] = t[knn[i].astype(int)].mean()
+                u0[i] = np.mean( U[knn[i].astype(int)], 0)
+                s0[i] = np.mean( S[knn[i].astype(int)], 0)
+                t0[i] = np.mean( t[knn[i].astype(int)] )
     return u0,s0,t0,knn
