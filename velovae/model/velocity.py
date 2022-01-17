@@ -3,6 +3,7 @@ import scipy as sp
 import scipy.sparse as spr
 from scipy.spatial.distance import cosine as cosdist
 from scipy.spatial.distance import pdist, squareform
+from scipy.ndimage import gaussian_filter1d
 from sklearn.preprocessing import normalize
 from .model_util import odeNumpy, odeBrNumpy, initAllPairsNumpy, predSUNumpy
 
@@ -90,7 +91,7 @@ def rnaVelocityBrVAE(adata, key, use_raw=False, use_scv_genes=False):
         V[:, gene_mask] = np.nan
     return V, U, S
     
-def rnaVelocityVAEpp(adata, key, use_raw=False, use_scv_genes=False):
+def rnaVelocityVAEpp(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False):
     """
     Compute the velocity based on:
     ds/dt = beta * u - gamma * s
@@ -101,8 +102,8 @@ def rnaVelocityVAEpp(adata, key, use_raw=False, use_scv_genes=False):
     gamma = adata.var[f"{key}_gamma"].to_numpy()
     t = adata.obs[f"{key}_time"].to_numpy()
     t0 = adata.obs[f"{key}_t0"].to_numpy()
-    u0 = adata.layers[f"{key}_u0"]
-    s0 = adata.layers[f"{key}_s0"]
+    U0 = adata.layers[f"{key}_u0"]
+    S0 = adata.layers[f"{key}_s0"]
     scaling = adata.var[f"{key}_scaling"].to_numpy()
     if(use_raw):
         U, S = adata.layers['Mu'], adata.layers['Ms']
@@ -111,18 +112,23 @@ def rnaVelocityVAEpp(adata, key, use_raw=False, use_scv_genes=False):
             U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
             U = U/scaling
         else:
-            U, S = predSUNumpy(np.clip(t-t0,0,None).reshape(-1,1),u0/scaling,s0,alpha*rho,beta,gamma)
+            U, S = predSUNumpy(np.clip(t-t0,0,None).reshape(-1,1),U0/scaling,S0,alpha*rho,beta,gamma)
             U, S = np.clip(U, 0, None), np.clip(S, 0, None)
             adata.layers["Uhat"] = U * scaling
             adata.layers["Shat"] = S
-    
-    V = (beta * U - gamma * S)
+    if(approx):
+        V = (S - S0)/((t - t0).reshape(-1,1))
+    else:
+        V = (beta * U - gamma * S)
+    if(sigma is not None):
+        time_order = np.argsort(t)
+        V[time_order] = gaussian_filter1d(V[time_order], sigma, axis=0, mode="nearest")
     adata.layers[f"{key}_velocity"] = V
     if(use_scv_genes):
         gene_mask = np.isnan(adata.var['fit_scaling'].to_numpy())
         V[:, gene_mask] = np.nan
     return V, U, S
-    
+
 def smoothVel(v, t, W=5):
     order_t = np.argsort(t)
     h = np.ones((W))*(1/W)
