@@ -1023,3 +1023,31 @@ def knnX0(U, S, t, z, t_query, z_query, dt, k):
     #u0 = np.convolve(u0[order_idx], np.ones((k))*(1/k), mode='same')
     #s0 = np.convolve(s0[order_idx], np.ones((k))*(1/k), mode='same')
     return u0,s0,t0,knn_orig
+
+def knnX0_alt(U, S, t, z, t_query, z_query, dt, k):
+    N, Nq = len(t), len(t_query)
+    u0 = np.zeros((Nq, U.shape[1]))
+    s0 = np.zeros((Nq, S.shape[1]))
+    t0 = np.ones((Nq))*(t.min() - dt[0])
+    
+    knn = np.ones((Nq,k))*np.nan
+    
+    for i in range(Nq):
+        t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
+        indices = np.where((t>=t_lb) & (t<t_ub))[0]
+        k_ = len(indices)
+        if(k_>0):
+            if(k_<k):
+                knn[i,:k_] = indices
+                u0[i] = U[knn[i,:k_].astype(int)].mean(0)
+                s0[i] = S[knn[i,:k_].astype(int)].mean(0)
+                t0[i] = t[knn[i,:k_].astype(int)].mean()
+            else:
+                knn_model = NearestNeighbors(n_neighbors=k)
+                knn_model.fit(z[indices])
+                dist, ind = knn_model.kneighbors(z_query[i:i+1])
+                knn[i] = indices[ind.squeeze()]
+                u0[i] = U[knn[i].astype(int)].mean(0)
+                s0[i] = S[knn[i].astype(int)].mean(0)
+                t0[i] = t[knn[i].astype(int)].mean()
+    return u0,s0,t0,knn

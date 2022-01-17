@@ -19,11 +19,11 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
     if method=='scVelo':
         Uhat, Shat, logp_train = getPredictionSCV(adata, key)
         logp_test = "N/A"
-    elif method=='VAE':
+    elif method=='Vanilla VAE':
         Uhat, Shat, logp_train, logp_test = getPredictionVanilla(adata, key, scv_key)
     elif method=='BrVAE' or method=='BrVAE++':
         Uhat, Shat, logp_train, logp_test = getPredictionBranching(adata, key, scv_key)
-    elif method=='VAE++':
+    elif method=='VAE':
         Uhat, Shat, logp_train, logp_test = getPredictionVAEpp(adata, key, scv_key)
         
     U, S = adata.layers['Mu'], adata.layers['Ms']
@@ -117,13 +117,13 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
         if(method=='scVelo'):
             t_i, Uhat_i, Shat_i = getPredictionSCVDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = np.concatenate((np.zeros((Nplot)), np.ones((Nplot))))
-        elif(method=='VAE'):
+        elif(method=='Vanilla VAE'):
             t_i, Uhat_i, Shat_i = getPredictionVanillaDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = None
         elif(method=='BrVAE' or method=='BrVAE++'):
             t_i, y_i, Uhat_i, Shat_i = getPredictionBranchingDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = y_i
-        elif(method=='VAE++'):
+        elif(method=='VAE'):
             Uhat_i, Shat_i, logp_train, logp_test = getPredictionVAEpp(adata, keys[i], None)
             
             t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
@@ -134,8 +134,8 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                 cell_labels[cell_labels_raw==cell_types_raw[i]] = i
             Yhat[method] = cell_labels
         That[method] = t_i
-        Uhat[method] = Uhat_i[:,gene_indices] if method=='VAE++' else Uhat_i
-        Shat[method] = Shat_i[:,gene_indices] if method=='VAE++' else Shat_i
+        Uhat[method] = Uhat_i[:,gene_indices] if method=='VAE' else Uhat_i
+        Shat[method] = Shat_i[:,gene_indices] if method=='VAE' else Shat_i
     
     print("---     Post Analysis     ---")
     print(f"Dataset Size: {adata.n_obs} cells, {adata.n_vars} genes")
@@ -181,8 +181,8 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 std_t[method] = adata.obs[f"{keys[i]}_std_t"].to_numpy()
         plotTimeGrid(T,
-                     std_t,
                      X_embed,
+                     None,
                      savefig=True,  
                      path=save_path)
     
@@ -226,7 +226,7 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                 Labels_sig['scVelo Global'] = Labels_sig[method]
                 Legends_sig[method] = cell_types_raw
                 Legends_sig['scVelo Global'] = cell_types_raw
-            elif(method=='VAE' or method=='VAE++'):
+            elif(method=='Vanilla VAE' or method=='VAE'):
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs["clusters"].to_numpy()])
                 Legends_sig[method] = cell_types_raw

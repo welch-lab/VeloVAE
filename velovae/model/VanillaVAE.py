@@ -1,7 +1,5 @@
 import numpy as np
-np.random.seed(42)
 import torch
-torch.manual_seed(42)
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import os
@@ -38,7 +36,7 @@ def KLtime(t0, dt, Tmax, lamb=1):
 
 def KLGaussian(mu1, std1, mu2, std2):
     """
-    Compute the KL divergence between two Gaussian distributions
+    Compute the KL divergence between two Gaussian distributions with diagonal covariance
     """
     return torch.mean(torch.sum(torch.log(std2/std1)+std1.pow(2)/(2*std2.pow(2))-0.5+(mu1-mu2).pow(2)/(2*std2.pow(2)),1))
 
@@ -184,7 +182,7 @@ class VanillaVAE():
             "tprior":tprior,
             "tkey":tkey,
             #Training Parameters
-            "num_epochs":500, 
+            "N_epochs":500, 
             "learning_rate":1e-4, 
             "learning_rate_ode":1e-4, 
             "lambda":1e-3, 
@@ -405,7 +403,7 @@ class VanillaVAE():
         print("*********                    Start training                   *********")
         print(f"Total Number of Iterations Per Epoch: {len(data_loader)}")
         
-        n_epochs, n_save = self.config["num_epochs"], self.config["save_epoch"]
+        n_epochs, n_save = self.config["N_epochs"], self.config["save_epoch"]
         n_warmup = self.config["N_warmup"]
         loss_train, loss_test = [],[]
         
@@ -547,6 +545,7 @@ class VanillaVAE():
         """
         os.makedirs(file_path, exist_ok=True)
         
+        self.setMode('eval')
         adata.var[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy())
         adata.var[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy())
         adata.var[f"{key}_gamma"] = np.exp(self.decoder.gamma.detach().cpu().numpy())
