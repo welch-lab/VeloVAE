@@ -21,9 +21,9 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
         logp_test = "N/A"
     elif method=='Vanilla VAE':
         Uhat, Shat, logp_train, logp_test = getPredictionVanilla(adata, key, scv_key)
-    elif method=='BrVAE' or method=='BrVAE++':
+    elif method=='BrVAE':
         Uhat, Shat, logp_train, logp_test = getPredictionBranching(adata, key, scv_key)
-    elif method=='VAE':
+    elif method=='VeloVAE':
         Uhat, Shat, logp_train, logp_test = getPredictionVAEpp(adata, key, scv_key)
         
     U, S = adata.layers['Mu'], adata.layers['Ms']
@@ -83,7 +83,7 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
         stats['corr'] = corr
     return stats
 
-def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500, embed="umap", grid_size=(1,1), save_path="figures"):
+def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500, frac=0.5, embed="umap", grid_size=(1,1), save_path="figures"):
     """
     Main function for post analysis.
     adata: anndata object
@@ -101,12 +101,18 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
     for i, x in enumerate(cell_types_raw):
         label_dic[x] = i
     cell_labels = np.array([label_dic[x] for x in cell_labels_raw])
-    gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
+    if(len(genes)>0):
+        gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
+    else:
+        print("Warning: No gene names are provided. Randomly select a gene...")
+        gene_indices = np.random.choice(adata.n_vars, grid_size[0]*grid_size[1], replace=False).astype(int)
+        genes = adata.var_names[gene_indices].to_numpy()
+        print(genes)
     
     Ntype = len(cell_types_raw)
     
     stats = {}
-    Uhat, Shat = {},{}
+    Uhat, Shat, V = {},{},{}
     That, Yhat = {},{}
     
     scv_idx = np.where(methods=='scVelo')[0]
@@ -117,14 +123,18 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
         if(method=='scVelo'):
             t_i, Uhat_i, Shat_i = getPredictionSCVDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = np.concatenate((np.zeros((Nplot)), np.ones((Nplot))))
+            V[method] = adata.layers["velocity"][:,gene_indices]
         elif(method=='Vanilla VAE'):
             t_i, Uhat_i, Shat_i = getPredictionVanillaDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = None
-        elif(method=='BrVAE' or method=='BrVAE++'):
+            V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
+        elif(method=='BrVAE'):
             t_i, y_i, Uhat_i, Shat_i = getPredictionBranchingDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = y_i
-        elif(method=='VAE'):
+            V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
+        elif(method=='VeloVAE'):
             Uhat_i, Shat_i, logp_train, logp_test = getPredictionVAEpp(adata, keys[i], None)
+            V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
             
             t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
             cell_labels_raw = adata.obs["clusters"].to_numpy()
@@ -134,8 +144,8 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                 cell_labels[cell_labels_raw==cell_types_raw[i]] = i
             Yhat[method] = cell_labels
         That[method] = t_i
-        Uhat[method] = Uhat_i[:,gene_indices] if method=='VAE' else Uhat_i
-        Shat[method] = Shat_i[:,gene_indices] if method=='VAE' else Shat_i
+        Uhat[method] = Uhat_i[:,gene_indices] if method=='VeloVAE' else Uhat_i
+        Shat[method] = Shat_i[:,gene_indices] if method=='VeloVAE' else Shat_i
     
     print("---     Post Analysis     ---")
     print(f"Dataset Size: {adata.n_obs} cells, {adata.n_vars} genes")
@@ -173,6 +183,7 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
     if("time" in plot_type or "all" in plot_type):
         T = {}
         std_t = {}
+        capture_time = adata.obs["capture_time"].to_numpy() if "capture_time" in adata.obs else None
         for i, method in enumerate(methods):
             if(method=='scVelo'):
                 T[method] = adata.obs["latent_time"].to_numpy()
@@ -182,6 +193,7 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                 std_t[method] = adata.obs[f"{keys[i]}_std_t"].to_numpy()
         plotTimeGrid(T,
                      X_embed,
+                     capture_time,
                      None,
                      savefig=True,  
                      path=save_path)
@@ -193,7 +205,7 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
         Labels_phase = {}
         Legends_phase = {}
         for i, method in enumerate(methods):
-            if(method=='VAE' or method=='scVelo'):
+            if(method=='VeloVAE' or method=='scVelo'):
                 Labels_phase[method] = cellState(adata, method, keys[i], gene_indices)
                 Legends_phase[method] = ['Induction', 'Repression', 'Off']
             else:
@@ -226,7 +238,7 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                 Labels_sig['scVelo Global'] = Labels_sig[method]
                 Legends_sig[method] = cell_types_raw
                 Legends_sig['scVelo Global'] = cell_types_raw
-            elif(method=='Vanilla VAE' or method=='VAE'):
+            elif(method=='Vanilla VAE' or method=='VeloVAE'):
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs["clusters"].to_numpy()])
                 Legends_sig[method] = cell_types_raw
@@ -246,7 +258,9 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                     That,
                     Uhat, 
                     Shat, 
+                    V,
                     Yhat,
+                    frac=frac,
                     savefig=True,  
                     path=save_path, 
                     figname="test")
