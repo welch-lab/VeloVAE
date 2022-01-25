@@ -60,7 +60,18 @@ class encoder(nn.Module):
         return mu_tx, std_tx, mu_zx, std_zx
 
 class decoder(nn.Module):
-    def __init__(self, adata, Tmax, Cz, N1=250, N2=500, p=98, device=torch.device('cpu'), tkey=None, param_key=None, checkpoint=None):
+    def __init__(self, 
+                 adata, 
+                 Tmax,
+                 train_idx,
+                 Cz, 
+                 N1=250, 
+                 N2=500, 
+                 p=98, 
+                 device=torch.device('cpu'), 
+                 init_method ="steady", 
+                 init_key=None, 
+                 checkpoint=None):
         super(decoder,self).__init__()
         G = adata.n_vars
         self.fc1 = nn.Linear(Cz, N1).to(device)
@@ -93,21 +104,53 @@ class decoder(nn.Module):
             self.init_weights()
         
         #Dynamical Model Parameters
-        U,S = adata.layers['Mu'], adata.layers['Ms']
+        U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
         X = np.concatenate((U,S),1)
-        if(param_key is not None):
-            self.alpha = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_alpha"].to_numpy()), device=device).float())
-            self.beta = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_beta"].to_numpy()), device=device).float())
-            self.gamma = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_gamma"].to_numpy()), device=device).float())
-            self.scaling = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_scaling"].to_numpy()), device=device).float())
-            self.ton = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_ton"].to_numpy()), device=device).float())
-            self.toff = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_toff"].to_numpy()), device=device).float())
-            self.sigma_u = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_sigma_u"].to_numpy()), device=device).float())
-            self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{param_key}_sigma_s"].to_numpy()), device=device).float())
-        else:
+        if(init_method == "existing" and init_key is not None):
+            self.alpha = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_alpha"].to_numpy()), device=device).float())
+            self.beta = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_beta"].to_numpy()), device=device).float())
+            self.gamma = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_gamma"].to_numpy()), device=device).float())
+            self.scaling = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_scaling"].to_numpy()), device=device).float())
+            self.ton = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_ton"].to_numpy()), device=device).float())
+            self.sigma_u = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_u"].to_numpy()), device=device).float())
+            self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_s"].to_numpy()), device=device).float())
+        elif(init_method == "random"):
+            print("Random Initialization.")
             alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
-            if(tkey is not None):
-                self.t_init = adata.obs[f'{tkey}_time'].to_numpy()
+            
+            self.alpha = nn.Parameter(torch.normal(0.0, 1.0, size=(U.shape[1],), device=device).float())
+            self.beta =  nn.Parameter(torch.normal(0.0, 1.0, size=(U.shape[1],), device=device).float())
+            self.gamma = nn.Parameter(torch.normal(0.0, 1.0, size=(U.shape[1],), device=device).float())
+            self.ton = torch.nn.Parameter(torch.ones(adata.n_vars, device=device).float()*(-10))
+            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
+            self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+            self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+        elif(init_method == "tprior"):
+            print("Initialization using prior time.")
+            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
+            t_prior = adata.obs[init_key].to_numpy()
+            t_prior = t_prior[train_idx]
+            std_t = np.std(t_prior)*0.2
+            self.t_init = np.random.uniform(t_prior-std_t, t_prior+std_t)
+            self.t_init -= self.t_init.min()
+            self.t_init = self.t_init
+            self.t_init = self.t_init/self.t_init.max()*Tmax
+            toff = getTsGlobal(self.t_init, U/scaling, S, 95)
+            alpha, beta, gamma, ton = reinitParams(U/scaling, S, self.t_init, toff)
+            
+            self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
+            self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
+            self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
+            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
+            self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+            self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+            #self.ton = torch.nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float())
+            self.ton = nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+        else:
+            print("Initialization using the steady-state and dynamical models.")
+            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
+            if(init_key is not None):
+                self.t_init = adata.obs[init_key].to_numpy()
             else:
                 T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
                 T_eq = np.zeros(T.shape)
@@ -122,10 +165,11 @@ class decoder(nn.Module):
             self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
             self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
             self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-            self.ton = nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
-            self.toff = nn.Parameter(torch.tensor(np.log(toff+1e-10), device=device).float())
+            #self.ton = nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+            self.ton = torch.nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float())
             self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
             self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+        
 
         self.scaling.requires_grad = False
         self.sigma_u.requires_grad = False
@@ -167,7 +211,16 @@ class decoder(nn.Module):
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
 
 class VanillaVAEpp(VanillaVAE):
-    def __init__(self, adata, Tmax, Cz, device='cpu', hidden_size=(500, 250, 250, 500), tprior=None, tkey=None, checkpoints=[None, None], param_key=None):
+    def __init__(self, 
+                 adata, 
+                 Tmax, 
+                 Cz, 
+                 device='cpu', 
+                 hidden_size=(500, 250, 250, 500), 
+                 init_method="steady", 
+                 init_key=None,
+                 tprior=None, 
+                 checkpoints=[None, None]):
         """
         adata: AnnData Object
         Tmax: (float/int) Time Range 
@@ -183,8 +236,9 @@ class VanillaVAEpp(VanillaVAE):
             "tmax":Tmax,
             "Cz":Cz,
             "hidden_size":hidden_size,
+            "init_method":init_method,
+            "init_key":init_key,
             "tprior":tprior,
-            "tkey":tkey,
             "n_neighbors":30,
             "dt": (0.03,0.05),
             
@@ -221,14 +275,16 @@ class VanillaVAEpp(VanillaVAE):
             self.encoder = encoder(2*G, Cz, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0])
         except IndexError:
             print('Please provide two dimensions!')
+        
         self.decoder = decoder(adata, 
                                Tmax, 
+                               self.train_idx,
                                Cz, 
                                hidden_size[2], 
                                hidden_size[3], 
                                device=self.device, 
-                               tkey=tkey,
-                               param_key=param_key,
+                               init_method = init_method,
+                               init_key = init_key,
                                checkpoint=checkpoints[1])
         self.Tmax=Tmax
         
@@ -375,7 +431,7 @@ class VanillaVAEpp(VanillaVAE):
         
         self.loadConfig(config)
         
-        print("---------------------------- Train a VAE++ ----------------------------")
+        print("--------------------------- Train a VeloVAE ---------------------------")
         #Get data loader
         U,S = adata.layers['Mu'], adata.layers['Ms']
         X = np.concatenate((U,S), 1)
@@ -502,7 +558,7 @@ class VanillaVAEpp(VanillaVAE):
                     loss_list = self.train_epoch(data_loader, optimizer_post, None, self.config["K_alt"], self.config["reg_t"], self.config["reg_z"])
             
             if(epoch==0 or (epoch+1) % self.config["test_epoch"] == 0):
-                save = (epoch+1)%n_save==0 or epoch==0
+                save = (epoch+n_epochs+1)%n_save==0 or epoch==0
                 mse_train, t, z = self.test(train_set,
                                             Xembed[self.train_idx],
                                             f"train{epoch+1+n_epochs}", 
@@ -646,7 +702,6 @@ class VanillaVAEpp(VanillaVAE):
         adata.var[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy())
         adata.var[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy())
         adata.var[f"{key}_gamma"] = np.exp(self.decoder.gamma.detach().cpu().numpy())
-        adata.var[f"{key}_toff"] = np.exp(self.decoder.toff.detach().cpu().numpy())
         adata.var[f"{key}_ton"] = self.decoder.ton.exp().detach().cpu().numpy()
         adata.var[f"{key}_scaling"] = np.exp(self.decoder.scaling.detach().cpu().numpy())
         adata.var[f"{key}_sigma_u"] = np.exp(self.decoder.sigma_u.detach().cpu().numpy())
