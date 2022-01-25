@@ -7,6 +7,7 @@ import umap
 from sklearn.metrics import pairwise_distances
 from sklearn.manifold import TSNE
 from sklearn.neighbors import NearestNeighbors
+from loess import loess_1d
 
 #######################################################################################
 #Default colors and markers for plotting
@@ -508,19 +509,22 @@ def plotSigAxis(ax,
                 D=1,
                 show_legend=False,
                 title=None):
+    lines = []
     if(labels is None or legends is None):
-        ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)
+        lines.append( ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)[0] )
     else:
         for i in range(len(legends)):
             mask = labels==i
             if(np.any(mask)):
                 if(show_legend):
-                    ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color=colors[i], alpha=a, label=legends[i])
+                    line = ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color=colors[i], alpha=a, label=legends[i])[0]
+                    lines.append(line)
                 else:
                     ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color=colors[i], alpha=a)
+                
     if(title is not None):
-        ax.set_title(title, fontsize=12)
-    return ax
+        ax.set_title(title, fontsize=36)
+    return lines
 
 def plotSigPredAxis(ax,
                 t,
@@ -533,17 +537,99 @@ def plotSigPredAxis(ax,
                 show_legend=False,
                 title=None):
     if(labels is None or legends is None):
-        ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)
+        ax.plot(t[::D], x[::D], marker, linewidth=5, color='k', alpha=a)
     else:
         for i in range(len(legends)):
             mask = labels==i
             if(np.any(mask)):
                 if(show_legend):
-                    ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color='k', alpha=a, label=legends[i])
+                    ax.plot(t[mask][::D], x[mask][::D], marker, linewidth=5, color='k', alpha=a, label=legends[i])
                 else:
-                    ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color='k', alpha=a)
+                    ax.plot(t[mask][::D], x[mask][::D], marker, linewidth=5, color='k', alpha=a)
     if(title is not None):
-        ax.set_title(title, fontsize=12)
+        ax.set_title(title, fontsize=36)
+    return ax
+
+def plotSigloessAxis(ax,
+                   t,
+                   x,
+                   labels,
+                   legends,
+                   frac=0.5,
+                   a=1.0,
+                   D=1,
+                   show_legend=False,
+                   title=None,):
+    xt = np.stack([t,x])
+    Ngrid = max(len(t)//200, 50)
+    for i in range(len(legends)):
+        mask = labels==i
+        if(np.any(mask)):
+            t_lb, t_ub = np.quantile(t[mask], 0.05), np.quantile(t[mask], 0.95)
+            mask2 = (t<=t_ub) & (t >= t_lb) & mask
+            tout, xout, wout = loess_1d.loess_1d(t[mask2], x[mask2], xnew=None, degree=1, frac=frac, npoints=None, rotate=False, sigy=None)
+            torder = np.argsort(tout)
+            if(show_legend):
+                ax.plot(tout[torder][::D], xout[torder][::D], 'k-', linewidth=5, alpha=a, label=legends[i])
+            else:
+                ax.plot(tout[torder][::D], xout[torder][::D], 'k-', linewidth=5, alpha=a)
+    if(title is not None):
+        ax.set_title(title, fontsize=36)
+    return ax
+
+def sampleQuiverPlot(t, dt):
+    tmax, tmin = t.max()+1e-3, t.min()
+    Nbin = max(1, int( (tmax-tmin)/dt ))
+    indices = []
+    for i in range(Nbin):
+        I = np.where((t>=tmin+i*dt) & (t<=tmin+(i+1)*dt))[0]
+        if(len(I)>0):
+            indices.append(I[len(I)//2])
+    return np.array(indices).astype(int)
+
+def plotVelAxis(ax,
+                t,
+                x,
+                v,
+                labels=None,
+                legends=None,
+                dt=0.1,
+                a=1.0,
+                show_legend=False,
+                title=None,):
+    
+    if(labels is None or legends is None):
+        dt_sample = (t.max()-t.min())/50
+        torder = np.argsort(t)
+        indices = sampleQuiverPlot(t[torder], dt_sample)
+        ax.quiver(t[torder][indices], 
+                  x[torder][indices], 
+                  dt*np.ones((len(t))), 
+                  dt*v[torder][indices], 
+                  angles='xy', 
+                  scale=None, 
+                  scale_units='inches', 
+                  headwidth=5.0, 
+                  headlength=8.0, 
+                  color='k')
+    else:
+        for i in range(len(legends)):
+            mask = labels==i
+            if(np.any(mask)):
+                dt_sample = (t[mask].max()-t[mask].min())/20
+                torder = np.argsort(t[mask])
+                indices = sampleQuiverPlot(t[mask][torder], dt_sample)
+                ax.quiver(t[mask][torder][indices], 
+                          x[mask][torder][indices], 
+                          dt*np.ones((len(indices))), 
+                          dt*v[mask][torder][indices], 
+                          label=legends[i],
+                          angles='xy', 
+                          scale=None, 
+                          scale_units='inches', 
+                          headwidth=5.0, 
+                          headlength=8.0, 
+                          color=colors[i])
     return ax
 
 def plotSigGrid(Nr, 
@@ -557,10 +643,12 @@ def plotSigGrid(Nr,
                 That={},
                 Uhat={}, 
                 Shat={}, 
+                V={},
                 Labels_demo={},
                 W=6,
-                H=3,
-                alpha=0.2,
+                H=5,
+                frac=0.5,
+                alpha=1.0,
                 sparsify=1,
                 savefig=False,  
                 path='figures', 
@@ -585,29 +673,47 @@ def plotSigGrid(Nr,
     
     #Plotting
     for l in range(Nfig):
-        fig_sig, ax_sig = plt.subplots(2*Nr,M*Nc,figsize=(W*M*Nc+1.0, 2*H*Nr))
+        fig_sig, ax_sig = plt.subplots(3*Nr,M*Nc,figsize=(W*M*Nc+1.0, 3*H*Nr))
         if(M*Nc==1):
             for i in range(min(Nr,len(gene_list)-l*Nr)):
                 idx = l*Nr+i
                 t = T[methods[0]][:,idx] if T[methods[0]].ndim==2 else T[methods[0]]
                 that = That[methods[0]][:,idx] if methods[0].ndim==2 else That[methods[0]]
-                plotSigAxis(ax_sig[2*i], t, U[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, sparsify, True, f"{gene_list[idx]} ({methods[0]})")
-                plotSigAxis(ax_sig[2*i+1], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, sparsify)
+                line_u = plotSigAxis(ax_sig[3*i], t, U[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, sparsify, True, f"{gene_list[idx]} ({methods[0]})")
+                line_s = plotSigAxis(ax_sig[3*i+1], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, sparsify)
+                if(len(line_u)>0):
+                    lines = line_u
                 try:
-                    marker = '.' if methods[0]=='vaepp' else '-'
-                    plotSigPredAxis(ax_sig[2*i], that, Uhat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], marker, 1.0, 1)
-                    plotSigPredAxis(ax_sig[2*i+1], that, Shat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], marker, 1.0, 1)
+                    if methods[0]=='VeloVAE':
+                        K = max(len(that)//5000, 1)
+                        plotSigloessAxis(ax_sig[3*i], that[::K], Uhat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
+                        plotSigloessAxis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
+                        plotVelAxis(ax_sig[3*i+2], t[::K], S[:,idx][::K], V[methods[0]][:,idx][::K], Labels[methods[0]][::K], Legends[methods[0]])
+                    else:
+                        plotSigPredAxis(ax_sig[3*i], that, Uhat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
+                        plotSigPredAxis(ax_sig[3*i+1], that, Shat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
+                        plotVelAxis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]])
                 except (KeyError, TypeError):
                     print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                     pass
                 
-                ax_sig[2*i].set_ylabel('U')
-                ax_sig[2*i+1].set_ylabel('S')
-            lgd = ax_sig[0].legend(fontsize=10, markerscale=3.0,  bbox_to_anchor=(-0.15,1.0), loc='upper right')    
+                ax_sig[3*i].axis("off")
+                ax_sig[3*i+1].axis("off")
+                tmin, tmax = ax_sig[3*i].get_xlim()
+                umin, umax = ax_sig[3*i].get_ylim()
+                ax_sig[3*i].text(tmin - 0.02*(tmax-tmin), (umax+umin)*0.5, "U", fontsize=36)
+                tmin, tmax = ax_sig[3*i+1].get_xlim()
+                smin, smax = ax_sig[3*i+1].get_ylim()
+                ax_sig[3*i+1].text(tmin - 0.02*(tmax-tmin), (smax+smin)*0.5,"S", fontsize=36)
+                tmin, tmax = ax_sig[3*i+2].get_xlim()
+                smin, smax = ax_sig[3*i+2].get_ylim()
+                ax_sig[3*i+2].text(tmin - 0.02*(tmax-tmin), (smax+smin)*0.5,"V", fontsize=36)
+            lgd = fig_sig.legend(lines, Legends[methods[0]], fontsize=18, markerscale=5.0, ncol=8, bbox_to_anchor=(0.5, 1.0), loc='center')
         else:
+            legends = []
             for i in range(Nr):
                 for j in range(Nc): #i, j: row and column gene index
-                    idx = i*Nc+j #which gene
+                    idx = l*Nr*Nc+i*Nc+j #which gene
                     if(idx >= len(gene_list)):
                         break
                     for k, method in enumerate(methods): #k: method index
@@ -619,23 +725,42 @@ def plotSigGrid(Nr,
                             t = T[method]
                             that = That[method]
                         
-                        plotSigAxis(ax_sig[2*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, sparsify, True, f"{gene_list[idx]} ({method})")
-                        plotSigAxis(ax_sig[2*i+1, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', alpha, sparsify)
+                        line_u = plotSigAxis(ax_sig[3*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, sparsify, True, f"{gene_list[idx]} ({method})")
+                        line_s = plotSigAxis(ax_sig[3*i+1, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', alpha, sparsify)
+                        if(len(line_u)>0):
+                            lines = line_u
+                        if(len(Legends[method])>len(legends)):
+                            legends = Legends[method]
                         try:
-                            marker = '.' if method=='VAE++' else '-'
-                            plotSigPredAxis(ax_sig[2*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], marker, 1.0, 1)
-                            plotSigPredAxis(ax_sig[2*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], marker, 1.0, 1)
+                            if method=='VeloVAE':
+                                K = max(len(that)//5000, 1)
+                                plotSigloessAxis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
+                                plotSigloessAxis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
+                                plotVelAxis(ax_sig[3*i+2, M*j+k], t[::K], S[:,idx][::K], V[method][:,idx][::K], Labels[method][::K], Legends[method])
+                            else:
+                                plotSigPredAxis(ax_sig[3*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
+                                plotSigPredAxis(ax_sig[3*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
+                                plotVelAxis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method])
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
-                        ax_sig[2*i, M*j+k].set_ylabel('U')
-                        ax_sig[2*i+1, M*j+k].set_ylabel('S')
-
-            lgd = ax_sig[0,0].legend(fontsize=10, markerscale=3.0,  bbox_to_anchor=(-0.15,1.0), loc='upper right')
-        fig_sig.subplots_adjust(hspace = 0.25, wspace=0.1)
+                        ax_sig[3*i,  M*j+k].axis("off")
+                        ax_sig[3*i+1, M*j+k].axis("off")
+                        ax_sig[3*i+2, M*j+k].axis("off")
+                        tmin, tmax = ax_sig[3*i,  M*j+k].get_xlim()
+                        umin, umax = ax_sig[3*i,  M*j+k].get_ylim()
+                        ax_sig[3*i,  M*j+k].text(tmin - 0.02*(tmax-tmin), (umax+umin)*0.5, "U", fontsize=36)
+                        tmin, tmax = ax_sig[3*i+1,  M*j+k].get_xlim()
+                        smin, smax = ax_sig[3*i+1,  M*j+k].get_ylim()
+                        ax_sig[3*i+1, M*j+k].text(tmin - 0.02*(tmax-tmin), (smax+smin)*0.5,"S", fontsize=36)
+                        tmin, tmax = ax_sig[3*i+2,  M*j+k].get_xlim()
+                        smin, smax = ax_sig[3*i+2,  M*j+k].get_ylim()
+                        ax_sig[3*i+2, M*j+k].text(tmin - 0.02*(tmax-tmin), (smax+smin)*0.5,"V", fontsize=36)
+            lgd = fig_sig.legend(lines, legends, fontsize=18*Nc, markerscale=5*Nc, ncol=min(2*M*Nc, 4), bbox_to_anchor=(0.0, 1.0, 1.0, 0.01), loc='center')
+        fig_sig.subplots_adjust(hspace = 0.3, wspace=0.15)
         if(savefig):
             try:
-                fig_sig.savefig(f'{path}/sig_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), bbox_inches='tight')
+                fig_sig.savefig(f'{path}/sig_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), dpi=300, bbox_inches='tight') 
                 print(f'Saved to {path}/sig_{figname}_{l+1}.png')
             except FileNotFoundError:
                 print("Saving failed. File path doesn't exist!")
@@ -717,8 +842,9 @@ def plotClusterGrid(X_umap,
     return
 
 def plotTimeGrid(T,
-                 std_t,
                  X_emb,
+                 capture_time=None,
+                 std_t=None,
                  savefig=False,  
                  figname="time",
                  path='figures'):
@@ -728,36 +854,46 @@ def plotTimeGrid(T,
     X_emb: [N_cell x 2]
     to, ts: [N_gene]
     """
-    methods = list(T.keys())
+    if(capture_time is not None):
+        methods = ["Capture Time"] + list(T.keys())
+    else:
+        methods = list(T.keys())
     M = len(methods)
-    fig_time = plt.figure(figsize=(6*M+2,8))
-    gs_time = GridSpec(2, M, figure=fig_time)
-    
-    for i, method in enumerate(methods):
-        ax_time = fig_time.add_subplot(gs_time[0,i])
-        ax_time.scatter(X_emb[:,0], X_emb[:,1], c=T[method],cmap='plasma')
-        norm0 = matplotlib.colors.Normalize(vmin=np.min(T[method]), vmax=np.max(T[method]))
-        sm0 = matplotlib.cm.ScalarMappable(norm=norm0, cmap='plasma')
-        cbar0 = fig_time.colorbar(sm0,ax=ax_time)
-        cbar0.ax.get_yaxis().labelpad = 15
-        cbar0.ax.set_ylabel('Latent Time',rotation=270,fontsize=14)
-        ax_time.set_title(f'{method}',fontsize=24)
-        ax_time.axis('off')
-    
-        #Plot the Time Variance
-        var_t = std_t[method]**2
-        
-        #Plot the Time Variance in a Colormap
-        if(np.any(var_t>0)):
-            ax_var = fig_time.add_subplot(gs_time[1,i])
-            ax_var.scatter(X_emb[:,0], X_emb[:,1], c=var_t, cmap='Reds')
-            norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
-            sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
-            cbar1 = fig_time.colorbar(sm1,ax=ax_var)
-            cbar1.ax.get_yaxis().labelpad = 15
-            cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
-            ax_var.axis('off')
-    
+    if(std_t is not None):
+        fig_time, ax = plt.subplots(2, M, figsize=(6*M+2,8))
+        for i, method in enumerate(methods):
+            t = capture_time if method=="Capture Time" else T[method]
+            t = t - t.min()
+            t = t/t.max()
+            ax[0, i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+            ax[0, i].set_title(f'{method}',fontsize=24)
+            ax[0, i].axis('off')
+
+            #Plot the Time Variance in a Colormap
+            var_t = std_t[method]**2
+            
+            if(np.any(var_t>0)):
+                ax[1, i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=var_t, cmap='Reds', edgecolors='none')
+                norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
+                sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
+                cbar1 = fig_time.colorbar(sm1,ax=ax[1, i])
+                cbar1.ax.get_yaxis().labelpad = 15
+                cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
+                ax[1, i].axis('off')
+    else:
+        fig_time, ax = plt.subplots(1, M, figsize=(8*M,4))
+        for i, method in enumerate(methods):
+            t = capture_time if method=="Capture Time" else T[method]
+            t = t - t.min()
+            t = t/t.max()
+            ax[i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+            ax[i].set_title(f'{method}',fontsize=24)
+            ax[i].axis('off')
+    norm0 = matplotlib.colors.Normalize(vmin=0, vmax=1)
+    sm0 = matplotlib.cm.ScalarMappable(norm=norm0, cmap='plasma')
+    cbar0 = fig_time.colorbar(sm0,ax=ax, location="right")
+    cbar0.ax.get_yaxis().labelpad = 20
+    cbar0.ax.set_ylabel('Latent Time',rotation=270,fontsize=24)
     if(savefig):
         try:
             fig_time.savefig(f'{path}/{figname}.png')
