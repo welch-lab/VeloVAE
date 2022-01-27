@@ -584,7 +584,7 @@ def sampleQuiverPlot(t, dt):
     for i in range(Nbin):
         I = np.where((t>=tmin+i*dt) & (t<=tmin+(i+1)*dt))[0]
         if(len(I)>0):
-            indices.append(I[len(I)//2])
+            indices.append(I[0])
     return np.array(indices).astype(int)
 
 def plotVelAxis(ax,
@@ -615,14 +615,20 @@ def plotVelAxis(ax,
     else:
         for i in range(len(legends)):
             mask = labels==i
+            t_type = t[mask]
             if(np.any(mask)):
-                dt_sample = (t[mask].max()-t[mask].min())/20
-                torder = np.argsort(t[mask])
-                indices = sampleQuiverPlot(t[mask][torder], dt_sample)
-                ax.quiver(t[mask][torder][indices], 
-                          x[mask][torder][indices], 
+                t_lb, t_ub = np.quantile(t_type, 0.02), np.quantile(t_type, 0.98)
+                mask2 = (t_type<t_ub) & (t_type>=t_lb)
+                t_type = t_type[mask2]
+                dt_sample = (t_type.max()-t_type.min())/20
+                torder = np.argsort(t_type)
+                indices = sampleQuiverPlot(t_type[torder], dt_sample)
+                v_type = v[mask][torder][indices]
+                v_type = np.clip(v_type, np.quantile(v_type,0.02), np.quantile(v_type,0.98))
+                ax.quiver(t_type[torder][indices], 
+                          x[mask][mask2][torder][indices], 
                           dt*np.ones((len(indices))), 
-                          dt*v[mask][torder][indices], 
+                          dt*v_type, 
                           label=legends[i],
                           angles='xy', 
                           scale=None, 
@@ -744,20 +750,34 @@ def plotSigGrid(Nr,
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
-                        ax_sig[3*i,  M*j+k].axis("off")
-                        ax_sig[3*i+1, M*j+k].axis("off")
-                        ax_sig[3*i+2, M*j+k].axis("off")
+                        #ax_sig[3*i,  M*j+k].axis("off")
+                        #ax_sig[3*i+1, M*j+k].axis("off")
+                        #ax_sig[3*i+2, M*j+k].axis("off")
+                        ax_sig[3*i,  M*j+k].set_xticks([])
+                        ax_sig[3*i+1,  M*j+k].set_xticks([])
+                        ax_sig[3*i+2,  M*j+k].set_xticks([])
+                        ax_sig[3*i,  M*j+k].set_yticks([])
+                        ax_sig[3*i+1,  M*j+k].set_yticks([])
+                        ax_sig[3*i+2,  M*j+k].set_yticks([])
+                        
                         tmin, tmax = ax_sig[3*i,  M*j+k].get_xlim()
                         umin, umax = ax_sig[3*i,  M*j+k].get_ylim()
-                        ax_sig[3*i,  M*j+k].text(tmin - 0.02*(tmax-tmin), (umax+umin)*0.5, "U", fontsize=36)
+                        ax_sig[3*i,  M*j+k].text(tmin - 0.08*(tmax-tmin), (umax+umin)*0.5, "U", fontsize=30)
+                        #ax_sig[3*i,  M*j+k].text((tmin+tmax)*0.4, umin - (umax-umin)*0.1, "Time", fontsize=36)
                         tmin, tmax = ax_sig[3*i+1,  M*j+k].get_xlim()
                         smin, smax = ax_sig[3*i+1,  M*j+k].get_ylim()
-                        ax_sig[3*i+1, M*j+k].text(tmin - 0.02*(tmax-tmin), (smax+smin)*0.5,"S", fontsize=36)
+                        ax_sig[3*i+1, M*j+k].text(tmin - 0.08*(tmax-tmin), (smax+smin)*0.5,"S", fontsize=30)
+                        #ax_sig[3*i+1,  M*j+k].text((tmin+tmax)*0.4, smin - (smax-smin)*0.1, "Time", fontsize=36)
                         tmin, tmax = ax_sig[3*i+2,  M*j+k].get_xlim()
                         smin, smax = ax_sig[3*i+2,  M*j+k].get_ylim()
-                        ax_sig[3*i+2, M*j+k].text(tmin - 0.02*(tmax-tmin), (smax+smin)*0.5,"V", fontsize=36)
-            lgd = fig_sig.legend(lines, legends, fontsize=18*Nc, markerscale=5*Nc, ncol=min(2*M*Nc, 4), bbox_to_anchor=(0.0, 1.0, 1.0, 0.01), loc='center')
-        fig_sig.subplots_adjust(hspace = 0.3, wspace=0.15)
+                        ax_sig[3*i+2, M*j+k].text(tmin - 0.08*(tmax-tmin), (smax+smin)*0.5,"S", fontsize=30)
+                        #ax_sig[3*i+2,  M*j+k].text((tmin+tmax)*0.4, smin - (smax-smin)*0.1, "Time", fontsize=36)
+                        
+                        ax_sig[3*i,  M*j+k].set_xlabel("Time", fontsize=30)
+                        ax_sig[3*i+1,  M*j+k].set_xlabel("Time", fontsize=30)
+                        ax_sig[3*i+2,  M*j+k].set_xlabel("Time", fontsize=30)
+            lgd = fig_sig.legend(lines, legends, fontsize=19*Nc, markerscale=5*Nc, ncol=min(2*M*Nc, 4), bbox_to_anchor=(0.0, 1.0, 1.0, 0.01), loc='center')
+        fig_sig.subplots_adjust(hspace = 0.3, wspace=0.12)
         if(savefig):
             try:
                 fig_sig.savefig(f'{path}/sig_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), dpi=300, bbox_inches='tight') 
