@@ -13,7 +13,8 @@ def preprocess(adata,
                max_cells=None,
                npc=30,
                n_neighbors=30,
-               umap_min_dist=0.5):
+               umap_min_dist=0.5,
+               tkey=None):
     """
     Perform all kinds of preprocessing steps using scanpy
     """
@@ -27,6 +28,16 @@ def preprocess(adata,
     #3. Obtain cell clusters
     if(not 'clusters' in adata.obs):
         scanpy.tl.leiden(adata, key_added='clusters')
-    #4. Compute Umap coordinates for visulization
+    #4. Obtain Capture Time (If available)
+    if(tkey is not None):
+        capture_time = adata.obs[tkey].to_numpy()
+        if(isinstance(capture_time[0], str)):
+            tprior = np.array([float(x[1:]) for x in capture_time])
+        else:
+            tprior = capture_time
+        tprior = tprior - tprior.min() + 0.01
+        adata.obs["tprior"] = tprior
+    
+    #5. Compute Umap coordinates for visulization
     if(not 'X_umap' in adata.obsm):
         scanpy.tl.umap(adata, min_dist=umap_min_dist)
