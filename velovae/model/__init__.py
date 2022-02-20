@@ -1,8 +1,8 @@
 from .VanillaVAE import VanillaVAE
 from .VAE import BrVAE
 from .VanillaVAEpp import VanillaVAEpp
-from .model_util import optimal_transport_duality_gap, ode, odeNumpy, odeBr, odeBrNumpy, knnX0
-from .velocity import rnaVelocityVAE, rnaVelocityBrVAE, rnaVelocityVAEpp, rnaVelocityEmbed
+from .model_util import optimal_transport_duality_gap, ode, odeNumpy, odeBr, odeBrNumpy, knnX0, knnX0_alt, knnx0_bin
+from .velocity import rnaVelocityVAE, rnaVelocityBrVAE, rnaVelocityVAEpp, velocity_embedding
 from .TransitionGraph import TransGraph, encodeType
 from .TrainingData import SCData
 
@@ -13,7 +13,7 @@ __all__ = [
     "rnaVelocityVAE",
     "rnaVelocityBrVAE",
     "rnaVelocityVAEpp",
-    "rnaVelocityEmbed",
+    "velocity_embedding",
     "TransGraph",
     "optimal_transport_duality_gap",
     "ode",
@@ -21,5 +21,7 @@ __all__ = [
     "odeBr",
     "odeBrNumpy",
     "knnX0",
+    "knnX0_alt",
+    "knnx0_bin",
     "SCData"
     ]
