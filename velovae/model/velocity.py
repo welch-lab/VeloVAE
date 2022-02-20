@@ -4,6 +4,7 @@ import scipy.sparse as spr
 from scipy.spatial.distance import cosine as cosdist
 from scipy.spatial.distance import pdist, squareform
 from scipy.ndimage import gaussian_filter1d
+import pynndescent
 from sklearn.preprocessing import normalize
 from .model_util import odeNumpy, odeBrNumpy, initAllPairsNumpy, predSUNumpy
 
@@ -144,98 +145,71 @@ Bergen, V., Lange, M., Peidli, S., Wolf, F. A., & Theis, F. J. (2020).
 Generalizing RNA velocity to transient cell states through dynamical modeling. 
 Nature biotechnology, 38(12), 1408-1414.
 """
-def transitionMtx(adata, key, scale=10, **kwargs):
-    #Step 1: Build a cosine similarity matrix
-    S = adata.layers["Ms"]
-    N = S.shape[0]
-    #KNN performed on the PCA Space 
-    try:
-        knn_ind = adata.uns["neighbors"]["indices"]
-        connectivities = adata.uns["neighbors"]["connectivities"]
-        k = knn_ind.shape[1]
-    except KeyError:
-        print('Neighborhood graph not found! Please run the preprocessing function!')
-    
-    try:
-        if key=="fit":
-            V = adata.layers["velocity"]
-        else:
-            V = adata.layers[f"{key}_velocity"]  
-    except KeyError:
-        print('Please compute the RNA velocity first!')
-    mask = ~np.isnan(V[0])
-    V = V[:,mask]
-
-    #Velocity graph based on cosine similarity
-    A = spr.csr_matrix((N, N), dtype=float)
-    for i in range(N):
-        #Difference in expression
-        ds =  S[knn_ind[i]][:,mask] - S[i,mask] #n neighbor x ngene
-        ds -= np.mean(ds,-1)[:, None]
-        #Cosine Similarity
-        norm_v = np.linalg.norm(V[i])
-        norm_v += norm_v==0
-        norm_ds = np.linalg.norm(ds, axis=1)
-        norm_ds += norm_ds==0
-        A[i, knn_ind[i]] = np.einsum('ij,j',ds,V[i])/(norm_ds*norm_v)[None,:]
-    
-    #Transition Matrix
-    A_pos, A_neg = A, A.copy()
-    A_pos.data = np.clip(A_pos.data, 0, 1)
-    A_neg.data = np.clip(A_neg.data, -1, 0)
-    A_pos.eliminate_zeros()
-    A_neg.eliminate_zeros()
-    A_pos = A_pos.tocsr()
-    A_neg = A_neg.tocsr()
-    Pi = np.expm1(A_pos * scale)
-    Pi -= np.expm1(-A_neg * scale)
-    #Pi.data += 1
-    Pi = normalize(Pi, norm='l1', axis=1)
-    Pi.eliminate_zeros()
-    
-    #Smoothing from scVelo
-    basis = kwargs.pop('basis', 'umap')
-    scale_diffusion = 1.0
-    weight_diffusion = 0.0
-    if f"X_{basis}" in adata.obsm.keys():
-        dists_emb = (Pi > 0).multiply(squareform(pdist(adata.obsm[f"X_{basis}"])))
-        scale_diffusion *= dists_emb.data.mean()
-
-        diffusion_kernel = dists_emb.copy()
-        diffusion_kernel.data = np.exp(
-            -0.5 * dists_emb.data ** 2 / scale_diffusion ** 2
-        )
-        Pi = Pi.multiply(diffusion_kernel)  # combine velocity kernel & diffusion kernel
-
-        if 0 < weight_diffusion < 1:  # add diffusion kernel (Brownian motion - like)
-            diffusion_kernel.data = np.exp(
-                -0.5 * dists_emb.data ** 2 / (scale_diffusion / 2) ** 2
-            )
-            Pi = (1 - weight_diffusion) * Pi + weight_diffusion * diffusion_kernel
-
-        Pi = normalize(Pi, norm='l1', axis=1)
-    
-    return Pi, k
-
-
-
-def rnaVelocityEmbed(adata, key, **kwargs):
+def compute_vscore(v, delta_s, sigma_v=None):
     """
-    Compute the velocity in the low-dimensional embedding
+    v: (N, G)
+    v_neighbors: (N, N neighbors, G)
     """
-    X_umap = adata.obsm['X_umap']
+    #normalize velocity
+    N,k,G = delta_s.shape
+    v_norm = np.linalg.norm(v,axis=1)
+    v_norm[v_norm==0] = 1.0
+    v_ = v/v_norm.reshape(N,1)
     
-    P, k = transitionMtx(adata, key, **kwargs)
-    assert not np.any(np.isnan(P.data))
-    Vembed = np.zeros(X_umap.shape)
-    for i in range(Vembed.shape[0]):
-        neighbor_idx = P[i].indices
-        if(len(neighbor_idx)==0):
-            continue
-        Delta_x = X_umap[neighbor_idx] - X_umap[i]
-        norm_dx = np.linalg.norm(Delta_x,1)
-        norm_dx += norm_dx==0
-        Delta_x = Delta_x/norm_dx.reshape(-1,1)
-        Vembed[i] = P[i, neighbor_idx] @ (Delta_x) - Delta_x.mean(0)
+    delta_s_norm = np.linalg.norm(delta_s,axis=2)
+    delta_s_norm[delta_s_norm==0] = 1.0
+    delta_s_ = delta_s/delta_s_norm.reshape(N,k,1)
     
-    return Vembed[:,0], Vembed[:,1], P
+    cos_dist = 1 - np.einsum('ik,ijk->ij', v_, delta_s_)
+    if(sigma_v is None):
+        sigma_v = np.quantile(cos_dist, 0.25, 1).reshape(-1,1)
+    return np.exp(-(cos_dist/sigma_v))
+
+def velocity_embedding(adata, 
+                       vkey, 
+                       tkey,
+                       n_neighbors,
+                       embedding="umap",
+                       eps_t = None):
+    """
+    Project the RNA velocity onto low-dimensional embedding.
+    
+    Arguments:
+    1. adata: AnnData object
+    2. vkey: key for extracting RNA velocity
+    3. tkey: key for extracting time
+    4. n_neighbors: number of neighbors in KNN graph build on the embedding
+    5. embedding: type of low-dimensional embedding
+    6. eps_t: time margin when considering cell transition
+    """
+    print("---     Computing velocity embedding...     ---")
+    v = adata.layers[vkey]
+    s = adata.layers["Ms"]
+    gene_mask = ~np.isnan(v[0])
+    t = adata.obs[tkey].to_numpy()
+    if(~np.all(gene_mask)):
+        v = v[:,gene_mask]
+        s = s[:,gene_mask]
+    x_umap = adata.obsm[f"X_{embedding}"]
+    knn_model = pynndescent.NNDescent(x_umap, n_neighbors=n_neighbors)
+    neighbors, dist = knn_model.neighbor_graph
+    neighbors = neighbors.astype(int)
+    
+    if(eps_t is None):
+        eps_t = np.quantile(np.clip(t[neighbors]-t.reshape(-1,1),0,None), 0.05, 1).reshape(-1,1)
+    tscore = t.reshape(-1,1)<=t[neighbors]-eps_t
+    delta_s = np.stack([s[neighbors[i]]-s[i] for i in range(v.shape[0])])
+    vscore = compute_vscore(v, delta_s)
+    score = tscore*vscore
+    
+    vx = (x_umap[:,0][neighbors] - x_umap[:,0].reshape(-1,1))
+    vy = (x_umap[:,1][neighbors] - x_umap[:,1].reshape(-1,1))
+    #vx = vx/(np.linalg.norm(vx).reshape(-1,1)+1e-8)
+    #vy = vy/(np.linalg.norm(vx).reshape(-1,1)+1e-8)
+    vx = (vx*score).sum(1)/score.sum(1)
+    vy = (vy*score).sum(1)/score.sum(1)
+    print("---                Finished.                ---")
+    
+    adata.obsm[f"{vkey}_{embedding}"] = np.stack([vx,vy]).T
+    return
+    
