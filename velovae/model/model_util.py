@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .scvelo_util import mRNA, vectorize, tau_inv, R_squared, test_bimodality, leastsq_NxN
 from sklearn.neighbors import NearestNeighbors
+import pynndescent
 
 """
 Dynamical Model
@@ -979,7 +980,7 @@ def knnX0(U, S, t, z, t_query, z_query, dt, k):
     _z_query = z_query[order_query]
     
     knn = np.ones((Nq,k))*np.nan
-    knn_orig = np.ones((Nq,k))*np.nan
+    #knn_orig = np.ones((Nq,k))*np.nan
     D = np.ones((Nq,k))*np.nan
     ptr = 0
     left, right = 0, 0 #pointer in the query sequence
@@ -1003,14 +1004,14 @@ def knnX0(U, S, t, z, t_query, z_query, dt, k):
             pos_nan = np.where(np.isnan(knn[j]))[0]
             if(len(pos_nan)>0): #there hasn't been k nearest neighbors for j yet
                 knn[j,pos_nan[0]] = i
-                knn_orig[order_query[j],pos_nan[0]] = order_idx[i]
+                #knn_orig[order_query[j],pos_nan[0]] = order_idx[i]
                 D[j,pos_nan[0]] = dist
             else:
                 idx_largest = np.argmax(D[j])
                 if(dist<D[j,idx_largest]):
                     D[j,idx_largest] = dist
                     knn[j,idx_largest] = i
-                    knn_orig[order_query[j],idx_largest] = order_idx[i]
+                    #knn_orig[order_query[j],idx_largest] = order_idx[i]
         i += 1
     #Calculate initial time and conditions
     for i in range(Nq):
@@ -1022,7 +1023,7 @@ def knnX0(U, S, t, z, t_query, z_query, dt, k):
         t0[order_query[i]] = _t[knn[i,pos].astype(int)].mean()
     #u0 = np.convolve(u0[order_idx], np.ones((k))*(1/k), mode='same')
     #s0 = np.convolve(s0[order_idx], np.ones((k))*(1/k), mode='same')
-    return u0,s0,t0,knn_orig
+    return u0,s0,t0
 
 def knnX0_alt(U, S, t, z, t_query, z_query, dt, k):
     N, Nq = len(t), len(t_query)
@@ -1030,24 +1031,91 @@ def knnX0_alt(U, S, t, z, t_query, z_query, dt, k):
     s0 = np.zeros((Nq, S.shape[1]))
     t0 = np.ones((Nq))*(t.min() - dt[0])
     
-    knn = np.ones((Nq,k))*np.nan
-    
+    n1 = 0
+    len_avg = 0
     for i in range(Nq):
         t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
         indices = np.where((t>=t_lb) & (t<t_ub))[0]
         k_ = len(indices)
+        len_avg = len_avg+k_
         if(k_>0):
             if(k_<k):
-                knn[i,:k_] = indices
-                u0[i] = U[knn[i,:k_].astype(int)].mean(0)
-                s0[i] = S[knn[i,:k_].astype(int)].mean(0)
-                t0[i] = t[knn[i,:k_].astype(int)].mean()
+                u0[i] = U[indices].mean(0)
+                s0[i] = S[indices].mean(0)
+                t0[i] = t[indices].mean()
+                n1 = n1+1
             else:
                 knn_model = NearestNeighbors(n_neighbors=k)
                 knn_model.fit(z[indices])
                 dist, ind = knn_model.kneighbors(z_query[i:i+1])
-                knn[i] = indices[ind.squeeze()]
-                u0[i] = np.mean( U[knn[i].astype(int)], 0)
-                s0[i] = np.mean( S[knn[i].astype(int)], 0)
-                t0[i] = np.mean( t[knn[i].astype(int)] )
-    return u0,s0,t0,knn
+                u0[i] = np.mean( U[indices[ind.squeeze()].astype(int)], 0)
+                s0[i] = np.mean( S[indices[ind.squeeze()].astype(int)], 0)
+                t0[i] = np.mean( t[indices[ind.squeeze()].astype(int)] )
+    print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
+    print(f"Average Set Size: {len_avg//Nq}")
+    return u0,s0,t0
+
+def knnx0_bin(U, 
+              S, 
+              t, 
+              z, 
+              t_query, 
+              z_query, 
+              dt, 
+              k=None, 
+              n_graph=10, 
+              pruning_degree_multiplier=1.5, 
+              diversify_prob=1.0, 
+              max_bin_size=10000):
+    tmin = min(t.min(), t_query.min())
+    N, Nq = len(t), len(t_query)
+    u0 = np.zeros((Nq, U.shape[1]))
+    s0 = np.zeros((Nq, S.shape[1]))
+    t0 = np.ones((Nq))*(t.min() - dt[0])
+    
+    delta_t = (np.quantile(t,0.95)-tmin+1e-6)/(n_graph+1)
+    
+    order_t = np.argsort(t)
+    order_t_query = np.argsort(t_query)
+    
+    #First Time Interval: Use the average of initial data points.
+    indices = np.where(t<tmin+delta_t)[0]
+    if(len(indices) > max_bin_size):
+        indices = np.random.choice(indices, max_bin_size, replace=False)
+    mask_init = t<np.quantile(t[indices], 0.2)
+    u_init = U[mask_init].mean(0)
+    s_init = S[mask_init].mean(0)
+    indices_query = np.where(t_query<tmin+delta_t)[0]
+    u0[indices_query] = u_init
+    s0[indices_query] = s_init
+    t0[indices_query] = tmin
+    
+    for i in range(n_graph):
+        t_ub, t_lb = tmin+(i+1)*delta_t, tmin+i*delta_t
+        indices = np.where((t>=t_lb) & (t<t_ub))[0]
+        if(len(indices) > max_bin_size):
+            indices = np.random.choice(indices, max_bin_size, replace=False)
+        k_ = len(indices)
+        if(k_==0):
+            continue
+        if(k is None):
+            k = max(1, len(indices)//20)
+        knn_model = pynndescent.NNDescent(z[indices], n_neighbors=k+1, pruning_degree_multiplier=pruning_degree_multiplier, diversify_prob=diversify_prob)
+        #The query points are in the next time interval
+        indices_query = np.where((t_query>=t_ub) & (t_query<t_ub+delta_t))[0] if i<n_graph-1 else np.where(t_query>=t_ub)[0]
+        if(len(indices_query)==0):
+            continue
+        try:
+            ind, dist = knn_model.query(z_query[indices_query], k=k)
+            ind = ind.astype(int)
+        except ValueError:
+            knn_model = NearestNeighbors(n_neighbors=min(k,len(indices)))
+            knn_model.fit(z[indices])
+            dist, ind = knn_model.kneighbors(z_query[indices_query])
+        
+        for j in range(len(indices_query)):
+            neighbor_idx = indices[ind[j]]
+            u0[indices_query[j]] = np.mean( U[ neighbor_idx ], 0)
+            s0[indices_query[j]] = np.mean( S[ neighbor_idx ], 0)
+            t0[indices_query[j]] = np.mean( t[ neighbor_idx ] )
+    return u0,s0,t0
