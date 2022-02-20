@@ -3,11 +3,13 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import  matplotlib.colors as clr
+import pynndescent
 import umap
 from sklearn.metrics import pairwise_distances
 from sklearn.manifold import TSNE
 from sklearn.neighbors import NearestNeighbors
 from loess import loess_1d
+
 
 #######################################################################################
 #Default colors and markers for plotting
@@ -19,7 +21,7 @@ colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown', 'lime', 'grey', \
 
 colors_state=['r','b','k']
 
-colormaps = [clr.LinearSegmentedColormap.from_list('my '+colors[i], ['white',colors[i]], 1024) for i in range(len(colors))]
+colormaps = [clr.LinearSegmentedColormap.from_list('my '+colors[i%len(colors)], ['white',colors[i%len(colors)]], 1024) for i in range(len(colors))]
 
 markers = ["o","x","s","v","+","d","1","*","^","p","h","8","1","2","|"]
 
@@ -64,16 +66,16 @@ def plotSig_(t,
 
     for i, type_ in enumerate(cell_types):
         mask_type = cell_labels==type_
-        ax[0].plot(t[mask_type][::D], u[mask_type][::D],'.',color=colors[i], alpha=0.25, label=type_)
-        ax[1].plot(t[mask_type][::D], s[mask_type][::D],'.',color=colors[i], alpha=0.25, label=type_)
+        ax[0].plot(t[mask_type][::D], u[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
+        ax[1].plot(t[mask_type][::D], s[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
     
     if((tpred is not None) and (upred is not None) and (spred is not None)):
         if(type_specific):
             for i, type_ in enumerate(cell_types):
                 mask_type = cell_labels==type_
                 order = np.argsort(tpred[mask_type])
-                ax[0].plot(tpred[mask_type][order], upred[mask_type][order], '-', color=colors[i], label=type_, linewidth=1.5)
-                ax[1].plot(tpred[mask_type][order], spred[mask_type][order], '-', color=colors[i], label=type_, linewidth=1.5)
+                ax[0].plot(tpred[mask_type][order], upred[mask_type][order], '-', color=colors[i%len(colors)], label=type_, linewidth=1.5)
+                ax[1].plot(tpred[mask_type][order], spred[mask_type][order], '-', color=colors[i%len(colors)], label=type_, linewidth=1.5)
         else:
             order = np.argsort(tpred)
             ax[0].plot(tpred[order], upred[order], 'k-', linewidth=1.5)
@@ -83,10 +85,10 @@ def plotSig_(t,
         ts = kwargs['ts']
         t_trans = kwargs['t_trans']
         for i, type_ in enumerate(cell_types):
-            ax[0].plot([t_trans[i],t_trans[i]], [0, u.max()], '-x', color=colors[i])
-            ax[0].plot([ts[i],ts[i]], [0, u.max()], '--x', color=colors[i])
-            ax[1].plot([t_trans[i],t_trans[i]], [0, s.max()], '-x', color=colors[i])
-            ax[1].plot([ts[i],ts[i]], [0, s.max()], '--x', color=colors[i])
+            ax[0].plot([t_trans[i],t_trans[i]], [0, u.max()], '-x', color=colors[i%len(colors)])
+            ax[0].plot([ts[i],ts[i]], [0, u.max()], '--x', color=colors[i%len(colors)])
+            ax[1].plot([t_trans[i],t_trans[i]], [0, s.max()], '-x', color=colors[i%len(colors)])
+            ax[1].plot([ts[i],ts[i]], [0, s.max()], '--x', color=colors[i%len(colors)])
     
     ax[0].set_xlabel("Time")
     ax[0].set_ylabel("U", fontsize=18)
@@ -150,23 +152,23 @@ def plotSig(t,
         
         for i, type_ in enumerate(cell_types):
             mask_type = cell_labels==type_
-            ax[0,0].plot(tscv[mask_type][::D], u[mask_type][::D],'.',color=colors[i], alpha=0.25, label=type_)
-            ax[0,1].plot(tscv[mask_type][::D], s[mask_type][::D],'.',color=colors[i], alpha=0.25, label=type_)
+            ax[0,0].plot(tscv[mask_type][::D], u[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
+            ax[0,1].plot(tscv[mask_type][::D], s[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
             if(len(labels_pred) > 0):
                 mask_mytype = labels_pred==type_
-                ax[1,0].plot(t[mask_mytype][::D], u[mask_mytype][::D],'.',color=colors[i], alpha=0.25, label=type_)
-                ax[1,1].plot(t[mask_mytype][::D], s[mask_mytype][::D],'.',color=colors[i], alpha=0.25, label=type_)
+                ax[1,0].plot(t[mask_mytype][::D], u[mask_mytype][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
+                ax[1,1].plot(t[mask_mytype][::D], s[mask_mytype][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
             else:
-                ax[1,0].plot(t[mask_type][::D], u[mask_type][::D],'.',color=colors[i], alpha=0.25, label=type_)
-                ax[1,1].plot(t[mask_type][::D], s[mask_type][::D],'.',color=colors[i], alpha=0.25, label=type_)
+                ax[1,0].plot(t[mask_type][::D], u[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
+                ax[1,1].plot(t[mask_type][::D], s[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
 
         
         if(len(labels_pred) > 0):
             for i, type_ in enumerate(cell_types):
                 mask_mytype = labels_demo==type_
                 order = np.argsort(tdemo[mask_mytype])
-                ax[1,0].plot(tdemo[mask_mytype][order], upred[mask_mytype][order], '.', color=colors[i], label=type_+" ode", linewidth=1.5)
-                ax[1,1].plot(tdemo[mask_mytype][order], spred[mask_mytype][order], '.', color=colors[i], label=type_+" ode", linewidth=1.5)
+                ax[1,0].plot(tdemo[mask_mytype][order], upred[mask_mytype][order], '.', color=colors[i%len(colors)], label=type_+" ode", linewidth=1.5)
+                ax[1,1].plot(tdemo[mask_mytype][order], spred[mask_mytype][order], '.', color=colors[i%len(colors)], label=type_+" ode", linewidth=1.5)
         else:
             order = np.argsort(tdemo)
             ax[1,0].plot(tdemo[order], upred[order], 'k.', linewidth=1.5)
@@ -177,12 +179,10 @@ def plotSig(t,
             t_trans = kwargs['t_trans']
             for i, type_ in enumerate(cell_types):
                 for j in range(2):
-                    ax[j,0].plot([t_trans[i],t_trans[i]], [0, u.max()], '-x', color=colors[i])
-                    ax[j,0].plot([ts[i],ts[i]], [0, u.max()], '--x', color=colors[i])
-                    #ax[j,0].plot([ts[i,1],ts[i,1]], [0, u.max()], '--x', color=colors[i])
-                    ax[j,1].plot([t_trans[i],t_trans[i]], [0, s.max()], '-x', color=colors[i])
-                    ax[j,1].plot([ts[i],ts[i]], [0, s.max()], '--x', color=colors[i])
-                    #ax[j,1].plot([ts[i,1],ts[i,1]], [0, s.max()], '--x', color=colors[i])
+                    ax[j,0].plot([t_trans[i],t_trans[i]], [0, u.max()], '-x', color=colors[i%len(colors)])
+                    ax[j,0].plot([ts[i],ts[i]], [0, u.max()], '--x', color=colors[i%len(colors)])
+                    ax[j,1].plot([t_trans[i],t_trans[i]], [0, s.max()], '-x', color=colors[i%len(colors)])
+                    ax[j,1].plot([ts[i],ts[i]], [0, s.max()], '--x', color=colors[i%len(colors)])
         for j in range(2): 
             ax[j,0].set_xlabel("Time")
             ax[j,0].set_ylabel("U", fontsize=18)
@@ -231,7 +231,7 @@ def plotPhase(u, s,
         ax.scatter(s,u,c="b",alpha=0.5)
     else:
         for i, type_ in enumerate(types):
-            ax.scatter(s[labels==i],u[labels==i],c=colors[i],alpha=0.3,label=type_)
+            ax.scatter(s[labels==i],u[labels==i],c=colors[i%len(colors)],alpha=0.3,label=type_)
     ax.plot(spred,upred,'k.',label="ode")
     #Plot the correspondence
     if(track_idx is None):
@@ -259,22 +259,22 @@ def plotPhase(u, s,
             print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def plotCluster(X_umap, p_type, cell_labels=None, show_colormap=False, path='figures', figname='cells'):
+def plotCluster(X_embed, p_type, cell_labels=None, show_colormap=False, path='figures', figname='cells'):
     """
     Plot the predicted cell types from the encoder
     """
     
     cell_types = np.unique(cell_labels) if cell_labels is not None else np.unique(pred_labels)
     fig, ax = plt.subplots(1,2,figsize=(18,8))
-    x = X_umap[:,0]
-    y = X_umap[:,1]
+    x = X_embed[:,0]
+    y = X_embed[:,1]
     x_range = x.max()-x.min()
     y_range = y.max()-y.min()
     if(cell_labels is not None):
         for i, typei in enumerate(cell_types):
             mask = cell_labels==typei
             xbar, ybar = np.mean(x[mask]), np.mean(y[mask])
-            ax[0].plot(x[mask], y[mask], '.', color=colors[i])
+            ax[0].plot(x[mask], y[mask], '.', color=colors[i%len(colors)])
             ax[0].text(xbar - x_range*0.05, ybar - y_range*0.05, typei, fontsize=20, color='k')
     ax[0].set_title('True Labels')
     #Color cells according to the mode
@@ -357,9 +357,9 @@ def plotTestAcc(acc, epoch, savefig=False, path='figures', figname="gene"):
             print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def plotTLatent(t_latent, X_umap, title, savefig=False, path=None, figname="gene"):
+def plotTLatent(t_latent, X_embed, title, savefig=False, path=None, figname="gene"):
     fig, ax = plt.subplots()
-    ax.scatter(X_umap[:,0], X_umap[:,1], c=t_latent,cmap='plasma')
+    ax.scatter(X_embed[:,0], X_embed[:,1], c=t_latent,cmap='plasma')
     norm = matplotlib.colors.Normalize(vmin=np.min(t_latent), vmax=np.max(t_latent))
     sm = matplotlib.cm.ScalarMappable(norm=norm, cmap='plasma')
     cbar = plt.colorbar(sm)
@@ -394,12 +394,12 @@ def plotPhaseAxis(ax,
             for l in types:
                 mask = labels==l
                 if(np.any(mask)):
-                    ax.plot(s[mask][::D],u[mask][::D],marker,color=colors[l],alpha=a)
+                    ax.plot(s[mask][::D],u[mask][::D],marker,color=colors[l%len(colors)],alpha=a)
         else:
             for l in range(len(legends)): #l: label index, labels are cell types
                 mask = labels==l
                 if(np.any(mask)):
-                    ax.plot(s[mask][::D],u[mask][::D],marker,color=colors[l],alpha=a,label=legends[l])
+                    ax.plot(s[mask][::D],u[mask][::D],marker,color=colors[l%len(colors)],alpha=a,label=legends[l])
     except TypeError:
         return ax
     
@@ -517,10 +517,10 @@ def plotSigAxis(ax,
             mask = labels==i
             if(np.any(mask)):
                 if(show_legend):
-                    line = ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color=colors[i], alpha=a, label=legends[i])[0]
+                    line = ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color=colors[i%len(colors)], alpha=a, label=legends[i])[0]
                     lines.append(line)
                 else:
-                    ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color=colors[i], alpha=a)
+                    ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color=colors[i%len(colors)], alpha=a)
                 
     if(title is not None):
         ax.set_title(title, fontsize=36)
@@ -584,7 +584,7 @@ def sampleQuiverPlot(t, dt):
     for i in range(Nbin):
         I = np.where((t>=tmin+i*dt) & (t<=tmin+(i+1)*dt))[0]
         if(len(I)>0):
-            indices.append(I[0])
+            indices.append(I[len(I)//2])
     return np.array(indices).astype(int)
 
 def plotVelAxis(ax,
@@ -617,16 +617,16 @@ def plotVelAxis(ax,
             mask = labels==i
             t_type = t[mask]
             if(np.any(mask)):
-                t_lb, t_ub = np.quantile(t_type, 0.02), np.quantile(t_type, 0.98)
-                mask2 = (t_type<t_ub) & (t_type>=t_lb)
-                t_type = t_type[mask2]
+                #t_lb, t_ub = np.quantile(t_type, 0.02), np.quantile(t_type, 0.98)
+                #mask2 = (t_type<t_ub) & (t_type>=t_lb)
+                #t_type = t_type[mask2]
                 dt_sample = (t_type.max()-t_type.min())/20
                 torder = np.argsort(t_type)
                 indices = sampleQuiverPlot(t_type[torder], dt_sample)
                 v_type = v[mask][torder][indices]
                 v_type = np.clip(v_type, np.quantile(v_type,0.02), np.quantile(v_type,0.98))
                 ax.quiver(t_type[torder][indices], 
-                          x[mask][mask2][torder][indices], 
+                          x[mask][torder][indices], 
                           dt*np.ones((len(indices))), 
                           dt*v_type, 
                           label=legends[i],
@@ -635,7 +635,7 @@ def plotVelAxis(ax,
                           scale_units='inches', 
                           headwidth=5.0, 
                           headlength=8.0, 
-                          color=colors[i])
+                          color=colors[i%len(colors)])
     return ax
 
 def plotSigGrid(Nr, 
@@ -786,7 +786,7 @@ def plotSigGrid(Nr,
                 print("Saving failed. File path doesn't exist!")
         plt.close(fig_sig)
 
-def plotClusterGrid(X_umap,
+def plotClusterGrid(X_embed,
                     Py, 
                     cell_types,
                     show_colormap=False,
@@ -797,8 +797,8 @@ def plotClusterGrid(X_umap,
     methods = list(Py.keys())
     M = len(methods)
     
-    x = X_umap[:,0]
-    y = X_umap[:,1]
+    x = X_embed[:,0]
+    y = X_embed[:,1]
     x_range = x.max()-x.min()
     y_range = y.max()-y.min()
     
@@ -838,10 +838,10 @@ def plotClusterGrid(X_umap,
                     continue
                 xbar, ybar = np.mean(x[mask]), np.mean(y[mask])
                 try:
-                    ax[i].plot(x[mask], y[mask], '.', color=colors[j])
+                    ax[i].plot(x[mask], y[mask], '.', color=colors[j%len(colors)])
                     ax[i].text(xbar - x_range*0.05, ybar - y_range*0.05, typej, fontsize=12, color='k')
                 except TypeError:
-                    ax.plot(x[mask], y[mask], '.', color=colors[j])
+                    ax.plot(x[mask], y[mask], '.', color=colors[j%len(colors)])
                     ax.text(xbar - x_range*0.05, ybar - y_range*0.05, typej, fontsize=12, color='k')
         if(M>1):
             ax[i].set_title(f'{method} Labels')
@@ -885,33 +885,52 @@ def plotTimeGrid(T,
             t = capture_time if method=="Capture Time" else T[method]
             t = t - t.min()
             t = t/t.max()
-            ax[0, i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
-            ax[0, i].set_title(f'{method}',fontsize=24)
-            ax[0, i].axis('off')
+            if(M>1):
+                ax[0, i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+                ax[0, i].set_title(f'{method}',fontsize=24)
+                ax[0, i].axis('off')
+            else:
+                ax[0].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+                ax[0].set_title(f'{method}',fontsize=24)
+                ax[0].axis('off')
 
             #Plot the Time Variance in a Colormap
             var_t = std_t[method]**2
             
             if(np.any(var_t>0)):
-                ax[1, i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=var_t, cmap='Reds', edgecolors='none')
-                norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
-                sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
-                cbar1 = fig_time.colorbar(sm1,ax=ax[1, i])
-                cbar1.ax.get_yaxis().labelpad = 15
-                cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
-                ax[1, i].axis('off')
+                if(M>1):
+                    ax[1, i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=var_t, cmap='Reds', edgecolors='none')
+                    norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
+                    sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
+                    cbar1 = fig_time.colorbar(sm1,ax=ax[1, i])
+                    cbar1.ax.get_yaxis().labelpad = 15
+                    cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
+                    ax[1, i].axis('off')
+                else:
+                    ax[1].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=var_t, cmap='Reds', edgecolors='none')
+                    norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
+                    sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
+                    cbar1 = fig_time.colorbar(sm1,ax=ax[1])
+                    cbar1.ax.get_yaxis().labelpad = 15
+                    cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
+                    ax[1].axis('off')
     else:
         fig_time, ax = plt.subplots(1, M, figsize=(8*M,4))
         for i, method in enumerate(methods):
             t = capture_time if method=="Capture Time" else T[method]
             t = t - t.min()
             t = t/t.max()
-            ax[i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
-            ax[i].set_title(f'{method}',fontsize=24)
-            ax[i].axis('off')
+            if(M>1):
+                ax[i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+                ax[i].set_title(f'{method}',fontsize=24)
+                ax[i].axis('off')
+            else:
+                ax.scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+                ax.set_title(f'{method}',fontsize=24)
+                ax.axis('off')
     norm0 = matplotlib.colors.Normalize(vmin=0, vmax=1)
     sm0 = matplotlib.cm.ScalarMappable(norm=norm0, cmap='plasma')
-    cbar0 = fig_time.colorbar(sm0,ax=ax, location="right")
+    cbar0 = fig_time.colorbar(sm0,ax=ax, location="right") if M>1 else fig_time.colorbar(sm0,ax=ax)
     cbar0.ax.get_yaxis().labelpad = 20
     cbar0.ax.set_ylabel('Latent Time',rotation=270,fontsize=24)
     if(savefig):
@@ -925,8 +944,8 @@ def plotTimeGrid(T,
 
 
 
-def plotVelocity(X_umap, vx, vy, scale=1.0, path='figures', figname='genes'):
-    umap1, umap2 = X_umap[:,0], X_umap[:,1]
+def plotVelocity(X_embed, vx, vy, scale=1.0, path='figures', figname='genes'):
+    umap1, umap2 = X_embed[:,0], X_embed[:,1]
     fig, ax = plt.subplots(figsize=(12,8))
     v = np.sqrt(vx**2+vy**2)
     vmax, vmin = np.quantile(v,0.95), np.quantile(v,0.05)
@@ -939,34 +958,74 @@ def plotVelocity(X_umap, vx, vy, scale=1.0, path='figures', figname='genes'):
         print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def plotVelocityStream(X_umap, vx, vy, cell_labels, figsize=(7,5), path='figures', figname='genes'):
+
+def plotVelocityStream(X_embed, 
+                       t,
+                       vx, 
+                       vy, 
+                       cell_labels,
+                       n_grid=50,
+                       k=50,
+                       k_time=10,
+                       dist_thred=None,
+                       eps_t=None,
+                       scale=1.5,
+                       figsize=(8,6), 
+                       path='figures', 
+                       figname='genes'):
     #Compute velocity on a grid
-    N = 50
-    umap1, umap2 = X_umap[:,0], X_umap[:,1]
-    Y, X = np.mgrid[umap2.min():umap2.max():50j, umap1.min():umap1.max():50j]
-    grid = np.stack([X.flatten(), Y.flatten()]).T
-    knn = NearestNeighbors(n_neighbors=30)
-    knn = knn.fit(X_umap)
-    dist, ind = knn.kneighbors(grid)
-    sigma = np.max(dist, 1)
-    A = np.exp(-(dist/sigma.reshape(-1,1))**2)
-    A = A/A.sum(1).reshape(-1,1)
+    knn_model = pynndescent.NNDescent(X_embed, n_neighbors=2*k)
+    umap1, umap2 = X_embed[:,0], X_embed[:,1]
+    x = np.linspace(X_embed[:,0].min(), X_embed[:,0].max(), n_grid)
+    y = np.linspace(X_embed[:,1].min(), X_embed[:,1].max(), n_grid)
     
-    dist_thred = (umap1.max()-umap1.min())/N + (umap2.max()-umap2.min())/N
-    dist_med = np.quantile(dist,0.5,1)
+    xgrid, ygrid = np.meshgrid(x,y)
+    xgrid, ygrid = xgrid.flatten(), ygrid.flatten()
+    Xgrid = np.stack([xgrid,ygrid]).T
     
-    vx_grid = np.array([A[i].dot(vx[ind[i]]) for i in range(A.shape[0])])
-    vy_grid = np.array([A[i].dot(vy[ind[i]]) for i in range(A.shape[0])])
+    neighbors_grid, dist_grid = knn_model.query(Xgrid, k=k)
+    neighbors_grid_, dist_grid_ = knn_model.query(Xgrid, k=k_time)
+    neighbors_grid = neighbors_grid.astype(int)
+    neighbors_grid_ = neighbors_grid_.astype(int)
     
-    vx_grid[dist_med > dist_thred] = 0
-    vy_grid[dist_med > dist_thred] = 0
+    #Prune grid points
+    if(dist_thred is None):
+        ind, dist = knn_model.neighbor_graph
+        dist_thred = dist.mean() * scale
+    mask = np.quantile( dist_grid, 0.5, 1)<=dist_thred
+
+    #transition probability on UMAP
+    def transition_prob(dist, sigma):
+        P = np.exp(-(dist/sigma)**2)
+        P = P/P.sum(1).reshape(-1,1)
+        return P
+    
+    P = transition_prob(dist_grid, dist_thred)
+    P_ = transition_prob(dist_grid_, dist_thred)
+    
+    #Local Averaging
+    tgrid = np.sum(np.stack([t[neighbors_grid_[i]] for i in range(len(xgrid))])*P_, 1)
+    if(eps_t is None):
+        eps_t = (t.max()-t.min())/500
+    P = P*np.stack([t[neighbors_grid[i]]>=tgrid[i]+eps_t for i in range(len(xgrid))])
+    vx_grid = np.sum(np.stack([vx[neighbors_grid[i]] for i in range(len(xgrid))])*P, 1)
+    vy_grid = np.sum(np.stack([vy[neighbors_grid[i]] for i in range(len(xgrid))])*P, 1)
+    
     
     fig, ax = plt.subplots(figsize=figsize)
     #Plot cells by label
+    font_shift = (x.max()-x.min())/100
     for i, type_ in enumerate(np.unique(cell_labels)):
-        mask = cell_labels==type_
-        ax.plot(umap1[mask], umap2[mask], '.', color=colors[i], alpha=0.3, label=type_)
-    ax.streamplot(grid[:,0].reshape(N,N), grid[:,1].reshape(N,N), vx_grid.reshape(N,N), vy_grid.reshape(N,N), density=2, color='k')
+        cell_mask = cell_labels==type_
+        ax.scatter(umap1[cell_mask], umap2[cell_mask], s=5.0, color=colors[i%len(colors)], alpha=0.5)
+        ax.text(umap1[cell_mask].mean() - len(type_)*font_shift, umap2[cell_mask].mean(), type_, fontsize=15, color='k')
+    ax.streamplot(xgrid.reshape(n_grid, n_grid),
+                  ygrid.reshape(n_grid, n_grid),
+                  (vx_grid*mask).reshape(n_grid, n_grid),
+                  (vy_grid*mask).reshape(n_grid, n_grid),
+                  density=2.0,
+                  color='k',
+                  integration_direction='both')
     ax.set_title('Velocity Stream Plot')
     ax.set_xlabel('Umap 1')
     ax.set_ylabel('Umap 2')
@@ -974,25 +1033,100 @@ def plotVelocityStream(X_umap, vx, vy, cell_labels, figsize=(7,5), path='figures
         fig.savefig(f"{path}/velstream_{figname}.png")
     except FileNotFoundError:
         print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    #plt.close(fig)
 
-def plotUmapTransition(graph, X_umap, cell_labels, label_dic_rev, path='figures', figname='umaptrans'):
+
+def plot_cell_trajectory(X_embed,
+                         t,
+                         cell_labels,
+                         n_grid=50,
+                         k=30,
+                         k_grid=8,
+                         scale=1.5,
+                         eps_t=None,
+                         path='figures', 
+                         figname='cells'):
+    #Compute the time on a grid
+    knn_model = pynndescent.NNDescent(X_embed, n_neighbors=k+20)
+    ind, dist = knn_model.neighbor_graph
+    dist_thred = dist.mean() * scale
+    
+    x = np.linspace(X_embed[:,0].min(), X_embed[:,0].max(), n_grid)
+    y = np.linspace(X_embed[:,1].min(), X_embed[:,1].max(), n_grid)
+    
+    xgrid, ygrid = np.meshgrid(x,y)
+    xgrid, ygrid = xgrid.flatten(), ygrid.flatten()
+    Xgrid = np.stack([xgrid,ygrid]).T
+    
+    neighbors_grid, dist_grid = knn_model.query(Xgrid, k=k)
+    mask = np.quantile( dist_grid, 0.5, 1)<=dist_thred
+    
+    #transition probability on UMAP
+    def transition_prob(dist, sigma):
+        P = np.exp(-(np.clip(dist/sigma,-100,None))**2)
+        psum = P.sum(1).reshape(-1,1)
+        psum[psum==0] = 1.0
+        P = P/psum
+        return P
+    
+    P = transition_prob(dist_grid, dist_thred)
+    tgrid = np.sum(np.stack([t[neighbors_grid[i]] for i in range(len(xgrid))])*P, 1)
+    
+    #Compute velocity based on grid time
+    knn_grid = pynndescent.NNDescent(Xgrid, n_neighbors=k_grid, metric="l1")
+    neighbor_grid, dist_grid = knn_grid.neighbor_graph
+    
+    if(eps_t is None):
+        eps_t = (t.max()-t.min())/len(t)
+    delta_t = tgrid[neighbor_grid] - tgrid.reshape(-1,1) - eps_t
+    sigma_t = (t.max()-t.min())/n_grid
+    P = np.exp((np.clip(delta_t/sigma_t,0,100))**2)*(delta_t>=0)
+    psum = P.sum(1).reshape(-1,1)
+    psum[psum==0] = 1.0
+    P = P/psum
+    vx_grid = ((xgrid[neighbor_grid] - xgrid.reshape(-1,1))*P).sum(1).reshape(n_grid, n_grid)
+    vy_grid = ((ygrid[neighbor_grid] - ygrid.reshape(-1,1))*P).sum(1).reshape(n_grid, n_grid)
+    
+    fig, ax = plt.subplots(figsize=(8,6))
+    #Plot cells by label
+    font_shift = (x.max()-x.min())/100
+    for i, type_ in enumerate(np.unique(cell_labels)):
+        cell_mask = cell_labels==type_
+        ax.scatter(X_embed[:,0][cell_mask], X_embed[:,1][cell_mask], s=5.0, color=colors[i], alpha=0.5)
+        ax.text(X_embed[:,0][cell_mask].mean() - len(type_)*font_shift, X_embed[:,1][cell_mask].mean(), type_, fontsize=15, color='k')
+    ax.streamplot(xgrid.reshape(n_grid, n_grid),
+                  ygrid.reshape(n_grid, n_grid),
+                  vx_grid*mask.reshape(n_grid, n_grid),
+                  vy_grid*mask.reshape(n_grid, n_grid),
+                  density=2.0,
+                  color='k',
+                  integration_direction='both')
+    ax.set_title('Velocity Stream Plot')
+    ax.set_xlabel('Umap 1')
+    ax.set_ylabel('Umap 2')
+    try:
+        fig.savefig(f"{path}/trajectory_{figname}.png")
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
+    return
+
+def plotUmapTransition(graph, X_embed, cell_labels, label_dic_rev, path='figures', figname='umaptrans'):
     """
     Plot the Umap coordinates and connect the cluster centers with a line.
     Transition probability is encoded in the opacity of the line
     T: transition matrix [n_type x n_type]
-    X_umap: umap coordinates [ncell x 2]
+    X_embed: umap coordinates [ncell x 2]
     """
     fig, ax = plt.subplots(figsize=(8,6))
     Xmean = {}
     for i in graph:
         mask = cell_labels==i
-        xbar, ybar = np.mean(X_umap[mask,0]),np.mean(X_umap[mask,1])
+        xbar, ybar = np.mean(X_embed[mask,0]),np.mean(X_embed[mask,1])
         Xmean[i] = (xbar,ybar)
     
     for i in graph.keys():
         mask = cell_labels==i
-        ax.plot(X_umap[mask,0],X_umap[mask,1],'.',color=colors[i],alpha=0.1)
+        ax.plot(X_embed[mask,0],X_embed[mask,1],'.',color=colors[i%len(colors)],alpha=0.1)
     
     for i in graph.keys():
         mask = cell_labels==i
@@ -1018,7 +1152,7 @@ def plotLatentEmbedding(X,  n_cluster, labels, label_dic_rev, savefig=True, path
     fig, ax = plt.subplots()
     
     for i in range(n_cluster):
-        ax.plot(Y[labels==i,0], Y[labels==i,1], '.', c=colors[i], label=label_dic_rev[i])
+        ax.plot(Y[labels==i,0], Y[labels==i,1], '.', c=colors[i%len(colors)], label=label_dic_rev[i])
     
     ax.set_xlabel('Umap 1')
     ax.set_ylabel('Umap 2')
