@@ -64,22 +64,10 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
             stats['MAE Test'] = "N/A"
     stats['LL Train'] = logp_train
     stats['LL Test'] = logp_test
-    if('latent_time' in adata.obs):
-        tscv = adata.obs['latent_time'].to_numpy()
-        if(method=='scVelo'):
-            T_scv = adata.layers["fit_t"]
-            mask = ~(np.isnan(adata.var['fit_alpha'].to_numpy()))
-            corr, pval = 0, 0
-            for i in range(adata.n_vars):
-                if(mask[i]):
-                    c, p = spearmanr(T_scv[:,i], tscv)
-                    corr += c
-                    pval += p
-            corr = corr / np.sum(mask)
-            pval = pval / np.sum(mask)
-        else:
-            t = adata.obs[f"{key}_time"]
-            corr, pval = spearmanr(t, tscv)
+    if('tprior' in adata.obs):
+        tprior = adata.obs['tprior'].to_numpy()
+        t = adata.obs["latent_time"].to_numpy() if (method=='scVelo') else adata.obs[f"{key}_time"].to_numpy()
+        corr, pval = spearmanr(t, tprior)
         stats['corr'] = corr
     return stats
 
@@ -265,4 +253,4 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                     path=save_path, 
                     figname="test")
     
-    return
+    return stats_df
