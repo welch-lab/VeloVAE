@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import os
 import time
-from velovae.plotting import plotPhase, plotSig, plotTLatent, plotTrainLoss, plotTestLoss
+from velovae.plotting import plot_phase, plot_sig, plot_time, plot_train_loss, plot_test_loss
 
 from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, ode, getGeneIndex
 from .TrainingData import SCData
@@ -262,7 +262,7 @@ class VanillaVAE():
         G = adata.n_vars
         #Create an encoder
         try:
-            self.encoder = encoder(2*G, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints)
+            self.encoder = encoder(2*G, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints).float()
         except IndexError:
             print('Please provide two dimensions!')
         #Create a decoder
@@ -271,7 +271,7 @@ class VanillaVAE():
                                self.train_idx, 
                                device=self.device, 
                                init_method = init_method,
-                               init_key = init_key)
+                               init_key = init_key).float()
         self.Tmax=torch.tensor(Tmax).to(self.device)
         self.time_distribution = time_distribution
         #Time prior
@@ -533,8 +533,8 @@ class VanillaVAE():
                 
                 
         print("*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
-        plotTrainLoss(loss_train, range(1,len(loss_train)+1),True, figure_path,'Basic')
-        plotTestLoss(loss_test, [i*self.config["test_iter"] for i in range(len(loss_test))],True, figure_path,'Basic')
+        plot_train_loss(loss_train, range(1,len(loss_train)+1),f'{figure_path}/train_loss_vanilla.png')
+        plot_test_loss(loss_test, [i*self.config["test_iter"] for i in range(1,len(loss_test)+1)],f'{figure_path}/test_loss_vanilla.png')
         return
     
     def predAll(self, data, output=["uhat", "shat", "t", "z"], gene_idx=None):
@@ -622,7 +622,7 @@ class VanillaVAE():
             ton, toff = np.exp(self.decoder.ton.detach().cpu().numpy()), np.exp(self.decoder.toff.detach().cpu().numpy())
             state = np.ones(toff.shape)*(t.reshape(-1,1)>toff)+np.ones(ton.shape)*2*(t.reshape(-1,1)<ton)
             #Plot Time
-            plotTLatent(t, Xembed, f"Training Epoch {testid}", plot, path, f"{testid}-vanilla")
+            plot_time(t, Xembed, f"Training Epoch {testid}", plot, path, f"{path}/time-{testid}-vanilla.png")
             
             #Plot u/s-t and phase portrait for each gene
             for i in range(len(gind)):
@@ -630,23 +630,20 @@ class VanillaVAE():
                 #track_idx = plotVAE.pickcell(U[:,i],S[:,i],cell_labels) if cell_labels is not None else None
                 track_idx = None
                 """
-                plotPhase(data[:,idx], data[:,idx+G],  
+                plot_phase(data[:,idx], data[:,idx+G],  
                           Uhat[:,idx], Shat[:,idx], 
                           gene_plot[i], 
                           track_idx, 
                           state[:,idx], 
                           ['Induction', 'Repression', 'Off'],
-                          True, path,
-                          f"{gene_plot[i]}-{testid}-vanilla")
+                          f"{path}/phase-{gene_plot[i]}-{testid}-vanilla.png")
                 """
-                plotSig(t.squeeze(), 
+                plot_sig(t.squeeze(), 
                         data[:,idx], data[:,idx+G],  
                         Uhat[:,i], Shat[:,i], 
+                        test_set.labels,
                         gene_plot[i], 
-                        True, 
-                        path, 
-                        f"{gene_plot[i]}-{testid}-vanilla",
-                        cell_labels=test_set.labels,
+                        f"{path}/sig-{gene_plot[i]}-{testid}-vanilla.png",
                         sparsify=self.config["sparsify"])
         
         return elbo
