@@ -48,16 +48,17 @@ def pickcell(u,s,cell_labels):
                 track_idx.append(ans[0])
     return np.array(track_idx)
 
-def plotSig_(t, 
+############################################################
+# Functions used in debugging.
+############################################################
+def plot_sig_(t, 
             u, s, 
             cell_labels,
             tpred=None,
             upred=None, spred=None, 
             type_specific=False,
-            title='gene', 
-            savefig=False, 
-            path=None, 
-            figname="gene", 
+            title='Gene', 
+            figname="figures/sig.png", 
             **kwargs):
     
     fig, ax = plt.subplots(2,1,figsize=(15,12))
@@ -102,25 +103,19 @@ def plotSig_(t,
     
     lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, bbox_to_anchor=(1.0,1.0), loc='upper left')
     fig.suptitle(title)
-    if(savefig):
-        try:
-            if(path is None):
-                fig.savefig(f"figures/sig_{figname}.png",bbox_extra_artists=(lgd,), bbox_inches='tight')
-            else:
-                fig.savefig(f"{path}/sig_{figname}.png",bbox_extra_artists=(lgd,), bbox_inches='tight')
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
+    try:
+        fig.savefig(figname,bbox_extra_artists=(lgd,), bbox_inches='tight')
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
     plt.close(fig)
     return
 
-def plotSig(t, 
+def plot_sig(t, 
             u, s, 
             upred, spred, 
-            title, 
-            savefig=False, 
-            path=None, 
-            figname="gene", 
             cell_labels=None,
+            title="Gene", 
+            figname="figures/sig.png", 
             **kwargs):
     """
     Plots u/s vs. time (Single Plot)
@@ -205,27 +200,20 @@ def plotSig(t,
     
     lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, bbox_to_anchor=(1.0,1.0), loc='upper left')
     fig.suptitle(title)
-    if(savefig):
-        try:
-            if(path is None):
-                fig.savefig(f"figures/sig_{figname}.png",bbox_extra_artists=(lgd,), bbox_inches='tight')
-            else:
-                fig.savefig(f"{path}/sig_{figname}.png",bbox_extra_artists=(lgd,), bbox_inches='tight')
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
+    try:
+        fig.savefig(figname,bbox_extra_artists=(lgd,), bbox_inches='tight')
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
     plt.close(fig)
     
 
-
-def plotPhase(u, s, 
+def plot_phase(u, s, 
               upred, spred, 
               title, 
               track_idx=None, 
               labels=None, # array/list of integer
               types=None,  # array/list of string
-              savefig=False, 
-              path='figures',  
-              figname="gene"):
+              figname="figures/phase.png"):
     fig, ax = plt.subplots(figsize=(6,6))
     if(labels is None or types is None):
         ax.scatter(s,u,c="b",alpha=0.5)
@@ -252,14 +240,13 @@ def plotPhase(u, s,
     ax.legend()
     #plt.show()
     
-    if(savefig):
-        try:
-            fig.savefig(f"{path}/phase_{figname}.png")
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
+    try:
+        fig.savefig(figname)
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def plotCluster(X_embed, p_type, cell_labels=None, show_colormap=False, path='figures', figname='cells'):
+def plot_cluster(X_embed, p_type, cell_labels=None, show_colormap=False, figname='figures/cluster.png'):
     """
     Plot the predicted cell types from the encoder
     """
@@ -306,41 +293,39 @@ def plotCluster(X_embed, p_type, cell_labels=None, show_colormap=False, path='fi
     ax[1].set_xlabel('Umap 1') 
     ax[1].set_ylabel('Umap 2') 
     try:
-        fig.savefig(f'{path}/type_{figname}.png')
+        fig.savefig(figname)
     except FileNotFoundError:
         print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
 
-def plotTrainLoss(loss, iters, savefig=False, path='figures', figname="gene"):
+def plot_train_loss(loss, iters, figname="figures/train_loss.png"):
     fig, ax = plt.subplots()
     ax.plot(iters, loss, '.-')
     ax.set_title("Training Loss")
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Loss")
     #plt.show()
-    if(savefig):
-        try:
-            fig.savefig(f"{path}/train_loss_{figname}.png")
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
+    try:
+        fig.savefig(figname)
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def plotTestLoss(loss, epoch, savefig=False, path='figures', figname="gene"):
+def plot_test_loss(loss, iters, figname="figures/test_loss.png"):
     fig, ax = plt.subplots()
-    ax.plot(epoch, loss, '.-')
+    ax.plot(iters, loss, '.-')
     ax.set_title("Testing Loss")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
     #plt.show()
-    if(savefig):
-        try:
-            fig.savefig(f"{path}/test_loss_{figname}.png")
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
+    try:
+        fig.savefig(figname)
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def plotTestAcc(acc, epoch, savefig=False, path='figures', figname="gene"):
+def plot_test_acc(acc, epoch, savefig=False, path='figures', figname="gene"):
     fig, ax = plt.subplots()
     ax.plot(epoch, acc, '.-')
     ax.set_title("Test Accuracy")
@@ -357,7 +342,7 @@ def plotTestAcc(acc, epoch, savefig=False, path='figures', figname="gene"):
             print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def plotTLatent(t_latent, X_embed, title, savefig=False, path=None, figname="gene"):
+def plot_time(t_latent, X_embed, figname="figures/time.png"):
     fig, ax = plt.subplots()
     ax.scatter(X_embed[:,0], X_embed[:,1], c=t_latent,cmap='plasma')
     norm = matplotlib.colors.Normalize(vmin=np.min(t_latent), vmax=np.max(t_latent))
@@ -365,27 +350,25 @@ def plotTLatent(t_latent, X_embed, title, savefig=False, path=None, figname="gen
     cbar = plt.colorbar(sm)
     cbar.ax.get_yaxis().labelpad = 15
     cbar.ax.set_ylabel('Latent Time',rotation=270)
-    ax.set_title(title)
     
-    if(savefig):
-        try:
-            fig.savefig(f"{path}/tlatent_{figname}.png")
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
+    try:
+        fig.savefig(figname)
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
 #########################################################################
 # Post Analysis
 #########################################################################
-def plotPhaseAxis(ax,
-                  u,
-                  s,
-                  marker='.',
-                  a=1.0,
-                  D=1,
-                  labels=None,
-                  legends=None,
-                  title=None):
+def plot_phase_axis(ax,
+                    u,
+                    s,
+                    marker='.',
+                    a=1.0,
+                    D=1,
+                    labels=None,
+                    legends=None,
+                    title=None):
     try:
         if(labels is None):
             ax.plot(s[::D],u[::D], marker, color='k')
@@ -408,24 +391,23 @@ def plotPhaseAxis(ax,
     
     return ax
     
-def plotPhaseGrid(Nr, 
-                  Nc, 
-                  gene_list,
-                  U, 
-                  S, 
-                  Labels, 
-                  Legends,
-                  Uhat={}, 
-                  Shat={}, 
-                  Labels_demo={},
-                  W=6,
-                  H=4,
-                  alpha=0.3,
-                  sparsify=1,
-                  savefig=False,  
-                  path='figures', 
-                  figname="genes",
-                  **kwargs):
+def plot_phase_grid(Nr, 
+                    Nc, 
+                    gene_list,
+                    U, 
+                    S, 
+                    Labels, 
+                    Legends,
+                    Uhat={}, 
+                    Shat={}, 
+                    Labels_demo={},
+                    W=6,
+                    H=4,
+                    alpha=0.3,
+                    sparsify=1,
+                    path='figures', 
+                    figname="genes",
+                    **kwargs):
     """
     Plot the phase portrait of a list of genes in an [Nr x Nc] grid.
     Cells are colored according to their dynamical state or cell type.
@@ -446,9 +428,9 @@ def plotPhaseGrid(Nr,
         fig_phase, ax_phase = plt.subplots(Nr, M*Nc, figsize=(W*M*Nc+1.0,H*Nr))
         if(Nr==1 and M*Nc==1): #Single Gene, Single Method
             labels = Labels[methods[0]] if Labels[methods[0]].ndim==1 else Labels[methods[0]][:,l]
-            plotPhaseAxis(ax_phase, U[:,l], S[:,l], '.', alpha, D, labels, Legends[methods[0]], f"{gene_list[l]} ({methods[0]})")
+            plot_phase_axis(ax_phase, U[:,l], S[:,l], '.', alpha, D, labels, Legends[methods[0]], f"{gene_list[l]} ({methods[0]})")
             try:
-                plotPhaseAxis(ax_phase, Uhat[methods[0]][:,l], Shat[methods[0]][:,l], '-', 1.0, 1, Labels_demo[methods[0]], f"{gene_list[l]} ({methods[0]})")
+                plot_phase_axis(ax_phase, Uhat[methods[0]][:,l], Shat[methods[0]][:,l], '-', 1.0, 1, Labels_demo[methods[0]], f"{gene_list[l]} ({methods[0]})")
             except (KeyError, TypeError):
                 print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                 pass
@@ -457,9 +439,9 @@ def plotPhaseGrid(Nr,
             for j in range(min(Nc, len(gene_list)-l*Nc)):
                 for k, method in enumerate(methods): 
                     labels = Labels[method] if Labels[method].ndim==1 else Labels[method][:,l*Nc+j]
-                    plotPhaseAxis(ax_phase[M*j+k], U[:,l*Nc+j], S[:,l*Nc+j], '.', alpha, D, labels, Legends[method], f"{gene_list[l*Nc+j]} ({method})")
+                    plot_phase_axis(ax_phase[M*j+k], U[:,l*Nc+j], S[:,l*Nc+j], '.', alpha, D, labels, Legends[method], f"{gene_list[l*Nc+j]} ({method})")
                     try:
-                        plotPhaseAxis(ax_phase[M*j+k], Uhat[method][:,l*Nc+j], Shat[method][:,l*Nc+j], '-', 1.0, 1, Labels_demo[method], Legends[method], f"{gene_list[l*Nc+j]} ({method})")
+                        plot_phase_axis(ax_phase[M*j+k], Uhat[method][:,l*Nc+j], Shat[method][:,l*Nc+j], '-', 1.0, 1, Labels_demo[method], Legends[method], f"{gene_list[l*Nc+j]} ({method})")
                     except (KeyError, TypeError):
                         print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                         pass
@@ -467,9 +449,9 @@ def plotPhaseGrid(Nr,
         elif(M*Nc==1): #Multiple Gene, Single Method
             for i in range(min(Nr, len(gene_list)-l*Nr)):
                 labels = Labels[methods[0]] if Labels[methods[0]].ndim==1 else Labels[methods[0]][:,l*Nr+i]
-                plotPhaseAxis(ax_phase[i], U[:,l*Nr+i], S[:,l*Nr+i], '.',  alpha, D, labels, Legends[methods[0]], f"{gene_list[l*Nr+i]} ({method})")
+                plot_phase_axis(ax_phase[i], U[:,l*Nr+i], S[:,l*Nr+i], '.',  alpha, D, labels, Legends[methods[0]], f"{gene_list[l*Nr+i]} ({method})")
                 try:
-                    plotPhaseAxis(ax_phase[i], Uhat[methods[0]][:,l*Nr+i], Shat[methods[0]][:,l*Nr+i], '-', 1.0, 1, Labels_demo[methods[0]], Legends[methods[0]], f"{gene_list[l*Nr+i]} ({method})")
+                    plot_phase_axis(ax_phase[i], Uhat[methods[0]][:,l*Nr+i], Shat[methods[0]][:,l*Nr+i], '-', 1.0, 1, Labels_demo[methods[0]], Legends[methods[0]], f"{gene_list[l*Nr+i]} ({method})")
                 except (KeyError, TypeError):
                     print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                     pass
@@ -483,32 +465,31 @@ def plotPhaseGrid(Nr,
                     u, s = U[:,idx], S[:,idx]
                     for k, method in enumerate(methods): 
                         labels = Labels[method] if Labels[method].ndim==1 else Labels[method][:,idx]
-                        plotPhaseAxis(ax_phase[i,M*j+k], U[:,idx], S[:,idx], '.', alpha, D, labels, Legends[method], f"{gene_list[idx]} ({method})")
+                        plot_phase_axis(ax_phase[i,M*j+k], U[:,idx], S[:,idx], '.', alpha, D, labels, Legends[method], f"{gene_list[idx]} ({method})")
                         try:
-                            plotPhaseAxis(ax_phase[i,M*j+k], Uhat[method][:,idx], Shat[method][:,idx], '-', 1.0, 1, Labels_demo[method], Legends[method], f"{gene_list[idx]} ({method})")
+                            plot_phase_axis(ax_phase[i,M*j+k], Uhat[method][:,idx], Shat[method][:,idx], '-', 1.0, 1, Labels_demo[method], Legends[method], f"{gene_list[idx]} ({method})")
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
             lgd = ax_phase[0,0].legend(fontsize=10, markerscale=3.0, bbox_to_anchor=(-0.15,1.0), loc='upper right')
         
         fig_phase.subplots_adjust(hspace = 0.3, wspace=0.3)
-        if(savefig):
-            try:
-                fig_phase.savefig(f'{path}/phase_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), bbox_inches='tight')
-            except FileNotFoundError:
-                print("Saving failed. File path doesn't exist!")
+        try:
+            fig_phase.savefig(f'{path}/phase_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), bbox_inches='tight')
+        except FileNotFoundError:
+            print("Saving failed. File path doesn't exist!")
         plt.close(fig_phase)
 
-def plotSigAxis(ax,
-                t,
-                x,
-                labels=None,
-                legends=None,
-                marker='.',
-                a=1.0,
-                D=1,
-                show_legend=False,
-                title=None):
+def plot_sig_axis(ax,
+                  t,
+                  x,
+                  labels=None,
+                  legends=None,
+                  marker='.',
+                  a=1.0,
+                  D=1,
+                  show_legend=False,
+                  title=None):
     lines = []
     if(labels is None or legends is None):
         lines.append( ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)[0] )
@@ -526,16 +507,16 @@ def plotSigAxis(ax,
         ax.set_title(title, fontsize=36)
     return lines
 
-def plotSigPredAxis(ax,
-                t,
-                x,
-                labels=None,
-                legends=None,
-                marker='.',
-                a=1.0,
-                D=1,
-                show_legend=False,
-                title=None):
+def plot_sig_pred_axis(ax,
+                       t,
+                       x,
+                       labels=None,
+                       legends=None,
+                       marker='.',
+                       a=1.0,
+                       D=1,
+                       show_legend=False,
+                       title=None):
     if(labels is None or legends is None):
         ax.plot(t[::D], x[::D], marker, linewidth=5, color='k', alpha=a)
     else:
@@ -550,16 +531,16 @@ def plotSigPredAxis(ax,
         ax.set_title(title, fontsize=36)
     return ax
 
-def plotSigloessAxis(ax,
-                   t,
-                   x,
-                   labels,
-                   legends,
-                   frac=0.5,
-                   a=1.0,
-                   D=1,
-                   show_legend=False,
-                   title=None,):
+def plot_sig_loess_axis(ax,
+                        t,
+                        x,
+                        labels,
+                        legends,
+                        frac=0.5,
+                        a=1.0,
+                        D=1,
+                        show_legend=False,
+                        title=None,):
     xt = np.stack([t,x])
     Ngrid = max(len(t)//200, 50)
     for i in range(len(legends)):
@@ -567,19 +548,20 @@ def plotSigloessAxis(ax,
         if(np.any(mask)):
             t_lb, t_ub = np.quantile(t[mask], 0.05), np.quantile(t[mask], 0.95)
             mask2 = (t<=t_ub) & (t >= t_lb) & mask
-            tout, xout, wout = loess_1d.loess_1d(t[mask2], x[mask2], xnew=None, degree=1, frac=frac, npoints=None, rotate=False, sigy=None)
-            torder = np.argsort(tout)
-            if(show_legend):
-                ax.plot(tout[torder][::D], xout[torder][::D], 'k-', linewidth=5, alpha=a, label=legends[i])
-            else:
-                ax.plot(tout[torder][::D], xout[torder][::D], 'k-', linewidth=5, alpha=a)
+            if(np.sum(mask2)>=20):
+                tout, xout, wout = loess_1d.loess_1d(t[mask2], x[mask2], xnew=None, degree=1, frac=frac, npoints=None, rotate=False, sigy=None)
+                torder = np.argsort(tout)
+                if(show_legend):
+                    ax.plot(tout[torder][::D], xout[torder][::D], 'k-', linewidth=5, alpha=a, label=legends[i])
+                else:
+                    ax.plot(tout[torder][::D], xout[torder][::D], 'k-', linewidth=5, alpha=a)
     if(title is not None):
         ax.set_title(title, fontsize=36)
     return ax
 
-def sampleQuiverPlot(t, dt):
+def sample_quiver_plot(t, dt):
     tmax, tmin = t.max()+1e-3, t.min()
-    Nbin = max(1, int( (tmax-tmin)/dt ))
+    Nbin = int( np.clip((tmax-tmin)/dt,1,len(t)//2) )
     indices = []
     for i in range(Nbin):
         I = np.where((t>=tmin+i*dt) & (t<=tmin+(i+1)*dt))[0]
@@ -587,21 +569,21 @@ def sampleQuiverPlot(t, dt):
             indices.append(I[len(I)//2])
     return np.array(indices).astype(int)
 
-def plotVelAxis(ax,
-                t,
-                x,
-                v,
-                labels=None,
-                legends=None,
-                dt=0.1,
-                a=1.0,
-                show_legend=False,
-                title=None,):
+def plot_vel_axis(ax,
+                  t,
+                  x,
+                  v,
+                  labels=None,
+                  legends=None,
+                  dt=0.1,
+                  a=1.0,
+                  show_legend=False,
+                  title=None,):
     
     if(labels is None or legends is None):
         dt_sample = (t.max()-t.min())/50
         torder = np.argsort(t)
-        indices = sampleQuiverPlot(t[torder], dt_sample)
+        indices = sample_quiver_plot(t[torder], dt_sample)
         ax.quiver(t[torder][indices], 
                   x[torder][indices], 
                   dt*np.ones((len(t))), 
@@ -622,7 +604,7 @@ def plotVelAxis(ax,
                 #t_type = t_type[mask2]
                 dt_sample = (t_type.max()-t_type.min())/20
                 torder = np.argsort(t_type)
-                indices = sampleQuiverPlot(t_type[torder], dt_sample)
+                indices = sample_quiver_plot(t_type[torder], dt_sample)
                 v_type = v[mask][torder][indices]
                 v_type = np.clip(v_type, np.quantile(v_type,0.02), np.quantile(v_type,0.98))
                 ax.quiver(t_type[torder][indices], 
@@ -638,27 +620,26 @@ def plotVelAxis(ax,
                           color=colors[i%len(colors)])
     return ax
 
-def plotSigGrid(Nr, 
-                Nc, 
-                gene_list,
-                T,
-                U, 
-                S, 
-                Labels,
-                Legends,
-                That={},
-                Uhat={}, 
-                Shat={}, 
-                V={},
-                Labels_demo={},
-                W=6,
-                H=5,
-                frac=0.5,
-                alpha=1.0,
-                sparsify=1,
-                savefig=False,  
-                path='figures', 
-                figname="genes"):
+def plot_sig_grid(Nr, 
+                  Nc, 
+                  gene_list,
+                  T,
+                  U, 
+                  S, 
+                  Labels,
+                  Legends,
+                  That={},
+                  Uhat={}, 
+                  Shat={}, 
+                  V={},
+                  Labels_demo={},
+                  W=6,
+                  H=5,
+                  frac=0.5,
+                  alpha=1.0,
+                  down_sample=1,
+                  path='figures', 
+                  figname="grid"):
     """
     Plot u/s of a list of genes vs. time in an [Nr x Nc] grid.
     Cells are colored according to their dynamical state or cell type.
@@ -685,26 +666,27 @@ def plotSigGrid(Nr,
                 idx = l*Nr+i
                 t = T[methods[0]][:,idx] if T[methods[0]].ndim==2 else T[methods[0]]
                 that = That[methods[0]][:,idx] if methods[0].ndim==2 else That[methods[0]]
-                line_u = plotSigAxis(ax_sig[3*i], t, U[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, sparsify, True, f"{gene_list[idx]} ({methods[0]})")
-                line_s = plotSigAxis(ax_sig[3*i+1], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, sparsify)
+                line_u = plot_sig_axis(ax_sig[3*i], t, U[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, down_sample, True, f"{gene_list[idx]} ({methods[0]})")
+                line_s = plot_sig_axis(ax_sig[3*i+1], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, down_sample)
                 if(len(line_u)>0):
                     lines = line_u
                 try:
                     if methods[0]=='VeloVAE':
                         K = max(len(that)//5000, 1)
-                        plotSigloessAxis(ax_sig[3*i], that[::K], Uhat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
-                        plotSigloessAxis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
-                        plotVelAxis(ax_sig[3*i+2], t[::K], S[:,idx][::K], V[methods[0]][:,idx][::K], Labels[methods[0]][::K], Legends[methods[0]])
+                        plot_sig_loess_axis(ax_sig[3*i], that[::K], Uhat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
+                        plot_sig_loess_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
+                        plot_vel_axis(ax_sig[3*i+2], t[::K], S[:,idx][::K], V[methods[0]][:,idx][::K], Labels[methods[0]][::K], Legends[methods[0]])
                     else:
-                        plotSigPredAxis(ax_sig[3*i], that, Uhat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
-                        plotSigPredAxis(ax_sig[3*i+1], that, Shat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
-                        plotVelAxis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]])
+                        plot_sig_pred_axis(ax_sig[3*i], that, Uhat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
+                        plot_sig_pred_axis(ax_sig[3*i+1], that, Shat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
+                        plot_vel_axis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]])
                 except (KeyError, TypeError):
                     print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                     pass
-                
-                ax_sig[3*i].axis("off")
-                ax_sig[3*i+1].axis("off")
+                ax_sig[3*i].set_xlim(t.min(), np.quantile(t,0.99))
+                ax_sig[3*i+1].set_xlim(t.min(), np.quantile(t,0.99))
+                ax_sig[3*i].set_xticks([])
+                ax_sig[3*i+1].set_xticks([])
                 tmin, tmax = ax_sig[3*i].get_xlim()
                 umin, umax = ax_sig[3*i].get_ylim()
                 ax_sig[3*i].text(tmin - 0.02*(tmax-tmin), (umax+umin)*0.5, "U", fontsize=36)
@@ -731,8 +713,8 @@ def plotSigGrid(Nr,
                             t = T[method]
                             that = That[method]
                         
-                        line_u = plotSigAxis(ax_sig[3*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, sparsify, True, f"{gene_list[idx]} ({method})")
-                        line_s = plotSigAxis(ax_sig[3*i+1, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', alpha, sparsify)
+                        line_u = plot_sig_axis(ax_sig[3*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, down_sample, True, f"{gene_list[idx]} ({method})")
+                        line_s = plot_sig_axis(ax_sig[3*i+1, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', alpha, down_sample)
                         if(len(line_u)>0):
                             lines = line_u
                         if(len(Legends[method])>len(legends)):
@@ -740,19 +722,21 @@ def plotSigGrid(Nr,
                         try:
                             if method=='VeloVAE':
                                 K = max(len(that)//5000, 1)
-                                plotSigloessAxis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
-                                plotSigloessAxis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
-                                plotVelAxis(ax_sig[3*i+2, M*j+k], t[::K], S[:,idx][::K], V[method][:,idx][::K], Labels[method][::K], Legends[method])
+                                plot_sig_loess_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
+                                plot_sig_loess_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
+                                plot_vel_axis(ax_sig[3*i+2, M*j+k], t[::K], S[:,idx][::K], V[method][:,idx][::K], Labels[method][::K], Legends[method])
                             else:
-                                plotSigPredAxis(ax_sig[3*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
-                                plotSigPredAxis(ax_sig[3*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
-                                plotVelAxis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method])
+                                plot_sig_pred_axis(ax_sig[3*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
+                                plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
+                                plot_vel_axis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method])
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
-                        #ax_sig[3*i,  M*j+k].axis("off")
-                        #ax_sig[3*i+1, M*j+k].axis("off")
-                        #ax_sig[3*i+2, M*j+k].axis("off")
+                        
+                        ax_sig[3*i,  M*j+k].set_xlim(t.min(), np.quantile(t,0.99))
+                        ax_sig[3*i+1,  M*j+k].set_xlim(t.min(), np.quantile(t,0.99))
+                        ax_sig[3*i+2,  M*j+k].set_xlim(t.min(), np.quantile(t,0.99))
+                        
                         ax_sig[3*i,  M*j+k].set_xticks([])
                         ax_sig[3*i+1,  M*j+k].set_xticks([])
                         ax_sig[3*i+2,  M*j+k].set_xticks([])
@@ -776,24 +760,20 @@ def plotSigGrid(Nr,
                         ax_sig[3*i,  M*j+k].set_xlabel("Time", fontsize=30)
                         ax_sig[3*i+1,  M*j+k].set_xlabel("Time", fontsize=30)
                         ax_sig[3*i+2,  M*j+k].set_xlabel("Time", fontsize=30)
-            lgd = fig_sig.legend(lines, legends, fontsize=19*Nc, markerscale=5*Nc, ncol=min(2*M*Nc, 4), bbox_to_anchor=(0.0, 1.0, 1.0, 0.01), loc='center')
+            lgd = fig_sig.legend(lines, legends, fontsize=6*Nc*M, markerscale=Nc*M, ncol=min(2*M*Nc, 4), bbox_to_anchor=(0.0, 1.0, 1.0, 0.01), loc='center')
         fig_sig.subplots_adjust(hspace = 0.3, wspace=0.12)
-        if(savefig):
-            try:
-                fig_sig.savefig(f'{path}/sig_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), dpi=300, bbox_inches='tight') 
-                print(f'Saved to {path}/sig_{figname}_{l+1}.png')
-            except FileNotFoundError:
-                print("Saving failed. File path doesn't exist!")
+        try:
+            fig_sig.savefig(f'{path}/sig_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), dpi=300, bbox_inches='tight') 
+            print(f'Saved to {path}/sig_{figname}_{l+1}.png')
+        except FileNotFoundError:
+            print("Saving failed. File path doesn't exist!")
         plt.close(fig_sig)
 
-def plotClusterGrid(X_embed,
-                    Py, 
-                    cell_types,
-                    show_colormap=False,
-                    savefig=True,  
-                    path='figures', 
-                    figname="cluster",
-                    **kwargs):
+def plot_cluster_grid(X_embed,
+                      Py, 
+                      cell_types,
+                      show_colormap=False,
+                      figname="figures/cluster_grid.png"):
     methods = list(Py.keys())
     M = len(methods)
     
@@ -852,22 +832,21 @@ def plotClusterGrid(X_embed,
             ax.set_xlabel('Umap 1') 
             ax.set_ylabel('Umap 2') 
     fig.subplots_adjust(hspace = 0.25, wspace=0.1)
-    if(savefig):
-        try:
-            fig.savefig(f'{path}/{figname}.png')
-            print(f'Saved to {path}/{figname}.png')
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
+    try:
+        fig.savefig(figname)
+        print(f'Saved to {figname}')
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
     plt.close(fig)
     return
 
-def plotTimeGrid(T,
-                 X_emb,
-                 capture_time=None,
-                 std_t=None,
-                 savefig=False,  
-                 figname="time",
-                 path='figures'):
+def plot_time_grid(T,
+                   X_emb,
+                   capture_time=None,
+                   std_t=None,
+                   down_sample=1,
+                   q=0.99,
+                   figname="figures/time_grid.png"):
     """
     Plot the latent time of different methods.
     T: dictionary
@@ -883,14 +862,16 @@ def plotTimeGrid(T,
         fig_time, ax = plt.subplots(2, M, figsize=(6*M+2,8))
         for i, method in enumerate(methods):
             t = capture_time if method=="Capture Time" else T[method]
+            t = np.clip(t,None,np.quantile(t,q))
             t = t - t.min()
+            t_ub = np.quantile(t,q)
             t = t/t.max()
             if(M>1):
-                ax[0, i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+                ax[0, i].scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=t[::down_sample], cmap='plasma', edgecolors='none')
                 ax[0, i].set_title(f'{method}',fontsize=24)
                 ax[0, i].axis('off')
             else:
-                ax[0].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+                ax[0].scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=t[::down_sample], cmap='plasma', edgecolors='none')
                 ax[0].set_title(f'{method}',fontsize=24)
                 ax[0].axis('off')
 
@@ -899,7 +880,7 @@ def plotTimeGrid(T,
             
             if(np.any(var_t>0)):
                 if(M>1):
-                    ax[1, i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=var_t, cmap='Reds', edgecolors='none')
+                    ax[1, i].scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=var_t[::down_sample], cmap='Reds', edgecolors='none')
                     norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
                     sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
                     cbar1 = fig_time.colorbar(sm1,ax=ax[1, i])
@@ -907,7 +888,7 @@ def plotTimeGrid(T,
                     cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
                     ax[1, i].axis('off')
                 else:
-                    ax[1].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=var_t, cmap='Reds', edgecolors='none')
+                    ax[1].scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=var_t[::down_sample], cmap='Reds', edgecolors='none')
                     norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
                     sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
                     cbar1 = fig_time.colorbar(sm1,ax=ax[1])
@@ -918,14 +899,15 @@ def plotTimeGrid(T,
         fig_time, ax = plt.subplots(1, M, figsize=(8*M,4))
         for i, method in enumerate(methods):
             t = capture_time if method=="Capture Time" else T[method]
+            t = np.clip(t,None,np.quantile(t,q))
             t = t - t.min()
             t = t/t.max()
             if(M>1):
-                ax[i].scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+                ax[i].scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=t[::down_sample], cmap='plasma', edgecolors='none')
                 ax[i].set_title(f'{method}',fontsize=24)
                 ax[i].axis('off')
             else:
-                ax.scatter(X_emb[:,0], X_emb[:,1], s=2.0, c=t, cmap='plasma', edgecolors='none')
+                ax.scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=t[::down_sample], cmap='plasma', edgecolors='none')
                 ax.set_title(f'{method}',fontsize=24)
                 ax.axis('off')
     norm0 = matplotlib.colors.Normalize(vmin=0, vmax=1)
@@ -933,18 +915,17 @@ def plotTimeGrid(T,
     cbar0 = fig_time.colorbar(sm0,ax=ax, location="right") if M>1 else fig_time.colorbar(sm0,ax=ax)
     cbar0.ax.get_yaxis().labelpad = 20
     cbar0.ax.set_ylabel('Latent Time',rotation=270,fontsize=24)
-    if(savefig):
-        try:
-            fig_time.savefig(f'{path}/{figname}.png')
-            print(f'Saved to {path}/{figname}.png')
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
+    try:
+        fig_time.savefig(figname)
+        print(f'Saved to {figname}.png')
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
     plt.close(fig_time)
 
 
 
 
-def plotVelocity(X_embed, vx, vy, scale=1.0, path='figures', figname='genes'):
+def plot_velocity(X_embed, vx, vy, scale=1.0, figname='figures/vel.png'):
     umap1, umap2 = X_embed[:,0], X_embed[:,1]
     fig, ax = plt.subplots(figsize=(12,8))
     v = np.sqrt(vx**2+vy**2)
@@ -953,26 +934,25 @@ def plotVelocity(X_embed, vx, vy, scale=1.0, path='figures', figname='genes'):
     ax.plot(umap1, umap2, '.', alpha=0.5)
     ax.quiver(umap1, umap2, vx, vy, v, angles='xy', scale=scale)
     try:
-        fig.savefig(f"{path}/vel_{figname}.png")
+        fig.savefig(figname)
     except FileNotFoundError:
         print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
 
-def plotVelocityStream(X_embed, 
-                       t,
-                       vx, 
-                       vy, 
-                       cell_labels,
-                       n_grid=50,
-                       k=50,
-                       k_time=10,
-                       dist_thred=None,
-                       eps_t=None,
-                       scale=1.5,
-                       figsize=(8,6), 
-                       path='figures', 
-                       figname='genes'):
+def plot_velocity_stream(X_embed, 
+                         t,
+                         vx, 
+                         vy, 
+                         cell_labels,
+                         n_grid=50,
+                         k=50,
+                         k_time=10,
+                         dist_thred=None,
+                         eps_t=None,
+                         scale=1.5,
+                         figsize=(8,6), 
+                         figname='figures/velstream.png'):
     #Compute velocity on a grid
     knn_model = pynndescent.NNDescent(X_embed, n_neighbors=2*k)
     umap1, umap2 = X_embed[:,0], X_embed[:,1]
@@ -1030,7 +1010,7 @@ def plotVelocityStream(X_embed,
     ax.set_xlabel('Umap 1')
     ax.set_ylabel('Umap 2')
     try:
-        fig.savefig(f"{path}/velstream_{figname}.png")
+        fig.savefig(figname)
     except FileNotFoundError:
         print("Saving failed. File path doesn't exist!")
     #plt.close(fig)
@@ -1071,41 +1051,58 @@ def plot_cell_trajectory(X_embed,
     
     P = transition_prob(dist_grid, dist_thred)
     tgrid = np.sum(np.stack([t[neighbors_grid[i]] for i in range(len(xgrid))])*P, 1)
+    tgrid = tgrid[mask]
     
     #Compute velocity based on grid time
-    knn_grid = pynndescent.NNDescent(Xgrid, n_neighbors=k_grid, metric="l1")
+    knn_grid = pynndescent.NNDescent(Xgrid[mask], n_neighbors=k_grid, metric="l2") #filter out distant grid points
     neighbor_grid, dist_grid = knn_grid.neighbor_graph
+    #dist_grid = dist_grid[neighbor_grid.flatten()].reshape(neighbor_grid.shape[0],k_grid*k_grid)
+    #neighbor_grid = neighbor_grid[neighbor_grid.flatten()].reshape(neighbor_grid.shape[0],k_grid*k_grid)
+    
     
     if(eps_t is None):
-        eps_t = (t.max()-t.min())/len(t)
+        eps_t = (t.max()-t.min())/len(t)*10
     delta_t = tgrid[neighbor_grid] - tgrid.reshape(-1,1) - eps_t
     sigma_t = (t.max()-t.min())/n_grid
-    P = np.exp((np.clip(delta_t/sigma_t,0,100))**2)*(delta_t>=0)
+    P = (np.exp((np.clip(delta_t/sigma_t,-100,100))**2))*(delta_t>=0)
     psum = P.sum(1).reshape(-1,1)
     psum[psum==0] = 1.0
     P = P/psum
-    vx_grid = ((xgrid[neighbor_grid] - xgrid.reshape(-1,1))*P).sum(1).reshape(n_grid, n_grid)
-    vy_grid = ((ygrid[neighbor_grid] - ygrid.reshape(-1,1))*P).sum(1).reshape(n_grid, n_grid)
     
-    fig, ax = plt.subplots(figsize=(8,6))
+    delta_x = (xgrid[mask][neighbor_grid] - xgrid[mask].reshape(-1,1))
+    delta_y = (ygrid[mask][neighbor_grid] - ygrid[mask].reshape(-1,1))
+    norm = np.sqrt(delta_x**2+delta_y**2)
+    norm[norm==0] = 1.0
+    vx_grid_filter = ((delta_x/norm)*P).sum(1)
+    vy_grid_filter = ((delta_y/norm)*P).sum(1)
+    vx_grid = np.zeros((n_grid*n_grid))
+    vy_grid = np.zeros((n_grid*n_grid))
+    vx_grid[mask] = vx_grid_filter
+    vy_grid[mask] = vy_grid_filter
+    
+    fig, ax = plt.subplots(figsize=(15,12))
     #Plot cells by label
-    font_shift = (x.max()-x.min())/100
+    font_shift = (x.max()-x.min())/n_grid*0.5
     for i, type_ in enumerate(np.unique(cell_labels)):
         cell_mask = cell_labels==type_
-        ax.scatter(X_embed[:,0][cell_mask], X_embed[:,1][cell_mask], s=5.0, color=colors[i], alpha=0.5)
-        ax.text(X_embed[:,0][cell_mask].mean() - len(type_)*font_shift, X_embed[:,1][cell_mask].mean(), type_, fontsize=15, color='k')
+        ax.scatter(X_embed[:,0][cell_mask], X_embed[:,1][cell_mask], s=5.0, c=colors[i], alpha=0.5, label=type_)
+        #ax.text(X_embed[:,0][cell_mask].mean() - len(type_)*font_shift, X_embed[:,1][cell_mask].mean(), type_, fontsize=15, color='k')
+    
     ax.streamplot(xgrid.reshape(n_grid, n_grid),
                   ygrid.reshape(n_grid, n_grid),
-                  vx_grid*mask.reshape(n_grid, n_grid),
-                  vy_grid*mask.reshape(n_grid, n_grid),
+                  vx_grid.reshape(n_grid, n_grid),
+                  vy_grid.reshape(n_grid, n_grid),
                   density=2.0,
                   color='k',
                   integration_direction='both')
+    
+    #ax.quiver(xgrid[mask], ygrid[mask], (vx_grid_filter.flatten()), (vy_grid_filter.flatten()), angles='xy')
     ax.set_title('Velocity Stream Plot')
     ax.set_xlabel('Umap 1')
     ax.set_ylabel('Umap 2')
+    lgd = ax.legend(fontsize=12, ncol=4, markerscale=3.0, bbox_to_anchor=(0.0, 1.0, 1.0, 0.5), loc='center')
     try:
-        fig.savefig(f"{path}/trajectory_{figname}.png")
+        fig.savefig(f"{path}/trajectory_{figname}.png", bbox_extra_artists=(lgd,), bbox_inches='tight')
     except FileNotFoundError:
         print("Saving failed. File path doesn't exist!")
     return
