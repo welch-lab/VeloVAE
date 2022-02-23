@@ -3,7 +3,7 @@ import pandas as pd
 from pandas import DataFrame, Index
 from ..model.model_util import makeDir
 from .evaluation_util import *
-from velovae.plotting import plotPhaseGrid, plotSigGrid, plotClusterGrid, plotTimeGrid
+from velovae.plotting import plot_phase_grid, plot_sig_grid, plot_cluster_grid, plot_time_grid
 
 
 
@@ -21,8 +21,6 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
         logp_test = "N/A"
     elif method=='Vanilla VAE':
         Uhat, Shat, logp_train, logp_test = getPredictionVanilla(adata, key, scv_key)
-    elif method=='BrVAE':
-        Uhat, Shat, logp_train, logp_test = getPredictionBranching(adata, key, scv_key)
     elif method=='VeloVAE':
         Uhat, Shat, logp_train, logp_test = getPredictionVAEpp(adata, key, scv_key)
         
@@ -71,7 +69,7 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
         stats['corr'] = corr
     return stats
 
-def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500, frac=0.5, embed="umap", grid_size=(1,1), save_path="figures"):
+def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], Nplot=500, frac=0.5, embed="umap", grid_size=(1,1), save_path="figures"):
     """
     Main function for post analysis.
     adata: anndata object
@@ -104,9 +102,9 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
     That, Yhat = {},{}
     
     scv_idx = np.where(methods=='scVelo')[0]
-    scv_key = keys[scv_idx[0]] if(len(scv_idx)>0) else "fit"
+    scv_key = keys[scv_idx[0]] if(len(scv_idx)>0) else None
     for i, method in enumerate(methods):
-        stats_i = getMetric(adata, method, keys[i], scv_key)
+        stats_i = getMetric(adata, method, keys[i], scv_key, (scv_key is None) )
         stats[method] = stats_i
         if(method=='scVelo'):
             t_i, Uhat_i, Shat_i = getPredictionSCVDemo(adata, keys[i], genes, Nplot)
@@ -115,10 +113,6 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
         elif(method=='Vanilla VAE'):
             t_i, Uhat_i, Shat_i = getPredictionVanillaDemo(adata, keys[i], genes, Nplot)
             Yhat[method] = None
-            V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
-        elif(method=='BrVAE'):
-            t_i, y_i, Uhat_i, Shat_i = getPredictionBranchingDemo(adata, keys[i], genes, Nplot)
-            Yhat[method] = y_i
             V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
         elif(method=='VeloVAE'):
             Uhat_i, Shat_i, logp_train, logp_test = getPredictionVAEpp(adata, keys[i], None)
@@ -161,17 +155,16 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                 Y[method] = p_given
             
         
-        plotClusterGrid(X_embed, 
-                        Y,
-                        cell_types_raw, 
-                        False, 
-                        True,
-                        save_path)
+        plot_cluster_grid(X_embed, 
+                          Y,
+                          cell_types_raw, 
+                          False, 
+                          f"{save_path}/cluster_{test_id}.png")
     
     if("time" in plot_type or "all" in plot_type):
         T = {}
         std_t = {}
-        capture_time = adata.obs["capture_time"].to_numpy() if "capture_time" in adata.obs else None
+        capture_time = adata.obs["tprior"].to_numpy() if "tprior" in adata.obs else None
         for i, method in enumerate(methods):
             if(method=='scVelo'):
                 T[method] = adata.obs["latent_time"].to_numpy()
@@ -179,12 +172,12 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
             else:
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 std_t[method] = adata.obs[f"{keys[i]}_std_t"].to_numpy()
-        plotTimeGrid(T,
-                     X_embed,
-                     capture_time,
-                     None,
-                     savefig=True,  
-                     path=save_path)
+        plot_time_grid(T,
+                       X_embed,
+                       capture_time,
+                       None,
+                       down_sample = max(1,adata.n_obs//5000),
+                       figname=f"{save_path}/time_{test_id}.png")
     
     if(len(genes)==0):
         return
@@ -199,19 +192,18 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
             else:
                 Labels_phase[method] = adata.obs[f"{keys[i]}_label"]
                 Legends_phase[method] = adata.var_names
-        plotPhaseGrid(grid_size[0], 
-                      grid_size[1],
-                      genes,
-                      U[:,gene_indices], 
-                      S[:,gene_indices],
-                      Labels_phase,
-                      Legends_phase,
-                      Uhat, 
-                      Shat,
-                      Yhat,
-                      savefig=True,
-                      path=save_path,
-                      figname='test')
+        plot_phase_grid(grid_size[0], 
+                        grid_size[1],
+                        genes,
+                        U[:,gene_indices], 
+                        S[:,gene_indices],
+                        Labels_phase,
+                        Legends_phase,
+                        Uhat, 
+                        Shat,
+                        Yhat,
+                        path=save_path,
+                        figname=test_id)
     
     if("signal" in plot_type or "all" in plot_type):
         T = {}
@@ -235,22 +227,22 @@ def postAnalysis(adata, methods, keys, genes=[], plot_type=["signal"], Nplot=500
                 Labels_sig[method] = adata.obs[f"{keys[i]}_label"].to_numpy()
                 Legends_sig[method] = cell_types_raw
 
-        plotSigGrid(grid_size[0], 
-                    grid_size[1], 
-                    genes,
-                    T,
-                    U[:,gene_indices], 
-                    S[:,gene_indices], 
-                    Labels_sig,
-                    Legends_sig,
-                    That,
-                    Uhat, 
-                    Shat, 
-                    V,
-                    Yhat,
-                    frac=frac,
-                    savefig=True,  
-                    path=save_path, 
-                    figname="test")
+        plot_sig_grid(grid_size[0], 
+                      grid_size[1], 
+                      genes,
+                      T,
+                      U[:,gene_indices], 
+                      S[:,gene_indices], 
+                      Labels_sig,
+                      Legends_sig,
+                      That,
+                      Uhat, 
+                      Shat, 
+                      V,
+                      Yhat,
+                      frac=frac,
+                      down_sample=max(1,adata.n_obs//5000),
+                      path=save_path, 
+                      figname=test_id)
     
     return stats_df
