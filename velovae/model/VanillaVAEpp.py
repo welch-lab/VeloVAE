@@ -159,7 +159,7 @@ class decoder(nn.Module):
                 print("Initialization using the steady-state and dynamical models.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
                 if(init_key is not None):
-                    self.t_init = adata.obs[init_key].to_numpy()
+                    self.t_init = adata.obs[init_key].to_numpy()[train_idx]
                 else:
                     T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
                     T_eq = np.zeros(T.shape)
@@ -249,6 +249,7 @@ class VanillaVAEpp(VanillaVAE):
             "init_method":init_method,
             "init_key":init_key,
             "tprior":tprior,
+            "tail":0.05,
             "n_neighbors":30,
             "dt": (0.03,0.05),
             "n_bin": None,
@@ -343,7 +344,7 @@ class VanillaVAEpp(VanillaVAE):
         sigma_u, sigma_s : parameter of the Gaussian distribution
         """
         
-        kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1])
+        kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
         kldz = kl_gaussian(q_zx[0], q_zx[1], p_z[0], p_z[1])
         
         #u and sigma_u has the original scale
@@ -512,7 +513,8 @@ class VanillaVAEpp(VanillaVAE):
                 self.setMode('train')
             
             if(len(loss_test)>1):
-                n_drop = n_drop + 1 if (loss_test[-1]-loss_test[-2]<=adata.n_vars*1e-3) else 0
+                for i in range(len(loss_test_epoch)):
+                    n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*1e-3) else 0
                 if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
                     print(f"*********       Stage 1: Early Stop Triggered at epoch {epoch+1}.       *********")
                     break
@@ -581,7 +583,8 @@ class VanillaVAEpp(VanillaVAE):
                 self.decoder.train()
             
             if(len(loss_test)>n_test1+1):
-                n_drop = n_drop + 1 if (loss_test[-1]-loss_test[-2]<=adata.n_vars*1e-4) else 0
+                for i in range(len(loss_test_epoch)):
+                    n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*1e-4) else 0
                 if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
                     print(f"*********       Stage 2: Early Stop Triggered at epoch {epoch+n_stage1+1}.       *********")
                     break
