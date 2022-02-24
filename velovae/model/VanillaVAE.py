@@ -14,7 +14,7 @@ from .velocity import rnaVelocityVAE
 ############################################################
 #KL Divergence
 ############################################################
-def kl_uniform(mu_t, std_t, t_start, t_end, tail=0.05):
+def kl_uniform(mu_t, std_t, t_start, t_end, **kwargs):
     """
     <Deprecated>
     KL Divergence for the 1D near-uniform model
@@ -22,6 +22,7 @@ def kl_uniform(mu_t, std_t, t_start, t_end, tail=0.05):
     q = uniform(t0, t0+dt)
     p = uniform(t_start, t_end) with exponential decays on both sides
     """
+    tail = kwargs["tail"] if "tail" in kwargs else 0.05
     t0 = mu_t - np.sqrt(3)*std_t
     dt = np.sqrt(12)*std_t
     C = 1/((t_end-t_start)*(1+tail))
@@ -36,7 +37,7 @@ def kl_uniform(mu_t, std_t, t_start, t_end, tail=0.05):
     
     return torch.mean(term1 + term2 - torch.log(C*dt))
 
-def kl_gaussian(mu1, std1, mu2, std2):
+def kl_gaussian(mu1, std1, mu2, std2, **kwargs):
     """
     Compute the KL divergence between two Gaussian distributions with diagonal covariance
     """
@@ -235,6 +236,7 @@ class VanillaVAE():
             "init_method": init_method,
             "init_key": init_key,
             "tprior":tprior,
+            "tail":0.05,
 
             #Training Parameters
             "n_epochs":500, 
@@ -364,7 +366,7 @@ class VanillaVAE():
         sigma_u, sigma_s : parameter of the Gaussian distribution
         """
         
-        kldt = kl_gaussian(q_tx[0], q_tx[1], p_t[0], p_t[1])
+        kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
         
         #u and sigma_u has the original scale
         logp = -0.5*((u-uhat)/sigma_u).pow(2)-0.5*((s-shat)/sigma_s).pow(2)-torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)

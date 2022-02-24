@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import os
 from torch.utils.data import Dataset, DataLoader
 import time
-from velovae.plotting import plotPhase, plotSig, plotSig_, plotTLatent, plotTrainLoss, plotTestLoss
+from velovae.plotting import plot_sig, plot_sig_, plot_time, plot_train_loss, plot_test_loss
 
 from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, getGeneIndex, optimal_transport_duality_gap
 from .model_util import predSU, ode, odeNumpy, knnX0, knnX0_alt, knnx0_bin
@@ -284,7 +284,7 @@ class VanillaVAEpp(VanillaVAE):
         G = adata.n_vars
         self.Cz = Cz
         try:
-            self.encoder = encoder(2*G, Cz, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0])
+            self.encoder = encoder(2*G, Cz, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0]).float()
         except IndexError:
             print('Please provide two dimensions!')
         
@@ -298,7 +298,7 @@ class VanillaVAEpp(VanillaVAE):
                                device=self.device, 
                                init_method = init_method,
                                init_key = init_key,
-                               checkpoint=checkpoints[1])
+                               checkpoint=checkpoints[1]).float()
         self.Tmax=Tmax
         self.time_distribution = time_distribution
         self.getPrior(adata, time_distribution, Tmax, tprior)
@@ -438,6 +438,7 @@ class VanillaVAEpp(VanillaVAE):
         print("--------------------------- Train a VeloVAE ---------------------------")
         #Get data loader
         X = np.concatenate((adata.layers['Mu'], adata.layers['Ms']), 1)
+        X = X.astype(float)
         try:
             Xembed = adata.obsm[f"X_{embed}"]
         except KeyError:
@@ -479,7 +480,7 @@ class VanillaVAEpp(VanillaVAE):
         n_epochs = self.config["n_epochs"]
         loss_train, loss_test = [],[]
         self.counter = 0 #Count the number of iterations
-        self.n_drop = 0 #Count the number of consecutive iterations with little decrease in loss
+        n_drop = 0 #Count the number of consecutive iterations with little decrease in loss
         
         start = time.time()
         for epoch in range(n_epochs):
@@ -511,7 +512,7 @@ class VanillaVAEpp(VanillaVAE):
                 self.setMode('train')
             
             if(len(loss_test)>1):
-                n_drop = n_drop + 1 if (loss_test[-1]-loss_test[-2]<0) else 0
+                n_drop = n_drop + 1 if (loss_test[-1]-loss_test[-2]<=adata.n_vars*1e-3) else 0
                 if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
                     print(f"*********       Stage 1: Early Stop Triggered at epoch {epoch+1}.       *********")
                     break
@@ -537,19 +538,17 @@ class VanillaVAEpp(VanillaVAE):
         self.decoder.init_weights()
         #Plot the initial conditions
         if(plot):
-            plotTLatent(self.t0.squeeze(), Xembed, f"Initial Time", True, figure_path, f"t0")
+            plot_time(self.t0.squeeze(), Xembed, f"{figure_path}/t0.png")
             for i in range(len(gind)):
                 idx = gind[i]
                 t0_plot = self.t0[self.train_idx].squeeze()
                 u0_plot = self.u0[self.train_idx,idx]
                 s0_plot = self.s0[self.train_idx,idx]
-                plotSig_(t0_plot, 
+                plot_sig_(t0_plot, 
                          u0_plot, s0_plot, 
                          cell_labels=train_set.labels,
                          title=gene_plot[i], 
-                         savefig=True, 
-                         path=figure_path, 
-                         figname=f"{gene_plot[i]}-x0")
+                         figname=f"{figure_path}/{gene_plot[i]}-x0.png")
         
         param_post = list(self.decoder.net_rho2.parameters())+list(self.decoder.fc_out2.parameters())
         optimizer_post = torch.optim.Adam(param_post, lr=self.config["learning_rate_post"], weight_decay=self.config["lambda_rho"])
@@ -582,14 +581,14 @@ class VanillaVAEpp(VanillaVAE):
                 self.decoder.train()
             
             if(len(loss_test)>n_test1+1):
-                n_drop = n_drop + 1 if (loss_test[-1]-loss_test[-2]<0) else 0
+                n_drop = n_drop + 1 if (loss_test[-1]-loss_test[-2]<=adata.n_vars*1e-4) else 0
                 if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
                     print(f"*********       Stage 2: Early Stop Triggered at epoch {epoch+n_stage1+1}.       *********")
                     break
                 
         print(f"*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
-        plotTrainLoss(loss_train, range(1,len(loss_train)+1),True, figure_path,'VeloVAE')
-        plotTestLoss(loss_test, [i*self.config["test_iter"] for i in range(len(loss_test))],True, figure_path,'VeloVAE')
+        plot_train_loss(loss_train, range(1,len(loss_train)+1),f'{figure_path}/train_loss_velovae.png')
+        plot_test_loss(loss_test, [i*self.config["test_iter"] for i in range(1,len(loss_test)+1)],f'{figure_path}/test_loss_velovae.png')
         return
     
     def predAll(self, data, mode='test', output=["uhat", "shat", "t", "z"], gene_idx=None):
@@ -727,20 +726,18 @@ class VanillaVAEpp(VanillaVAE):
 
         if(plot):
             #Plot Time
-            plotTLatent(t, Xembed, f"Training Epoch {testid}", plot, path, f"{testid}-rho")
+            plot_time(t, Xembed, f"{path}/{testid}-velovae.png")
             
             #Plot u/s-t and phase portrait for each gene
             for i in range(len(gind)):
                 idx = gind[i]
                 
-                plotSig(t.squeeze(), 
+                plot_sig(t.squeeze(), 
                         dataset.data[:,idx], dataset.data[:,idx+G], 
                         Uhat[:,i], Shat[:,i], 
+                        dataset.labels,
                         gene_plot[i], 
-                        True, 
-                        path, 
-                        f"{gene_plot[i]}-{testid}",
-                        cell_labels=dataset.labels,
+                        f"{path}/sig-{gene_plot[i]}-{testid}.png",
                         sparsify=self.config['sparsify'])
         
         return elbo
