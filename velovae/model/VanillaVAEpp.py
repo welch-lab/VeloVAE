@@ -365,10 +365,10 @@ class VanillaVAEpp(VanillaVAE):
         optimizer, optimizer2(optional): from torch.optim
         K: alternatingly update optimizer and optimizer2
         """
-        iterX = iter(train_loader)
-        B = len(iterX)
+        #iterX = iter(train_loader)
+        #B = len(iterX)
         train_loss, test_loss = [], []
-        for i in range(B):
+        for i, batch in enumerate(train_loader):
             self.counter = self.counter + 1
             if( self.counter % self.config["test_iter"] == 0):
                 elbo_test = self.test(test_set, None, self.counter, True)
@@ -379,7 +379,7 @@ class VanillaVAEpp(VanillaVAE):
             optimizer.zero_grad()
             if(optimizer2 is not None):
                 optimizer2.zero_grad()
-            batch = iterX.next()
+            #batch = iterX.next()
             xbatch, weight, idx = batch[0].float().to(self.device), batch[2].float().to(self.device), batch[3]
             u = xbatch[:,:xbatch.shape[1]//2]
             s = xbatch[:,xbatch.shape[1]//2:]
@@ -584,7 +584,7 @@ class VanillaVAEpp(VanillaVAE):
             
             if(len(loss_test)>n_test1+1):
                 for i in range(len(loss_test_epoch)):
-                    n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*1e-4) else 0
+                    n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*1e-3) else 0
                 if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
                     print(f"*********       Stage 2: Early Stop Triggered at epoch {epoch+n_stage1+1}.       *********")
                     break
@@ -771,6 +771,8 @@ class VanillaVAEpp(VanillaVAE):
         adata.obsm[f"{key}_std_z"] = std_z
         adata.layers[f"{key}_uhat"] = Uhat
         adata.layers[f"{key}_shat"] = Shat
+        sigma_u, sigma_s = adata.var[f"{key}_sigma_u"].to_numpy(), adata.var[f"{key}_sigma_s"].to_numpy()
+        adata.var[f"{key}_likelihood"] = np.mean(-0.5*((adata.layers["Mu"]-Uhat)/sigma_u)**2-0.5*((adata.layers["Ms"]-Shat)/sigma_s)**2 - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi), 0)
         
         rho = np.zeros(U.shape)
         with torch.no_grad():
