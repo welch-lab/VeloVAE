@@ -7,9 +7,6 @@ def getMSE(U,S,Uhat,Shat):
 
 def getMAE(U,S,Uhat,Shat):
     return np.mean(np.abs(U-Uhat)+np.abs(S-Shat))
-
-def getLL(U,S,Uhat,Shat,sigma_u,sigma_s):
-    return np.mean(np.sum(-(U-Uhat)**2/(2*sigma_u**2)-(S-Shat)**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi),1))
     
 def timeCorr(t1, t2):
     return spearmanr(t1,t2)
@@ -71,6 +68,9 @@ def getPredictionVanilla(adata, key, scv_key=None):
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
     logp_train = -(U[train_idx]-Uhat[train_idx])**2/(2*sigma_u**2)-(S[train_idx]-Shat[train_idx])**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
     logp_test = -(U[test_idx]-Uhat[test_idx])**2/(2*sigma_u**2)-(S[test_idx]-Shat[test_idx])**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
+    #store gene likelihood
+    adata.var[f"{key}_likelihood_train"] = logp_train.mean(0)
+    adata.var[f"{key}_likelihood_test"] = logp_test.mean(0)
     if(scv_key is None):
         logp_train = np.nanmean(np.sum(logp_train,1))
         logp_test = np.nanmean(np.sum(logp_test,1))
@@ -98,126 +98,6 @@ def getPredictionVanillaDemo(adata, key, genes=None, N=100):
         Uhat_demo, Shat_demo = odeNumpy(t_demo.reshape(-1,1), alpha[gene_indices], beta[gene_indices], gamma[gene_indices], ton[gene_indices], toff[gene_indices], scaling[gene_indices])
     
     return t_demo, Uhat_demo, Shat_demo
-    
-
-
-
-def getPredictionBranching(adata, key, scv_key=None):
-    U, S = adata.layers["Mu"], adata.layers["Ms"]
-    alpha = adata.varm[f"{key}_alpha"].T
-    beta = adata.varm[f"{key}_beta"].T
-    gamma = adata.varm[f"{key}_gamma"].T
-    ts = adata.varm[f"{key}_ts"].T
-    t_trans = adata.uns[f"{key}_t_trans"]
-    u0 = adata.varm[f"{key}_u0"].T
-    s0 = adata.varm[f"{key}_s0"].T
-    sigma_u = adata.var[f"{key}_sigma_u"].to_numpy()
-    sigma_s = adata.var[f"{key}_sigma_s"].to_numpy()
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
-    w = adata.uns[f"{key}_w"]
-    parents = np.argmax(w,1)
-    
-    t = adata.obs[f"{key}_time"].to_numpy()
-    y = adata.obs[f"{key}_label"].to_numpy()
-    """
-    y_onehot = np.zeros((adata.n_obs,alpha.shape[0]))
-    w_onehot = np.zeros((adata.n_obs,alpha.shape[0]))
-    for i in range(alpha.shape[0]):
-        y_onehot[y==i, i] = 1
-        w_onehot[y==i, np.argmax(w[i])] = 1
-    """
-    
-    if( (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers)):
-        Uhat, Shat = odeBrNumpy(t.reshape(-1,1),
-                                y,
-                                w,
-                                alpha=alpha,
-                                beta=beta,
-                                gamma=gamma,
-                                t_trans=t_trans,
-                                ts=ts,
-                                u0=u0,
-                                s0=s0,
-                                scaling=scaling)
-    else:
-        Uhat, Shat = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
-        
-    train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
-    logp_train = -(U[train_idx]-Uhat[train_idx])**2/(2*sigma_u**2)-(S[train_idx]-Shat[train_idx])**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
-    logp_test = -(U[test_idx]-Uhat[test_idx])**2/(2*sigma_u**2)-(S[test_idx]-Shat[test_idx])**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
-    
-    if(scv_key is None):
-        logp_train = np.nanmean(np.sum(logp_train,1))
-        logp_test = np.nanmean(np.sum(logp_test,1))
-    else:
-        scv_mask = ~np.isnan(adata.var[f"{scv_key}_alpha"].to_numpy())
-        logp_train = np.nanmean(np.sum(logp_train[:,scv_mask],1))
-        logp_test = np.nanmean(np.sum(logp_test[:,scv_mask],1))
-    return Uhat, Shat, logp_train, logp_test
-
-def getPredictionBranchingDemo(adata, key, genes=None, N=100):
-    alpha = adata.varm[f"{key}_alpha"].T
-    beta = adata.varm[f"{key}_beta"].T
-    gamma = adata.varm[f"{key}_gamma"].T
-    ts = adata.varm[f"{key}_ts"].T
-    t_trans = adata.uns[f"{key}_t_trans"]
-    u0 = adata.varm[f"{key}_u0"].T
-    s0 = adata.varm[f"{key}_s0"].T
-    sigma_u = adata.var[f"{key}_sigma_u"].to_numpy()
-    sigma_s = adata.var[f"{key}_sigma_s"].to_numpy()
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
-    w = adata.uns[f"{key}_w"]
-    parents = np.argmax(w, 1)
-    
-    t = adata.obs[f"{key}_time"].to_numpy()
-    y = adata.obs[f"{key}_label"].to_numpy()
-    
-    Ntype = alpha.shape[0]
-    t_demo = np.zeros((Ntype*N))
-    y_demo = np.zeros((Ntype*N))
-    #w_onehot = np.zeros((Ntype*N, Ntype))
-    #y_onehot = np.zeros((Ntype*N, Ntype))
-    
-    for i in range(Ntype):
-        if(parents[i]==i):
-            tmin = 0
-        else:
-            tmin = t_trans[i]
-        if(np.any(parents==i)):
-            tmax = max(np.max(t_trans[np.where(parents==i)[0]]), t[y==i].max())
-        else:
-            tmax = t[y==i].max()
-        t_demo[i*N:(i+1)*N] = np.linspace(tmin, tmax, N)
-        y_demo[i*N:(i+1)*N] = i
-        #y_onehot[i*N:(i+1)*N, i] = 1
-        #w_onehot[i*N:(i+1)*N, parents[i]] = 1
-    if(genes is None):
-        Uhat, Shat = odeBrNumpy(t_demo.reshape(-1,1),
-                                y_demo,
-                                w,
-                                alpha=alpha,
-                                beta=beta,
-                                gamma=gamma,
-                                t_trans=t_trans,
-                                ts=ts,
-                                u0=u0,
-                                s0=s0,
-                                scaling=scaling)
-    else:
-        gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
-        Uhat, Shat = odeBrNumpy(t_demo.reshape(-1,1),
-                                y_demo,
-                                w,
-                                alpha=alpha[:,gene_indices],
-                                beta=beta[:,gene_indices],
-                                gamma=gamma[:,gene_indices],
-                                t_trans=t_trans,
-                                ts=ts[:,gene_indices],
-                                u0=u0[:,gene_indices],
-                                s0=s0[:,gene_indices],
-                                scaling=scaling[gene_indices])
-        
-    return t_demo, y_demo, Uhat, Shat
 
 def getPredictionVAEpp(adata, key, scv_key=None):
     U, S = adata.layers["Mu"], adata.layers["Ms"]
@@ -239,6 +119,7 @@ def getPredictionVAEpp(adata, key, scv_key=None):
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
     logp_train = -(U[train_idx]-Uhat[train_idx])**2/(2*sigma_u**2)-(S[train_idx]-Shat[train_idx])**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
     logp_test = -(U[test_idx]-Uhat[test_idx])**2/(2*sigma_u**2)-(S[test_idx]-Shat[test_idx])**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
+    
     
     if(scv_key is None):
         logp_train = np.nanmean(np.sum(logp_train,1))

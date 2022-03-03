@@ -23,7 +23,7 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
         Uhat, Shat, logp_train, logp_test = getPredictionVanilla(adata, key, scv_key)
     elif method=='VeloVAE':
         Uhat, Shat, logp_train, logp_test = getPredictionVAEpp(adata, key, scv_key)
-        
+
     U, S = adata.layers['Mu'], adata.layers['Ms']
     if(method=='scVelo'):
         train_idx = np.array(range(adata.n_obs)).astype(int)
