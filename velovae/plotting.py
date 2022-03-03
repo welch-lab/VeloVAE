@@ -696,7 +696,9 @@ def plot_sig_grid(Nr,
                 tmin, tmax = ax_sig[3*i+2].get_xlim()
                 smin, smax = ax_sig[3*i+2].get_ylim()
                 ax_sig[3*i+2].text(tmin - 0.02*(tmax-tmin), (smax+smin)*0.5,"V", fontsize=36)
-            lgd = fig_sig.legend(lines, Legends[methods[0]], fontsize=18, markerscale=5.0, ncol=8, bbox_to_anchor=(0.5, 1.0), loc='center')
+                
+            n_label = len(Legends[methods[0]])
+            lgd = fig_sig.legend(lines, Legends[methods[0]], fontsize=8*Nc*M, markerscale=Nc*M, ncol=max(2*M*Nc, 4), bbox_to_anchor=(0.0, 1.0, 1.0, 0.01*(n_label//max(M*Nc, 4)+1)), loc='center')
         else:
             legends = []
             for i in range(Nr):
@@ -760,7 +762,8 @@ def plot_sig_grid(Nr,
                         ax_sig[3*i,  M*j+k].set_xlabel("Time", fontsize=30)
                         ax_sig[3*i+1,  M*j+k].set_xlabel("Time", fontsize=30)
                         ax_sig[3*i+2,  M*j+k].set_xlabel("Time", fontsize=30)
-            lgd = fig_sig.legend(lines, legends, fontsize=6*Nc*M, markerscale=Nc*M, ncol=min(2*M*Nc, 4), bbox_to_anchor=(0.0, 1.0, 1.0, 0.01), loc='center')
+            n_label = len(Legends[methods[0]])
+            lgd = fig_sig.legend(lines, legends, fontsize=8*Nc*M, markerscale=Nc*M, ncol=max(M*Nc, 4), bbox_to_anchor=(0.0, 1.0, 1.0, 0.01*(n_label//max(M*Nc, 4)+1)), loc='center')
         fig_sig.subplots_adjust(hspace = 0.3, wspace=0.12)
         try:
             fig_sig.savefig(f'{path}/sig_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), dpi=300, bbox_inches='tight') 
@@ -1105,6 +1108,152 @@ def plot_cell_trajectory(X_embed,
         fig.savefig(f"{path}/trajectory_{figname}.png", bbox_extra_artists=(lgd,), bbox_inches='tight')
     except FileNotFoundError:
         print("Saving failed. File path doesn't exist!")
+    return
+
+def plot_trajectory_3d(X_embed,
+                       t,
+                       cell_labels,
+                       n_grid=50,
+                       n_time=20,
+                       k=30,
+                       k_grid=8,
+                       scale=1.5,
+                       angle=(15,45),
+                       eps_t=None,
+                       path='figures', 
+                       figname='cells'):
+    
+    t_clip = np.clip(t,np.quantile(t,0.01),np.quantile(t,0.99))
+    range_z = np.max(X_embed.max(0) - X_embed.min(0))
+    w = range_z/(t_clip.max()-t_clip.min())
+    x_3d = np.concatenate((X_embed, (t_clip - t_clip.min()).reshape(-1,1)*w),1)
+    
+    #Used for filtering target grid points
+    knn_model_2d = pynndescent.NNDescent(X_embed, n_neighbors=k)
+    
+    #Compute the time on a grid
+    knn_model = pynndescent.NNDescent(x_3d, n_neighbors=k+20)
+    ind, dist = knn_model.neighbor_graph
+    dist_thred = dist.mean() * scale
+    
+    x = np.linspace(x_3d[:,0].min(), x_3d[:,0].max(), n_grid)
+    y = np.linspace(x_3d[:,1].min(), x_3d[:,1].max(), n_grid)
+    z = np.linspace(x_3d[:,2].min(), x_3d[:,2].max(), n_time)
+    #z = np.quantile(x_3d[:,2],[(i+0.5)/n_time for i in range(n_time)])
+    
+    xgrid, ygrid, zgrid = np.meshgrid(x,y,z)
+    xgrid, ygrid, zgrid = xgrid.flatten(), ygrid.flatten(), zgrid.flatten()
+    Xgrid = np.stack([xgrid,ygrid,zgrid]).T
+    
+    neighbors_grid, dist_grid = knn_model.query(Xgrid, k=k)
+    mask = np.quantile( dist_grid, 0.5, 1)<=dist_thred
+    
+    #transition probability on UMAP
+    def transition_prob(dist, sigma):
+        P = np.exp(-(np.clip(dist/sigma,-5,None))**2)
+        psum = P.sum(1).reshape(-1,1)
+        psum[psum==0] = 1.0
+        P = P/psum
+        return P
+    
+    P = transition_prob(dist_grid, dist_thred)
+    tgrid = np.sum(np.stack([t[neighbors_grid[i]] for i in range(len(xgrid))])*P, 1)
+    tgrid = tgrid[mask]
+    
+    #Compute velocity based on grid time
+    knn_grid = pynndescent.NNDescent(Xgrid[mask], n_neighbors=k_grid, metric="l2") #filter out distant grid points
+    neighbor_grid, dist_grid = knn_grid.neighbor_graph
+    
+    if(eps_t is None):
+        eps_t = (t_clip.max()-t_clip.min())/len(t)*10
+    delta_t = tgrid[neighbor_grid] - tgrid.reshape(-1,1) - eps_t
+    
+    sigma_t = (t_clip.max()-t_clip.min())/n_grid
+    ind_grid_2d, dist_grid_2d = knn_model_2d.query(Xgrid[mask], k=k_grid)
+    dist_thred_2d = (dist_grid_2d.mean(1)+dist_grid_2d.std(1)).reshape(-1,1)
+    #Filter out backflow and distant points in 2D space
+    P = (np.exp((np.clip(delta_t/sigma_t,-5,5))**2))*((delta_t>=0) &  (dist_grid_2d<=dist_thred_2d))
+    psum = P.sum(1).reshape(-1,1)
+    psum[psum==0] = 1.0
+    P = P/psum
+    
+    delta_x = (xgrid[mask][neighbor_grid] - xgrid[mask].reshape(-1,1))
+    delta_y = (ygrid[mask][neighbor_grid] - ygrid[mask].reshape(-1,1))
+    delta_z = (zgrid[mask][neighbor_grid] - zgrid[mask].reshape(-1,1))
+    norm = np.sqrt(delta_x**2+delta_y**2+delta_z**2)
+    norm[norm==0] = 1.0
+    vx_grid_filter = ((delta_x/norm)*P).sum(1)
+    vy_grid_filter = ((delta_y/norm)*P).sum(1)
+    vz_grid_filter = ((delta_z/norm)*P).sum(1)
+    #KNN Smoothing
+    vx_grid_filter = vx_grid_filter[neighbor_grid].mean(1)
+    vy_grid_filter = vy_grid_filter[neighbor_grid].mean(1)
+    vz_grid_filter = vz_grid_filter[neighbor_grid].mean(1)
+    
+    vx_grid = np.zeros((n_grid*n_grid*n_time))
+    vy_grid = np.zeros((n_grid*n_grid*n_time))
+    vz_grid = np.zeros((n_grid*n_grid*n_time))
+    vx_grid[mask] = vx_grid_filter
+    vy_grid[mask] = vy_grid_filter
+    vz_grid[mask] = vz_grid_filter
+    
+    mask_z = (vz_grid>0).reshape(n_grid, n_grid, n_time)
+    nz = mask_z.sum(2)
+    vx_2d = vx_grid.reshape(n_grid, n_grid, n_time).sum(2) / nz
+    vy_2d = vy_grid.reshape(n_grid, n_grid, n_time).sum(2) / nz
+    
+    fig = plt.figure(figsize=(30,15))
+    ax = fig.add_subplot(projection='3d')
+    ax.view_init(angle[0], angle[1])
+    #Plot cells by label
+    for i, type_ in enumerate(np.unique(cell_labels)):
+        cell_mask = cell_labels==type_
+        d = max(1, np.sum(cell_mask)//3000)
+        ax.scatter(x_3d[:,0][cell_mask][::d], x_3d[:,1][cell_mask][::d], x_3d[:,2][cell_mask][::d], s=5.0, c=colors[i], label=type_, alpha=0.5, edgecolor='none')
+    
+    ax.quiver(xgrid.reshape(n_grid, n_grid, n_time),
+              ygrid.reshape(n_grid, n_grid, n_time),
+              zgrid.reshape(n_grid, n_grid, n_time),
+              vx_grid.reshape(n_grid, n_grid, n_time),
+              vy_grid.reshape(n_grid, n_grid, n_time),
+              vz_grid.reshape(n_grid, n_grid, n_time),
+              color='k',
+              length=(15/n_grid + 15/n_time), 
+              normalize=True)
+    
+    #ax.quiver(xgrid[mask], ygrid[mask], (vx_grid_filter.flatten()), (vy_grid_filter.flatten()), angles='xy')
+    ax.set_xlabel('UMAP 1', fontsize=16)
+    ax.set_ylabel('UMAP 2', fontsize=16)
+    ax.set_zlabel('Time', fontsize=16)
+    
+    lgd = ax.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
+    
+    
+    fig2, ax2 = plt.subplots(figsize=(10,10))
+    #Plot cells by label
+    for i, type_ in enumerate(np.unique(cell_labels)):
+        cell_mask = cell_labels==type_
+        d = max(1, np.sum(cell_mask)//3000)
+        ax2.scatter(x_3d[:,0][cell_mask][::d], x_3d[:,1][cell_mask][::d], s=5.0, c=colors[i], label=type_, alpha=0.5, edgecolor='none')
+    
+    ax2.quiver(xgrid.reshape(n_grid, n_grid, n_time)[:,:,0],
+               ygrid.reshape(n_grid, n_grid, n_time)[:,:,0],
+               vx_2d,
+               vy_2d,
+               color='k',
+               angles ='xy')
+    
+    #ax.quiver(xgrid[mask], ygrid[mask], (vx_grid_filter.flatten()), (vy_grid_filter.flatten()), angles='xy')
+    ax2.set_xlabel('UMAP 1', fontsize=16)
+    ax2.set_ylabel('UMAP 2', fontsize=16)
+    lgd2 = ax2.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, 0.1), loc='center')
+    
+    try:
+        fig.savefig(f"{path}/trajectory_{figname}_3D.png", bbox_extra_artists=(lgd,), bbox_inches='tight')
+        fig2.savefig(f"{path}/trajectory_{figname}_2D.png", bbox_extra_artists=(lgd2,), bbox_inches='tight')
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
+    
     return
 
 def plotUmapTransition(graph, X_embed, cell_labels, label_dic_rev, path='figures', figname='umaptrans'):
