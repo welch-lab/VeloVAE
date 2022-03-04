@@ -415,6 +415,8 @@ class VanillaVAEpp(VanillaVAE):
         self.setMode('eval')
         out, elbo = self.predAll(np.concatenate((U,S),1), "both", ["t","z"])
         t, z = out[0], out[2]
+        #Clip the time to avoid outliers
+        t = np.clip(t, 0, np.quantile(t, 0.99))
         dt = (self.config["dt"][0]*(t.max()-t.min()), self.config["dt"][1]*(t.max()-t.min()))
         if(n_bin is None):
             print(f"Cell-wise KNN Estimation.")

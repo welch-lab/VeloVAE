@@ -246,6 +246,8 @@ def initParams(data, percent,fit_offset=False,fit_scaling=True):
     
     sigma_u = np.clip( np.std(dist_u, 0), 0.1, None)
     sigma_s = np.clip( np.std(dist_s, 0), 0.1, None)
+    sigma_u[np.isnan(sigma_u)] = 0.1
+    sigma_s[np.isnan(sigma_s)] = 0.1
     
     #Make sure all genes get the same total relevance score
     Rscore = ((u>0) & (s>0))*np.ones(u.shape) + ((u==0) & (s==0))*np.ones(u.shape)*0.5 + ((u==0) & (s>0))*np.ones(u.shape)*0.02 + ((u>0) & (s>0))*np.ones(u.shape)*0.1
@@ -1073,7 +1075,7 @@ def knnx0_bin(U,
     s0 = np.zeros((Nq, S.shape[1]))
     t0 = np.ones((Nq))*(t.min() - dt[0])
     
-    delta_t = (np.quantile(t,0.95)-tmin+1e-6)/(n_graph+1)
+    delta_t = (np.quantile(t,0.99)-tmin+1e-6)/(n_graph+1)
     
     order_t = np.argsort(t)
     order_t_query = np.argsort(t_query)
