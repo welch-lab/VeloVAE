@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.stats import spearmanr
-from ..model.model_util import initParams, predSUNumpy, odeNumpy, odeBrNumpy, scvPred, scvPredSingle
+from sklearn.metrics.pairwise import pairwise_distances
+from ..model.model_util import initParams, predSUNumpy, odeNumpy, odeBrNumpy, scvPred, scvPredSingle, optimal_transport_duality_gap
 
 def getMSE(U,S,Uhat,Shat):
     return np.mean((U-Uhat)**2+(S-Shat)**2)
@@ -129,4 +130,45 @@ def getPredictionVAEpp(adata, key, scv_key=None):
         logp_train = np.nanmean(np.sum(logp_train[:,scv_mask],1))
         logp_test = np.nanmean(np.sum(logp_test[:,scv_mask],1))
     return Uhat, Shat, logp_train, logp_test
+
+def transition_prob_util(x_embed, t, cell_labels, nbin=20, epsilon = 0.05, batch_size = 5, lambda1 = 1, lambda2 = 50, max_iter = 2000, q = 0.01):
+    cell_types = np.unique(cell_labels)
+    Ntype = len(cell_types)
+    dt = (np.quantile(t,0.999)-t.min())/(nbin) #time resolution
+    
+    P = np.zeros((Ntype, Ntype))
+    t_trans = []
+    for i, x in enumerate(cell_types): #child type
+        mask = cell_labels==x
+        t0 = np.quantile(t[mask], q) #estimated transition time
+        t_trans.append(t0)
+        
+        mask1 = (t>=t0-dt) & (t<t0) 
+        mask2 = (t>=t0) & (t<t0+dt) & mask
+        
+        if(np.any(mask1) and np.any(mask2)):
+            x1, x2 = x_embed[mask1], x_embed[mask2]
+            C = pairwise_distances(x1, x2, metric='sqeuclidean', n_jobs=-1)
+            C = C/np.median(C)
+            g = np.power(np.sum(mask2)/np.sum(mask1), 1/dt)
+            G = np.ones((C.shape[0]))*g
+            print(g)
+            
+            Pi = optimal_transport_duality_gap(C,G,lambda1, lambda2, epsilon, 5, 0.01, 10000, 1, max_iter)
+            Pi[np.isnan(Pi)] = 0
+            Pi[np.isinf(Pi)] = 0
+            
+            #Sum the weights of each cell type
+            cell_labels_1 = cell_labels[mask1]
+            cell_labels_2 = cell_labels[mask2]
+            
+            for j, y in enumerate(cell_types): #parent
+                if(np.any(cell_labels_1==y) and np.any(cell_labels_2==x)):
+                    P[i,j] = np.sum(np.array(Pi[cell_labels_1==y]))
+                    
+        sum_p = P[i].sum()
+        sum_p = sum_p + (sum_p==0)
+        P[i] = P[i]/sum_p
+    
+    return P, cell_types, t_trans
     

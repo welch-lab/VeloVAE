@@ -69,6 +69,23 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
         stats['corr'] = corr
     return stats
 
+def transition_prob(adata, embed_key, tkey, label_key, nbin=20, epsilon = 0.05, batch_size = 5, lambda1 = 1, lambda2 = 50, max_iter = 2000, q = 0.01):
+    x_embed = adata.obsm[embed_key]
+    t = adata.obs[tkey].to_numpy()
+    cell_labels = np.array([str(x) for x in adata.obs[label_key].to_numpy()])
+    
+    p_trans, cell_types, t_trans = transition_prob_util(x_embed,
+                                                        t,
+                                                        cell_labels,
+                                                        nbin, 
+                                                        epsilon, 
+                                                        batch_size, 
+                                                        lambda1, 
+                                                        lambda2, 
+                                                        max_iter, 
+                                                        q)
+    return p_trans, cell_types, t_trans
+
 def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], Nplot=500, frac=0.5, embed="umap", grid_size=(1,1), save_path="figures"):
     """
     Main function for post analysis.
