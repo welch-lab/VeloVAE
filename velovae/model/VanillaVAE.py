@@ -237,6 +237,7 @@ class VanillaVAE():
             "init_key": init_key,
             "tprior":tprior,
             "tail":0.05,
+            "time_overlap":0.5,
 
             #Training Parameters
             "n_epochs":500, 
@@ -303,10 +304,15 @@ class VanillaVAE():
                 t = adata.obs[tprior].to_numpy()
                 t = t/t.max()*Tmax
                 t_cap = np.sort(np.unique(t))
+                t_start = np.zeros((len(t)))
                 t_end = np.zeros((len(t)))
                 for i in range(len(t_cap)-1):
-                    t_end[t==t_cap[i]] = t_cap[i+1]
-                t_end[t==t_cap[-1]] = t_cap[-1] + (t.max()-t.min())/len(t_cap)
+                    t_end[t==t_cap[i]] = t_cap[i] + (t_cap[i+1] - t_cap[i])*self.config["time_overlap"]
+                t_end[t==t_cap[-1]] = t_cap[-1] + (t_cap[-1] - t_cap[-2])*self.config["time_overlap"]
+                
+                for i in range(1, len(t_cap)):
+                    t_start[t==t_cap[i]] = t_cap[i] - (t_cap[i] - t_cap[i-1])*self.config["time_overlap"]
+                t_start[t==t_cap[0]] = t_cap[0] - (t_cap[1] - t_cap[0])*self.config["time_overlap"]
                 
                 self.p_t = torch.stack( [torch.tensor(t).unsqueeze(-1),torch.tensor(t_end).unsqueeze(-1)] ).double().to(self.device)
     
