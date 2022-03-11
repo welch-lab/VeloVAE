@@ -8,7 +8,7 @@ from velovae.plotting import plot_phase, plot_sig, plot_time, plot_train_loss, p
 
 from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, ode, getGeneIndex
 from .TrainingData import SCData
-from .velocity import rnaVelocityVAE
+from .velocity import rnaVelocityVanillaVAE
 
 
 ############################################################
@@ -286,13 +286,22 @@ class VanillaVAE():
             self.kl_time = kl_gaussian
             self.sample = self.reparameterize
             if(tprior is None):
-                self.p_t = (torch.ones(2,adata.n_obs,1)*Tmax*0.5).double().to(self.device)
+                self.p_t = torch.stack([torch.ones(adata.n_obs,1)*Tmax*0.5,torch.ones(adata.n_obs,1)*Tmax*self.config["time_overlap"]]).double().to(self.device)
             else:
                 print('Using informative time prior.')
                 t = adata.obs[tprior].to_numpy()
-                n_capture = len(np.unique(t))
                 t = t/t.max()*Tmax
-                self.p_t = torch.stack( [torch.tensor(t).view(-1,1),torch.ones(adata.n_obs,1)*Tmax/n_capture] ).double().to(self.device)
+                t_cap = np.sort(np.unique(t))
+                
+                std_t = np.zeros((len(t)))
+                std_t[t==t_cap[0]] = (t_cap[1] - t_cap[0])*(0.5+0.5*self.config["time_overlap"])
+                for i in range(1, len(t_cap)-1):
+                    std_t[t==t_cap[i]] = 0.5*(t_cap[i] - t_cap[i-1])*(0.5+0.5*self.config["time_overlap"]) + 0.5*(t_cap[i+1] - t_cap[i])*(0.5+0.5*self.config["time_overlap"])
+                std_t[t==t_cap[-1]] = (t_cap[-1] - t_cap[-2])*(0.5+0.5*self.config["time_overlap"])
+                
+                self.p_t = torch.stack( [torch.tensor(t).view(-1,1),torch.tensor(std_t).view(-1,1)] ).double().to(self.device)
+                #n_capture = len(np.unique(t))
+                #self.p_t = torch.stack( [torch.tensor(t).view(-1,1),torch.ones(adata.n_obs,1)*Tmax/n_capture] ).double().to(self.device)
         else:
             print("Tailed Uniform Prior.")
             self.kl_time = kl_uniform
@@ -307,12 +316,12 @@ class VanillaVAE():
                 t_start = np.zeros((len(t)))
                 t_end = np.zeros((len(t)))
                 for i in range(len(t_cap)-1):
-                    t_end[t==t_cap[i]] = t_cap[i] + (t_cap[i+1] - t_cap[i])*self.config["time_overlap"]
-                t_end[t==t_cap[-1]] = t_cap[-1] + (t_cap[-1] - t_cap[-2])*self.config["time_overlap"]
+                    t_end[t==t_cap[i]] = t_cap[i] + (t_cap[i+1] - t_cap[i])*(0.5+0.5*self.config["time_overlap"])
+                t_end[t==t_cap[-1]] = t_cap[-1] + (t_cap[-1] - t_cap[-2])*(0.5+0.5*self.config["time_overlap"])
                 
                 for i in range(1, len(t_cap)):
-                    t_start[t==t_cap[i]] = t_cap[i] - (t_cap[i] - t_cap[i-1])*self.config["time_overlap"]
-                t_start[t==t_cap[0]] = t_cap[0] - (t_cap[1] - t_cap[0])*self.config["time_overlap"]
+                    t_start[t==t_cap[i]] = max(0, t_cap[i] - (t_cap[i] - t_cap[i-1])*(0.5+0.5*self.config["time_overlap"]))
+                t_start[t==t_cap[0]] = max(0, t_cap[0] - (t_cap[1] - t_cap[0])*(0.5+0.5*self.config["time_overlap"]))
                 
                 self.p_t = torch.stack( [torch.tensor(t).unsqueeze(-1),torch.tensor(t_end).unsqueeze(-1)] ).double().to(self.device)
     
@@ -694,7 +703,7 @@ class VanillaVAE():
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
         
-        rnaVelocityVAE(adata, key)
+        rnaVelocityVanillaVAE(adata, key)
         
         if(file_name is not None):
             adata.write_h5ad(f"{file_path}/{file_name}")

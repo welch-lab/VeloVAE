@@ -12,7 +12,7 @@ from .model_util import histEqual, initParams, getTsGlobal, reinitParams, conver
 from .model_util import predSU, ode, odeNumpy, knnX0, knnX0_alt, knnx0_bin
 from .TrainingData import SCData
 from .VanillaVAE import VanillaVAE, kl_gaussian, kl_uniform
-from .velocity import rnaVelocityVAEpp
+from .velocity import rnaVelocityVAE
 
 ##############################################################
 # VAE+
@@ -218,7 +218,7 @@ class decoder(nn.Module):
         Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
 
-class VanillaVAEpp(VanillaVAE):
+class VAE(VanillaVAE):
     def __init__(self, 
                  adata, 
                  Tmax, 
@@ -250,6 +250,7 @@ class VanillaVAEpp(VanillaVAE):
             "init_key":init_key,
             "tprior":tprior,
             "tail":0.05,
+            "time_overlap":0.5,
             "n_neighbors":30,
             "dt": (0.03,0.05),
             "n_bin": None,
@@ -516,7 +517,7 @@ class VanillaVAEpp(VanillaVAE):
             
             if(len(loss_test)>1):
                 for i in range(len(loss_test_epoch)):
-                    n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*1e-3) else 0
+                    n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*5e-3) else 0
                 if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
                     print(f"*********       Stage 1: Early Stop Triggered at epoch {epoch+1}.       *********")
                     break
@@ -796,7 +797,7 @@ class VanillaVAEpp(VanillaVAE):
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
         
-        rnaVelocityVAEpp(adata, key, use_raw=False, use_scv_genes=False)
+        rnaVelocityVAE(adata, key, use_raw=False, use_scv_genes=False)
         
         if(file_name is not None):
             adata.write_h5ad(f"{file_path}/{file_name}")

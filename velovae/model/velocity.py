@@ -8,7 +8,7 @@ import pynndescent
 from sklearn.preprocessing import normalize
 from .model_util import odeNumpy, odeBrNumpy, initAllPairsNumpy, predSUNumpy
 
-def rnaVelocityVAE(adata, key, use_raw=False, use_scv_genes=False, k=10):
+def rnaVelocityVanillaVAE(adata, key, use_raw=False, use_scv_genes=False, k=10):
     """
     Compute the velocity based on:
     ds/dt = beta * u - gamma * s
@@ -92,7 +92,7 @@ def rnaVelocityBrVAE(adata, key, use_raw=False, use_scv_genes=False):
         V[:, gene_mask] = np.nan
     return V, U, S
     
-def rnaVelocityVAEpp(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False):
+def rnaVelocityVAE(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False):
     """
     Compute the velocity based on:
     ds/dt = beta * u - gamma * s
