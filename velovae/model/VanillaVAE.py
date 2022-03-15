@@ -430,9 +430,12 @@ class VanillaVAE():
             loss_list.append(loss.detach().cpu().item())
             with torch.autograd.detect_anomaly():
                 loss.backward()
-            optimizer.step()
-            if( optimizer2 is not None and ((i+1) % K == 0 or i==B-1)):
+            
+            if( optimizer2 is not None and ((i+1) % (K+1) == 0 or i==B-1)):
                 optimizer2.step()
+            else:
+                optimizer.step()
+            
             train_loss.append(loss.detach().cpu().item())
             self.counter = self.counter + 1
         return train_loss, test_loss
