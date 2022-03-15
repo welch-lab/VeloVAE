@@ -126,7 +126,6 @@ class decoder(nn.Module):
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_s"].to_numpy()), device=device).float())
             elif(init_method == "random"):
                 print("Random Initialization.")
-                #alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
                 
                 self.alpha = nn.Parameter(torch.normal(0.0, 1.0, size=(U.shape[1],), device=device).float())
                 self.beta =  nn.Parameter(torch.normal(0.0, 1.0, size=(U.shape[1],), device=device).float())
@@ -182,8 +181,6 @@ class decoder(nn.Module):
         self.scaling.requires_grad = False
         self.sigma_u.requires_grad = False
         self.sigma_s.requires_grad = False
-        
-        
     
     def init_weights(self):
         for m in self.net_rho.modules():
@@ -207,12 +204,12 @@ class decoder(nn.Module):
         
     def forward(self, t, z, u0=None, s0=None, t0=None, neg_slope=0.0):
         if(u0 is None or s0 is None or t0 is None):
-            rho = F.sigmoid(self.fc_out1(self.net_rho(z)))
+            rho = torch.sigmoid(self.fc_out1(self.net_rho(z)))
             alpha = self.alpha.exp()*rho
             #Uhat, Shat = ode(t, alpha, torch.exp(self.beta), torch.exp(self.gamma), self.ton.exp(), self.toff.exp(), neg_slope)
             Uhat, Shat = predSU(F.leaky_relu(t - self.ton.exp(), neg_slope), 0, 0, alpha, self.beta.exp(), self.gamma.exp())
         else:
-            rho = F.sigmoid(self.fc_out2(self.net_rho2(z)))
+            rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
             alpha = self.alpha.exp()*rho
             Uhat, Shat = predSU(F.leaky_relu(t-t0, neg_slope), u0/self.scaling.exp(), s0, alpha, self.beta.exp(), self.gamma.exp())
         Uhat = Uhat * torch.exp(self.scaling)
@@ -276,6 +273,7 @@ class VAE(VanillaVAE):
             "train_scaling":False, 
             "train_std":False, 
             "train_ton":False,
+            "train_x0":False,
             "weight_sample":False,
             "sparsify":1
         }
@@ -333,6 +331,7 @@ class VAE(VanillaVAE):
                 q_zx, p_z, 
                 u, s, uhat, shat, 
                 sigma_u, sigma_s, 
+                t = None, t0 = None, s0 = None,
                 weight=None, b=1.0, c=1.0):
         """
         This is the negative ELBO.
@@ -344,7 +343,6 @@ class VAE(VanillaVAE):
         uhat, shat: [B x G] prediction by the ODE model
         sigma_u, sigma_s : parameter of the Gaussian distribution
         """
-        
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
         kldz = kl_gaussian(q_zx[0], q_zx[1], p_z[0], p_z[1])
         
@@ -353,10 +351,20 @@ class VAE(VanillaVAE):
         
         if( weight is not None):
             logp = logp*weight
+            
+        #Velocity regularization
+        if(t0 is not None and s0 is not None):
+            v = self.decoder.beta.exp()*(uhat/self.decoder.scaling.exp()) - self.decoder.gamma.exp()*shat
+            v_lin = (shat - s0)/(t - t0)
+            cos = nn.CosineSimilarity(dim=1, eps=1e-08)
+            reg_vel = cos(v, v_lin).mean()
+        else:
+            reg_vel = 0
+            
         err_rec = torch.mean(torch.sum(logp,1))
         
         #print(kldt.detach().cpu().item(), err_rec.detach().cpu().item())
-        return (- err_rec + b*kldt + c*kldz)
+        return (- err_rec + b*kldt + c*kldz + 0.1*reg_vel)
     
     def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1, reg_t=1.0, reg_z=1.0):
         """
@@ -367,12 +375,18 @@ class VAE(VanillaVAE):
         K: alternatingly update optimizer and optimizer2
         """
         #iterX = iter(train_loader)
-        #B = len(iterX)
+        B = len(train_loader)
         train_loss, test_loss = [], []
+        
+            
         for i, batch in enumerate(train_loader):
             self.counter = self.counter + 1
             if( self.counter % self.config["test_iter"] == 0):
-                elbo_test = self.test(test_set, None, self.counter, True)
+                elbo_test = self.test(test_set, 
+                                      None, 
+                                      self.counter, 
+                                      True)
+                
                 test_loss.append(elbo_test)
                 self.setMode('train')
                 print(f"Iteration {self.counter}: Test ELBO = {elbo_test:.3f}")
@@ -381,13 +395,17 @@ class VAE(VanillaVAE):
             if(optimizer2 is not None):
                 optimizer2.zero_grad()
             #batch = iterX.next()
-            xbatch, weight, idx = batch[0].float().to(self.device), batch[2].float().to(self.device), batch[3]
+            xbatch, idx = batch[0].float().to(self.device), batch[3]
             u = xbatch[:,:xbatch.shape[1]//2]
             s = xbatch[:,xbatch.shape[1]//2:]
             
-            u0 = batch[4].float().to(self.device) if self.use_knn else None
-            s0 = batch[5].float().to(self.device) if self.use_knn else None
-            t0 = batch[6].float().to(self.device) if self.use_knn else None
+            u0 = torch.tensor(self.u0[self.train_idx[idx]], device=self.device, requires_grad = True) if self.use_knn else None
+            s0 = torch.tensor(self.s0[self.train_idx[idx]], device=self.device, requires_grad = True) if self.use_knn else None
+            t0 = torch.tensor(self.t0[self.train_idx[idx]], device=self.device, requires_grad = True) if self.use_knn else None
+            
+            if(self.use_knn and self.config["train_x0"]):
+                optimizer_x0 = torch.optim.Adam([s0, u0], lr=self.config["learning_rate_ode"])
+                optimizer_x0.zero_grad()
             
             mu_tx, std_tx, mu_zx, std_zx, t, z, uhat, shat = self.forward(xbatch, u0, s0, t0)
             
@@ -396,12 +414,21 @@ class VAE(VanillaVAE):
                                 u, s, 
                                 uhat, shat, 
                                 torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
+                                t, t0, s0,
                                 None, reg_t, reg_z)
             
             loss.backward()
-            optimizer.step()
-            if( optimizer2 is not None and ((i+1) % K == 0 or i==B-1)):
+            if( optimizer2 is not None and ((i+1) % (K+1) == 0 or i==B-1)):
                 optimizer2.step()
+            else:
+                optimizer.step()
+            
+            #Update initial conditions
+            if(self.use_knn and self.config["train_x0"]):
+                optimizer_x0.step()
+                self.t0[self.train_idx[idx]] = t0.detach().cpu().numpy()
+                self.u0[self.train_idx[idx]] = u0.detach().cpu().numpy()
+                self.s0[self.train_idx[idx]] = s0.detach().cpu().numpy()
             
             train_loss.append(loss.detach().cpu().item())
             
@@ -434,6 +461,7 @@ class VAE(VanillaVAE):
               config={}, 
               plot=True, 
               gene_plot=[], 
+              cluster_key = "clusters",
               figure_path="figures", 
               embed="umap"):
         
@@ -448,7 +476,7 @@ class VAE(VanillaVAE):
         except KeyError:
             print("Embedding not found! Please run the corresponding preprocessing step!")
         
-        cell_labels_raw = adata.obs["clusters"].to_numpy() if "clusters" in adata.obs else np.array(['Unknown' for i in range(adata.n_obs)])
+        cell_labels_raw = adata.obs[cluster_key].to_numpy() if cluster_key in adata.obs else np.array(['Unknown' for i in range(adata.n_obs)])
         
         print("*********        Creating Training/Validation Datasets        *********")
         train_set = SCData(X[self.train_idx], cell_labels_raw[self.train_idx], self.decoder.Rscore[self.train_idx]) if self.config['weight_sample'] else SCData(X[self.train_idx], cell_labels_raw[self.train_idx])
@@ -517,7 +545,7 @@ class VAE(VanillaVAE):
             
             if(len(loss_test)>1):
                 for i in range(len(loss_test_epoch)):
-                    n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*5e-3) else 0
+                    n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*1e-3) else 0
                 if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
                     print(f"*********       Stage 1: Early Stop Triggered at epoch {epoch+1}.       *********")
                     break
@@ -531,6 +559,7 @@ class VAE(VanillaVAE):
         self.u0 = u0
         self.s0 = s0
         self.t0 = t0
+        """
         train_set.u0 = u0[self.train_idx]
         train_set.s0 = s0[self.train_idx]
         train_set.t0 = t0[self.train_idx]
@@ -538,7 +567,7 @@ class VAE(VanillaVAE):
             test_set.u0 = u0[self.test_idx]
             test_set.s0 = s0[self.test_idx]
             test_set.t0 = t0[self.test_idx]
-        
+        """
         self.use_knn = True
         self.decoder.init_weights()
         #Plot the initial conditions
@@ -546,9 +575,9 @@ class VAE(VanillaVAE):
             plot_time(self.t0.squeeze(), Xembed, f"{figure_path}/t0.png")
             for i in range(len(gind)):
                 idx = gind[i]
-                t0_plot = self.t0[self.train_idx].squeeze()
-                u0_plot = self.u0[self.train_idx,idx]
-                s0_plot = self.s0[self.train_idx,idx]
+                t0_plot = t0[self.train_idx].squeeze()
+                u0_plot = u0[self.train_idx,idx]
+                s0_plot = s0[self.train_idx,idx]
                 plot_sig_(t0_plot, 
                          u0_plot, s0_plot, 
                          cell_labels=train_set.labels,
@@ -598,6 +627,13 @@ class VAE(VanillaVAE):
         return
     
     def predAll(self, data, mode='test', output=["uhat", "shat", "t", "z"], gene_idx=None):
+        """
+        Input Arguments:
+        1. data [N x 2G] : input mRNA count
+        2. mode : train or test or both
+        3. output: return type, used for reducing unnecessary memory usage
+        4. gene_idx : gene index, used for reducing unnecessary memory usage
+        """
         N, G = data.shape[0], data.shape[1]//2
         elbo = 0
         if("uhat" in output):
@@ -644,6 +680,7 @@ class VAE(VanillaVAE):
                                     data_in[:,:G], data_in[:,G:], 
                                     uhat, shat, 
                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
+                                    None, None, None,
                                     None, 1.0, 1.0)
                 elbo = elbo - (B/N)*loss
                 if("uhat" in output and gene_idx is not None):
@@ -684,6 +721,7 @@ class VAE(VanillaVAE):
                                     data_in[:,:G], data_in[:,G:], 
                                     uhat, shat, 
                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
+                                    None, None, None,
                                     None, 1.0, 1.0)
                 elbo = elbo - ((N-B*Nb)/N)*loss
                 if("uhat" in output and gene_idx is not None):
@@ -739,12 +777,12 @@ class VAE(VanillaVAE):
                 idx = gind[i]
                 
                 plot_sig(t.squeeze(), 
-                        dataset.data[:,idx], dataset.data[:,idx+G], 
-                        Uhat[:,i], Shat[:,i], 
-                        dataset.labels,
-                        gene_plot[i], 
-                        f"{path}/sig-{gene_plot[i]}-{testid}.png",
-                        sparsify=self.config['sparsify'])
+                         dataset.data[:,idx], dataset.data[:,idx+G], 
+                         Uhat[:,i], Shat[:,i], 
+                         dataset.labels,
+                         gene_plot[i], 
+                         f"{path}/sig-{gene_plot[i]}-{testid}.png",
+                         sparsify=self.config['sparsify'])
         
         return elbo
     
@@ -782,17 +820,17 @@ class VAE(VanillaVAE):
             B = min(U.shape[0]//10, 1000)
             Nb = U.shape[0] // B
             for i in range(Nb):
-                rho_batch = F.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[i*B:(i+1)*B]).float().to(self.device))))
+                rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[i*B:(i+1)*B]).float().to(self.device))))
                 rho[i*B:(i+1)*B] = rho_batch.cpu().numpy()
-            rho_batch = F.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[Nb*B:]).float().to(self.device))))
+            rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[Nb*B:]).float().to(self.device))))
             rho[Nb*B:] = rho_batch.cpu().numpy()
         
         adata.layers[f"{key}_rho"] = rho
         
-        u0, s0, t0 = self.updateX0(adata.layers['Mu'], adata.layers['Ms'], self.config["n_bin"])
-        adata.obs[f"{key}_t0"] = t0.squeeze()
-        adata.layers[f"{key}_u0"] = u0
-        adata.layers[f"{key}_s0"] = s0
+        #u0, s0, t0 = self.updateX0(adata.layers['Mu'], adata.layers['Ms'], self.config["n_bin"])
+        adata.obs[f"{key}_t0"] = self.t0.squeeze()
+        adata.layers[f"{key}_u0"] = self.u0
+        adata.layers[f"{key}_s0"] = self.s0
 
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
