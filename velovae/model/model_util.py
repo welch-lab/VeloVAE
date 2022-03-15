@@ -444,7 +444,27 @@ def ode(t,alpha,beta,gamma,to,ts,neg_slope=0.0):
 ############################################################
 #Branching VAE
 ############################################################
-def linregMtx(u,s):
+def encode_type(cell_types_raw):
+    """
+    Use integer to encode the cell types
+    Each cell type has one unique integer label.
+    """
+    #Map cell types to integers 
+    label_dic = {}
+    label_dic_rev = {}
+    for i, type_ in enumerate(cell_types_raw):
+        label_dic[type_] = i
+        label_dic_rev[i] = type_
+        
+    return label_dic, label_dic_rev
+
+def str2int(cell_labels_raw, label_dic):
+    return np.array([label_dic[cell_labels_raw[i]] for i in range(len(cell_labels_raw))])
+    
+def int2str(cell_labels, label_dic_rev):
+    return np.array([label_dic_rev[cell_labels[i]] for i in range(len(cell_labels))])
+    
+def linreg_mtx(u,s):
     """
     Performs linear regression ||U-kS||_2 while 
     U and S are matrices and k is a vector.
@@ -491,20 +511,20 @@ def reinitTypeParams(U, S, t, ts, cell_labels, cell_types, init_types):
         for g in range(G):
             u_low = np.min(U_type[:,g])
             s_low = np.min(S_type[:,g])
-            u_high = np.quantile(U_type[:,g],0.93)
-            s_high = np.quantile(S_type[:,g],0.93)
+            u_high = np.quantile(U_type[:,g],0.95)
+            s_high = np.quantile(S_type[:,g],0.95)
             mask_high =  (U_type[:,g]>u_high) | (S_type[:,g]>s_high)
             mask_low = (U_type[:,g]<u_low) | (S_type[:,g]<s_low)
             mask_q = mask_high | mask_low
             u_q = U_type[mask_q,g]
             s_q = S_type[mask_q,g]
-            slope = linregMtx(u_q-U_type[:,g].min(), s_q-S_type[:,g].min())
+            slope = linreg_mtx(u_q-U_type[:,g].min(), s_q-S_type[:,g].min())
             if(slope == 1):
                 slope = 1 + 0.1*np.random.rand()
             gamma[type_, g] = np.clip(slope, 0.01, None)
         
-        alpha[type_] = (np.quantile(U_type,0.93,axis=0) - np.quantile(U_type,0.07,axis=0)) * o \
-                        + (np.quantile(U_type,0.93,axis=0) - np.quantile(U_type,0.07,axis=0)) * (1-o) * np.random.rand(G) * 0.001+1e-10
+        alpha[type_] = (np.quantile(U_type,0.95,axis=0) - np.quantile(U_type,0.05,axis=0)) * o \
+                        + (np.quantile(U_type,0.95,axis=0) - np.quantile(U_type,0.05,axis=0)) * (1-o) * np.random.rand(G) * 0.001+1e-10
             
             
     for i, type_ in enumerate(init_types):
