@@ -40,7 +40,7 @@ def rnaVelocityVanillaVAE(adata, key, use_raw=False, use_scv_genes=False, k=10):
         V[:, gene_mask] = np.nan
     return V, U, S
 
-def rnaVelocityBrVAE(adata, key, use_raw=False, use_scv_genes=False):
+def rnaVelocityBrODE(adata, key, use_raw=False, use_scv_genes=False):
     """
     Compute the velocity based on:
     ds/dt = beta * u - gamma * s
