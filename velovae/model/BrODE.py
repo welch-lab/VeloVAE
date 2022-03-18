@@ -222,6 +222,7 @@ class decoder(nn.Module):
                  adata, 
                  cluster_key,
                  tkey, 
+                 embed_key,
                  train_idx,
                  param_key=None,
                  device=torch.device('cpu'), 
@@ -292,7 +293,7 @@ class decoder(nn.Module):
         self.u0.requires_grad=False
         self.s0.requires_grad=False
         
-        self.update_transition_ot(adata.obsm[f'{param_key}_z'][train_idx], t, cell_labels_raw[train_idx], nbin=40, q=0.02)
+        #self.update_transition_ot(adata.obsm[embed_key][train_idx], t, cell_labels_raw[train_idx], nbin=40, q=0.02)
         #self.update_transition_similarity(adata, tkey, cluster_key)
         
     
@@ -444,6 +445,7 @@ class BrODE():
                  adata, 
                  cluster_key,
                  tkey,
+                 embed_key,
                  param_key=None,
                  device='cpu', 
                  checkpoint=None):
@@ -486,6 +488,7 @@ class BrODE():
         self.decoder = decoder(adata, 
                                cluster_key,
                                tkey,
+                               embed_key,
                                self.train_idx, 
                                param_key,
                                device=self.device, 
@@ -549,12 +552,12 @@ class BrODE():
         3. weight: sample weight
         """
     
-        log_gaussian = -((uhat-u)/sigma_u).pow(2)-((shat-s)/sigma_s).pow(2)-torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
+        neg_log_gaussian = 0.5*((uhat-u)/sigma_u).pow(2)+0.5*((shat-s)/sigma_s).pow(2)+torch.log(sigma_u)+torch.log(sigma_s*2*np.pi)
         
         if( weight is not None):
-            log_gaussian = log_gaussian*weight.view(-1,1)
+            neg_log_gaussian = neg_log_gaussian*weight.view(-1,1)
         
-        return torch.mean(torch.sum(log_gaussian, 1))
+        return torch.mean(torch.sum(neg_log_gaussian, 1))
     #ToDo 
     def train_epoch(self, 
                     train_loader, 
@@ -628,7 +631,8 @@ class BrODE():
               gene_plot=[], 
               figure_path="figures", 
               embed="umap"):
-        
+        self.tkey = tkey
+        self.cluster_key = cluster_key
         self.loadConfig(config)
         
         if(self.config["train_scaling"]):
@@ -815,12 +819,14 @@ class BrODE():
         
         
         self.setMode('eval')
-        Uhat, Shat = self.predAll(torch.tensor(np.concatenate((adata.layers['Mu'], adata.layers['Ms']),axis=1)).float().to(self.device), adata.obs["clusters_int"].to_numpy())
+        Uhat, Shat = self.predAll(torch.tensor(X).float().to(self.device), str2int(adata.obs[self.cluster_key].to_numpy(), self.decoder.label_dic_rev), adata.n_obs, adata.n_vars)
         adata.layers[f"{key}_uhat"] = Uhat.numpy()
         adata.layers[f"{key}_shat"] = Shat.numpy()
         
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
+        adata.uns[f"{key}_label_dic"] = self.decoder.label_dic
+        adata.uns[f"{key}_label_dic_rev"] = self.decoder.label_dic_rev
         
         rnaVelocityBrODE(adata, key)
         
