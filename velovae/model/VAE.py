@@ -364,7 +364,7 @@ class VAE(VanillaVAE):
         err_rec = torch.mean(torch.sum(logp,1))
         
         #print(kldt.detach().cpu().item(), err_rec.detach().cpu().item())
-        return (- err_rec + b*kldt + c*kldz + 0.1*reg_vel)
+        return (- err_rec + b*kldt + c*kldz - 0.1*reg_vel)
     
     def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1, reg_t=1.0, reg_z=1.0):
         """
