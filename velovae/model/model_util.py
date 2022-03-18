@@ -1,7 +1,7 @@
 from copy import deepcopy
 import numpy as np
 import os
-from scipy.special import softmax
+from scipy.sparse import csr_matrix
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -942,49 +942,10 @@ def optimal_transport_duality_gap_ts(C, G, lambda1, lambda2, epsilon, batch_size
     return R / C.shape[1]
 
 
-############################################################
-#Other Auxilliary Functions
-############################################################
-def makeDir(file_path):
-    directories = file_path.split('/')
-    cur_path = ''
-    for directory in directories:
-        if(directory==''):
-            continue
-        cur_path += directory
-        cur_path += '/'
-        if(not (directory=='.' or directory == '..') ):
-            if not os.path.exists(cur_path):
-                os.mkdir(cur_path)
 
-def getGeneIndex(genes_all, gene_list):
-    gind = []
-    gremove = []
-    for gene in gene_list:
-        matches = np.where(genes_all==gene)[0]
-        if(len(matches)==1):
-            gind.append(matches[0])
-        elif(len(matches)==0):
-            print(f'Warning: Gene {gene} not found! Ignored.')
-            gremove.append(gene)
-        else:
-            gind.append(matches[0])
-            print('Warning: Gene {gene} has multiple matches. Pick the first one.')
-    for gene in gremove:
-        gene_list.remove(gene)
-    return gind, gene_list
-    
-def convertTime(t):
-    """
-    Convert the time in sec into the format: hour:minute:second
-    """
-    hour = int(t//3600)
-    minute = int((t - hour*3600)//60)
-    second = int(t - hour*3600 - minute*60)
-    
-    return f"{hour:3d} h : {minute:2d} m : {second:2d} s"
-    
-
+############################################################
+#  KNN-Related Functions
+############################################################
 def knnX0(U, S, t, z, t_query, z_query, dt, k):
     N, Nq = len(t), len(t_query)
     u0 = np.zeros((Nq, U.shape[1]))
@@ -1141,3 +1102,90 @@ def knnx0_bin(U,
             s0[indices_query[j]] = np.mean( S[ neighbor_idx ], 0)
             t0[indices_query[j]] = np.mean( t[ neighbor_idx ] )
     return u0,s0,t0
+
+def knn_transition_prob(t, 
+                        z, 
+                        t_query, 
+                        z_query, 
+                        cell_labels, 
+                        n_type, 
+                        dt, 
+                        k):
+    """
+    cell_labels: integer-encoded cell cluster annotation
+    """
+    N, Nq = len(t), len(t_query)
+    A = csr_matrix((N, N))
+    P = np.zeros((n_type, n_type))
+    t0 = np.zeros((n_type))
+    sigma_t = np.zeros((n_type))
+    """
+    knn_all = NearestNeighbors(n_neighbors=1)
+    knn_all.fit(z)
+    dist, ind = knn_all.kneighbors(z)
+    dist_thred = np.quantile(ind, 0.25)
+    """
+    for i in range(n_type):
+        t0[i] = np.quantile(t[cell_labels==i], 0.02)
+        sigma_t[i] = t[cell_labels==i].std()
+    for i in range(Nq):
+        t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
+        indices = np.where((t>=t_lb) & (t<t_ub))[0]
+        k_ = len(indices)
+        if(k_>0):
+            if(k_<k):
+                A[i, indices] = 1 #(np.sqrt(np.sum((z_query[i] - z[indices])**2,1)) < dist_thred).astype(int) #np.exp(-((t[i] - t0[cell_labels[i]])/sigma_t[cell_labels[i]])**2)
+            else:
+                knn_model = NearestNeighbors(n_neighbors=k)
+                knn_model.fit(z[indices])
+                dist, ind = knn_model.kneighbors(z_query[i:i+1])
+                A[i,indices[ind.squeeze()]] = 1 #(dist < dist_thred).astype(int) #np.exp(-((t[i] - t0[cell_labels[i]])/sigma_t[cell_labels[i]])**2)
+    for i in range(n_type):
+        for j in range(n_type):
+            P[i,j] = A[cell_labels==i][:,cell_labels==j].sum()
+    psum = P.sum(1)
+    psum[psum==0] = 1
+    return P/(psum.reshape(-1,1))
+
+############################################################
+#Other Auxilliary Functions
+############################################################
+def makeDir(file_path):
+    directories = file_path.split('/')
+    cur_path = ''
+    for directory in directories:
+        if(directory==''):
+            continue
+        cur_path += directory
+        cur_path += '/'
+        if(not (directory=='.' or directory == '..') ):
+            if not os.path.exists(cur_path):
+                os.mkdir(cur_path)
+
+def getGeneIndex(genes_all, gene_list):
+    gind = []
+    gremove = []
+    for gene in gene_list:
+        matches = np.where(genes_all==gene)[0]
+        if(len(matches)==1):
+            gind.append(matches[0])
+        elif(len(matches)==0):
+            print(f'Warning: Gene {gene} not found! Ignored.')
+            gremove.append(gene)
+        else:
+            gind.append(matches[0])
+            print('Warning: Gene {gene} has multiple matches. Pick the first one.')
+    for gene in gremove:
+        gene_list.remove(gene)
+    return gind, gene_list
+    
+def convertTime(t):
+    """
+    Convert the time in sec into the format: hour:minute:second
+    """
+    hour = int(t//3600)
+    minute = int((t - hour*3600)//60)
+    second = int(t - hour*3600 - minute*60)
+    
+    return f"{hour:3d} h : {minute:2d} m : {second:2d} s"
+    
