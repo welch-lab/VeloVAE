@@ -92,15 +92,15 @@ def rnaVelocityBrODE(adata, key, use_raw=False, use_scv_genes=False):
         V[:, gene_mask] = np.nan
     return V, U, S
     
-def rnaVelocityVAE(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False):
+def rnaVelocityVAE(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False, full_vb=False):
     """
     Compute the velocity based on:
     ds/dt = beta * u - gamma * s
     """
-    alpha = adata.var[f"{key}_alpha"].to_numpy()
+    alpha = np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy()) if full_vb else adata.var[f"{key}_alpha"].to_numpy()
     rho = adata.layers[f"{key}_rho"]
-    beta = adata.var[f"{key}_beta"].to_numpy()
-    gamma = adata.var[f"{key}_gamma"].to_numpy()
+    beta = np.exp(adata.var[f"{key}_logmu_beta"].to_numpy()) if full_vb else adata.var[f"{key}_beta"].to_numpy()
+    gamma = np.exp(adata.var[f"{key}_logmu_gamma"].to_numpy()) if full_vb else adata.var[f"{key}_gamma"].to_numpy()
     t = adata.obs[f"{key}_time"].to_numpy()
     t0 = adata.obs[f"{key}_t0"].to_numpy()
     U0 = adata.layers[f"{key}_u0"]

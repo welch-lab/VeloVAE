@@ -1,5 +1,5 @@
 from .VanillaVAE import VanillaVAE
-from .VAE import VAE
+from .VAE import VAE,VAEFullVB
 from .BrODE import BrODE
 from .model_util import ode, odeNumpy
 from .model_util import knnX0, knnX0_alt, knnx0_bin, knn_transition_prob
@@ -10,6 +10,7 @@ from .TrainingData import SCData, SCTimedData
 __all__ = [
     "VanillaVAE",
     "VAE",
+    "VAEFullVB",
     "BrODE",
     "rnaVelocityVanillaVAE",
     "rnaVelocityVAE",
