@@ -986,6 +986,23 @@ class decoder_fullvb(nn.Module):
             Uhat, Shat = predSU(F.leaky_relu(t-t0, neg_slope), u0/self.scaling.exp(), s0, rho*alpha, beta, gamma)
         Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
+    
+    def eval_model(self, t, z, u0=None, s0=None, t0=None, neg_slope=0.0):
+        """
+        Evaluate the decoder. Here, we use the mean 
+        instead of randomly sample the ODE parameters.
+        """
+        alpha = self.alpha[0].exp()
+        beta = self.beta[0].exp()
+        gamma = self.gamma[0].exp()
+        if(u0 is None or s0 is None or t0 is None):
+            rho = torch.sigmoid(self.fc_out1(self.net_rho(z)))
+            Uhat, Shat = predSU(F.leaky_relu(t - self.ton.exp(), neg_slope), 0, 0, rho*alpha, beta, gamma)
+        else:
+            rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
+            Uhat, Shat = predSU(F.leaky_relu(t-t0, neg_slope), u0/self.scaling.exp(), s0, rho*alpha, beta, gamma)
+        Uhat = Uhat * torch.exp(self.scaling)
+        return nn.functional.relu(Uhat), nn.functional.relu(Shat)
 
 class VAEFullVB(VAE):
     def __init__(self, 
@@ -1084,7 +1101,14 @@ class VAEFullVB(VAE):
         self.p_log_alpha = torch.tensor([[0.0], [1.0]]).to(self.device)
         self.p_log_beta = torch.tensor([[0.0], [0.5]]).to(self.device)
         self.p_log_gamma = torch.tensor([[0.0], [0.5]]).to(self.device)
-        
+    
+    def evalModel(self, data_in, u0=None, s0=None, t0=None):
+        data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
+        mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale)
+         
+        uhat, shat = self.decoder.eval_model(mu_t, mu_z, u0=u0, s0=s0, t0=t0, neg_slope=0.0)
+        return mu_t, std_t, mu_z, std_z, uhat, shat    
+    
     def VAERisk(self, 
                 q_tx, p_t, 
                 q_zx, p_z, 
