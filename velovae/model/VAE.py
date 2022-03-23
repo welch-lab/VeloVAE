@@ -765,6 +765,13 @@ class VAE(VanillaVAE):
         
         return elbo
     
+    def update_std_noise(self, train_data):
+        G = train_data.shape[1]//2
+        out, elbo = self.predAll(train_data, mode='train', output=["uhat", "shat"], gene_idx = np.array(range(G)))
+        self.decoder.sigma_u = nn.Parameter(torch.tensor(np.log((out[0]-train_data[:,:G]).std(0)), device=self.device))
+        self.decoder.sigma_s = nn.Parameter(torch.tensor(np.log((out[1]-train_data[:,G:]).std(0)), device=self.device))
+        return
+    
     def saveAnnData(self, adata, key, file_path, file_name=None):
         """
         Save the ODE parameters and cell time to the anndata object and write it to disk.
