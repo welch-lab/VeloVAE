@@ -6,6 +6,7 @@ from .model_util import knnX0, knnX0_alt, knnx0_bin, knn_transition_prob
 from .model_util import encode_type, str2int, int2str
 from .velocity import rnaVelocityVanillaVAE, rnaVelocityVAE, rnaVelocityBrODE, velocity_embedding
 from .TrainingData import SCData, SCTimedData
+from .TransitionGraph import TransGraph, edmond_chu_liu
 
 __all__ = [
     "VanillaVAE",
@@ -23,5 +24,7 @@ __all__ = [
     "knnx0_bin",
     "knn_transition_prob",
     "SCData",
-    "SCTimedData"
+    "SCTimedData",
+    "TransGraph",
+    "edmond_chu_liu"
     ]

@@ -1,8 +1,9 @@
 import numpy as np
 from copy import deepcopy
 from scipy.sparse import csr_matrix
-import igraph
+import scanpy as sc
 from sklearn.neighbors import NearestNeighbors
+from .model_util import knn_transition_prob
 
 #######################################################################
 # Prior Knowledge of the transition graph
@@ -178,177 +179,285 @@ def recoverTransitionTime(t_trans, ts, graph, init_type):
         ts_orig[x] += t_trans_orig[x]
         recoverTransitionTimeRec(t_trans_orig, ts_orig, x, graph)
     return t_trans_orig, ts_orig
+
+def get_loop(trace_back, n_nodes, start):
+    """
+    trace_back is a dictionary mapping each node to its antecedent
+    """
+    loop = []
+    v_outside = []
+    ptr = start
+    try:
+        while(not trace_back[ptr]==start):
+            loop.append(trace_back[ptr])
+            ptr = trace_back[ptr]
+        loop.append(start)
+    except KeyError:
+        print(trace_back)
+    
+    for i in range(n_nodes):
+        if(not i in loop):
+            v_outside.append(i)
+    return np.flip(loop), v_outside
+
+def merge_nodes(graph, parents, n_nodes, loop, v_outside):
+    """
+    Merge nodes into a super node and change the graph accordingly
+    """
+    #Create a new map from 
+    v_map = {}
+    v_to_loop = {} #maps any vertex outside the loop to the vertex in the loop with the maximum weight
+    loop_to_v = {}
+    i_new = 0
+    for i in range(n_nodes):
+        if(not i in loop):
+            v_map[i] = i_new
+            i_new = i_new + 1
+    for i in loop:
+        v_map[i] = i_new
+    
+    weight_to_loop = {}
+    weight_from_loop = {}
+    for x in loop:
+        for y in v_outside:
+            if(graph[x,y]>0): #edge to the loop
+                if(not y in v_to_loop):
+                    v_to_loop[y] = x
+                    weight_to_loop[y] = graph[x,y] - graph[x,parents[x]]
+                elif(graph[x,y] - graph[x,parents[x]] > weight_to_loop[y]):
+                    v_to_loop[y] = x
+                    weight_to_loop[y] = graph[x,y] - graph[x,parents[x]]
+            if(graph[y,x]>0): #edge from the loop
+                if(not y in loop_to_v):
+                    loop_to_v[y] = x
+                    weight_from_loop[y] = graph[y,x]
+                elif(graph[y,x] > weight_from_loop[y]):
+                    loop_to_v[y] = x
+                    weight_from_loop[y] = graph[y,x]
+    
+    graph_new = np.zeros((n_nodes-len(loop)+1,n_nodes-len(loop)+1))
+    vc = v_map[loop[0]]
+    for x in v_outside:
+        for y in v_outside:
+            graph_new[v_map[x],v_map[y]] = graph[x,y]
+    
+    for x in v_outside:
+        if(x in v_to_loop):
+            graph_new[vc,v_map[x]] = weight_to_loop[x]
+        if(x in loop_to_v):
+            graph_new[v_map[x],vc] = weight_from_loop[x]
+    
+    return v_map, v_to_loop, loop_to_v, graph_new
+
+def edmond_chu_liu(graph, r):
+    """
+    graph: a 2-d array representing an adjacency matrix
+    Notice that graph[i,j] is the edge from j to i
+    """
+    print(f"root: {r}")
+    print(graph)
+    n_type = graph.shape[0]
+    #step 1: remove any edge to the root
+    graph[r] = 0
+    
+    #step 2: find the best incident edge to each node except for r
+    adj_list_pruned = {}
+    
+    parents = []
+    for i in range(n_type):
+        idx_nonzero = np.where(~(graph[i]==0))[0]
+        if(len(idx_nonzero)>0):
+            max_val = np.max(graph[i][idx_nonzero])
+            parents.append(np.where(graph[i]==max_val)[0][0])
+        else:
+            parents.append((i+np.random.choice(n_type)) % n_type)
+    parents = np.array(parents)
+        
+    for i in range(n_type):
+        graph[i,i] = 0
+    
+    for i in range(n_type):
+        adj_list_pruned[i] = []
+    for i in range(n_type):
+        if(not i==r):
+            adj_list_pruned[parents[i]].append(i)
+    
+    #step 3: cycle detection using BFS
+    checked = np.array([False for i in range(n_type)])
+    loop = []
+    
+    queue = [r]
+    trace_back = {}
+    while(len(queue)>0):
+        ptr = queue.pop(0)
+        if(checked[ptr]):
+            loop, v_outside = get_loop(trace_back, n_type, ptr)
+        else:
+            checked[ptr] = True
+        for child in adj_list_pruned[ptr]:
+            trace_back[child] = ptr
+            queue.append(child)
+        if(len(loop)>0):
+            break
+        #if the graph is not connected
+        if(len(queue)==0 and not np.all(checked)):
+            candidates = np.where(~checked)[0]
+            for candidate in candidates:
+                if(len(adj_list_pruned[candidate]) > 0):
+                    queue.append(candidate)
+                    break
+        
+        
+    #step 4: recursive call
+    mst = np.zeros((n_type, n_type))
+    if(len(loop)>0):
+        v_map, v_to_loop, loop_to_v, graph_merged = merge_nodes(graph, parents, n_type, loop, v_outside)
+        vc = v_map[loop[0]]
+        mst_merged = edmond_chu_liu(graph_merged, v_map[r]) #adjacency matrix
+        
+        #edges outside the loop
+        for x in v_outside:
+            for y in v_outside:
+                mst[x,y] = mst_merged[v_map[x], v_map[y]]
+        
+        #edges within the loop
+        for i in range(len(loop)-1):
+            mst[loop[i+1], loop[i]] = 1
+        mst[loop[0], loop[-1]] = 1
+        
+        #edges from the loop
+        for x in v_outside:
+            if(mst_merged[v_map[x],vc]>0):
+                mst[x,loop_to_v[x]] = mst_merged[v_map[x],vc]
+        
+        #There's exactly one edge to the loop
+        source_to_loop = np.where(mst_merged[vc]>0)[0][0] #node in the merged mst
+        for x in v_outside:
+            if(v_map[x] == source_to_loop):
+                source_to_loop = x
+                break
+        target_in_loop = v_to_loop[source_to_loop]
+        mst[target_in_loop, source_to_loop] = 1
+        #break the loop
+        idx_in_loop = np.where(loop==target_in_loop)[0][0]
+        mst[target_in_loop, loop[(idx_in_loop-1)%len(loop)]] = 0
+    else:
+        for i in range(n_type):
+            if(i==r):
+                mst[i,i] = 1
+            else:
+                mst[i, parents[i]] = 1
+    return mst
 #######################################################################
 # Transition Graph
 #######################################################################
 class TransGraph():
-    def __init__(self, cell_types_raw, graph_name=None, graph=None, init_types=None):
-        if(graph_name is not None):
-            self.label_dic, self.label_dic_rev, self.graph, self.init_types = encodeTypeGraph(graph_name, cell_types_raw)
-        elif( (graph is not None) and (init_types is not None) ):
-            cell_types_raw = list(graph.keys())
-            self.label_dic, self.label_dic_rev = encodeType(cell_types_raw)
-            self.graph, self.init_types = encodeGraph(graph, init_types, self.label_dic)
-        else:
-            self.label_dic, self.label_dic_rev = encodeType(cell_types_raw)
-            self.resetGraph()
+    def __init__(self, adata, tkey, embed_key, cluster_key, train_idx=None, k=5, res=0.005):
+        cell_labels_raw = adata.obs[cluster_key].to_numpy() if train_idx is None else adata.obs[cluster_key][train_idx].to_numpy()
+        self.t = adata.obs[tkey].to_numpy() if train_idx is None else adata.obs[tkey][train_idx].to_numpy()
+        self.z = adata.obsm[embed_key] if train_idx is None else adata.obsm[embed_key][train_idx]
         
+        cell_types_raw = np.unique(cell_labels_raw)
+        self.label_dic, self.label_dic_rev = encodeType(cell_types_raw)
+
+        self.n_type = len(cell_types_raw)
+        self.cell_labels = np.array([self.label_dic[x] for x in cell_labels_raw])
+        self.cell_types = np.array([self.label_dic[cell_types_raw[i]] for i in range(self.n_type)])
+        
+        #Partition the graph
+        print("Graph Partition")
+        sc.pp.neighbors(adata, n_neighbors=k, key_added="lineage")
+        sc.tl.louvain(adata, resolution=res, key_added="partition", neighbors_key="lineage")
+        partition_labels = adata.obs["partition"].to_numpy() if train_idx is None else adata.obs["partition"][train_idx].to_numpy()
+        lineages = np.unique(partition_labels)
+        self.n_lineage = len(lineages)
+        count = np.zeros((self.n_type, self.n_lineage))
+        
+        for i in (self.cell_types):
+            for j, lin in enumerate(lineages):
+                count[i, j] = np.sum((self.cell_labels==i)&(partition_labels==lin))
+        self.partition = np.argmax(count, 1)
+        print("Number of partitions: ",len(lineages))
+    
+    
+    def compute_transition(self, adata, n_par=1):
+        #Estimate initial time
+        t_init = np.zeros((self.n_type))
+        for i in (self.cell_types):
+            t_init[i] = np.quantile(self.t[self.cell_labels==i], 0.02)
+        #Compute cell-type transition probability
+        print("Computing type-to-type transition probability")
+        range_t = np.quantile(self.t, 0.99) - np.quantile(self.t, 0.01)
+        P = knn_transition_prob(self.t, 
+                                self.z, 
+                                self.t, 
+                                self.z, 
+                                self.cell_labels, 
+                                self.n_type, 
+                                [0.03*range_t, 0.05*range_t], 
+                                5)
+        P = P+1e-6
+        psum = P.sum(1)
+        P = P/psum.reshape(-1,1)
+        print(f"Picking {n_par} most likely parents for each cell type")
+        out = np.zeros((self.n_type, self.n_type))
+        for l in range(self.n_lineage):
+            vs_part = np.where(self.partition==l)[0]
+            root = vs_part[np.argmin(t_init[vs_part])]
+            root = np.where(vs_part==root)[0][0]
+            for i,x in enumerate(vs_part):
+                if(x==root):
+                    out[x,x] = 1.0
+                    continue
+                prob_order = np.flip(np.argsort(P[x]))
+                for j, y in enumerate(prob_order[:n_par]):
+                    if(not y==x):
+                        out[x,y] = P[x,y]
+        psum = P.sum(1)
+        P = P/psum.reshape(-1,1)
+        return out
+    def compute_transition_deterministic(self, adata, n_par=2):
+        """
+        Compute a type-to-type transition based a cell-to-cell transition matrix
+        """
+        #Estimate initial time
+        t_init = np.zeros((self.n_type))
+        for i in (self.cell_types):
+            t_init[i] = np.quantile(self.t[self.cell_labels==i], 0.02)
+        #Compute cell-type transition probability
+        print("Computing type-to-type transition probability")
+        range_t = np.quantile(self.t, 0.99) - np.quantile(self.t, 0.01)
+        P = knn_transition_prob(self.t, 
+                                self.z, 
+                                self.t, 
+                                self.z, 
+                                self.cell_labels, 
+                                self.n_type, 
+                                [0.03*range_t, 0.05*range_t], 
+                                5)
+        psum = P.sum(1)
+        P = P/psum.reshape(-1,1)
+        #print(P)
+        
+        for i in range(P.shape[0]):
+            idx_sort = np.argsort(P[i])
+            for j in range(P.shape[0]-n_par):
+                P[i,idx_sort[j]] = 0
+        psum = P.sum(1)
+        P = P/psum.reshape(-1,1)
+        
+        #For each partition, get the MST
+        print("Obtaining the MST in each partition")
+        out = np.zeros((self.n_type, self.n_type))
+        for l in range(self.n_lineage):
+            vs_part = np.where(self.partition==l)[0]
+            graph_part = P[vs_part][:, vs_part]
             
-        
-        self.Ntype = len(cell_types_raw)
-        self.cell_types = np.array([self.label_dic[cell_types_raw[i]] for i in range(self.Ntype)])
-        self.A = None
-        self.At = None
-        self.g_cluster = None
-        self.cluster_sizes = None
-        self.P = None
-        
-    
-    def resetGraph(self):
-        self.graph = {}
-        for i in self.cell_types:
-            self.graph[i] = []
-        self.init_types = self.cell_types
-        
-    def str2int(self, cell_labels_raw):
-        return np.array([self.label_dic[cell_labels_raw[i]] for i in range(len(cell_labels_raw))])
-    
-    def int2str(self, cell_labels):
-        return np.array([self.label_dic_rev[cell_labels[i]] for i in range(len(cell_labels))])
-    
-    
-    
-    
-    
-    
-    
-    #################################################
-    # The following parts are deprecated.
-    # Originally there was a plan to devise an algorithm
-    #   to learn the transition graph. But this was
-    #   vetoed later, as we switched to the transition
-    #   ODE model.
-    #################################################
-    def getDepth(self):
-        def updateDepth(graph, cur_type):
-            dlist = []
-            if(len(graph[cur_type]) > 0):
-                for child in graph[cur_type]:
-                    dlist.append(updateDepth(graph, child))
-                    return np.max(dlist) + 1
-            else:
-                return 1
+            root = vs_part[np.argmin(t_init[vs_part])]
+            root = np.where(vs_part==root)[0][0]
+            mst_part = edmond_chu_liu(graph_part, root)
             
-        dlist = []
-        for cur_type in self.init_types:
-            dlist.append(updateDepth(self.graph, cur_type))
-        return np.max(dlist)
-    
-    def recoverTransitionTime(self, t_trans, ts):
-        return recoverTransitionTime(t_trans, ts, self.graph, self.init_types)
-    
-    def _buildKNNGraph(self, X, t, k=30):
-        """
-        X: expression data
-        t: time
-        """
-        Xt = t.reshape(-1,1) #reshape the data to match KNN interface
-        knn_t = NearestNeighbors(n_neighbors=k, metric=dist_t)
-        knn_t = knn_t.fit(Xt)
-        knn_s = NearestNeighbors(n_neighbors=k)
-        knn_s = knn_s.fit(X)
-        self.At = knn_t.kneighbors_graph(Xt)
-        self.A = knn_s.kneighbors_graph(X, mode='distance')
-        
-    def _clusterGraph(self,cell_labels):
-        """
-        Build a complete cell type transition graph from KNN adjacency matrices
-        A: Weighted Adjacency matrix based on data similarity
-        At: Adjacency matrix based on time
-        """
-        if(self.A is None or self.At is None):
-            print('Adjacency matrix not detected! Please run buildKNNGraph first!')
-        
-        N = self.A.shape[0]
-        graph = igraph.Graph(directed=True)
-        graph.add_vertices(N)
-        vout, vin = self.At.nonzero()
-        
-        graph.add_edges(list(zip(vout,vin)))
-        
-        #Add weights
-        for edge in graph.es:
-            s, t = edge.source, edge.target
-            edge["weight"] = np.exp(-0.01*self.A[s,t])
-        #Collapse all nodes with the same cell type into a single node and get the cluster graph
-        vc = igraph.VertexClustering(graph, membership=cell_labels)
-        self.g_cluster = vc.cluster_graph(combine_edges="sum")
-        self.cluster_sizes = np.array(vc.sizes())
-        
-    def _transScore(self, eij, cluster_sizes, k):
-        """
-        Computes the likelihood that cluster i has transition to j.
-        This is based on the theory of PAGA:
-        
-        Wolf, F.A., Hamey, F.K., Plass, M. et al. 
-        PAGA: graph abstraction reconciles clustering with trajectory inference through a topology preserving map of single cells. 
-        Genome Biol 20, 59 (2019). https://doi.org/10.1186/s13059-019-1663-x
-        """
-        N = np.sum(self.cluster_sizes)
-        #Null hypothesis
-        mu = k*cluster_sizes.reshape(-1,1)*cluster_sizes/N #[N cluster x N cluster]
-        sigma = np.sqrt(k*cluster_sizes.reshape(-1,1)*(cluster_sizes/(N-1))*((N-cluster_sizes-1)/(N-1)))
-        
-        P = eij/mu
-        
-        return P
-    
-    def transScore(self, X, t, cell_labels, k=30):
-        #Build a KNN graph
-        self._buildKNNGraph(X,t,k)
-        
-        #Collapse the cell-level graph to cluster level
-        N = len(t)
-        self._clusterGraph(cell_labels)
-        
-        #Compute the transition score
-        eij = self.g_cluster.es["weight"]
-        edges = self.g_cluster.get_edgelist()
-        rows = [x[0] for x in edges]
-        cols = [x[1] for x in edges]
-        E = csr_matrix((eij,(rows, cols))).toarray()
-        P = self._transScore(E, self.cluster_sizes, k)
-        
-        #Prune the score matrix
-        thred = np.median(P)*0.1
-        P[P<thred] = 0
-        self.P = P - P.T
-        
-        
-    def getGraph(self, thred=0.0):
-        """
-        Compute the near-optimal transition graph.
-        The algorithm is based on Edmond's algorithm for finding a minimum spanning tree 
-        in a directed graph. If the graph is disconnected, minimum spanning trees are constructed
-        within each disconnected part.
-        """
-        if(self.P is None):
-            print('Transition matrix not detected! Please run transScore first!')
-        self.resetGraph()
-        #Find the optimal transition graph
-        for j in range(self.P.shape[1]):
-            i = np.argmax(self.P[:,j])
-            if(self.P[i,j]>thred):
-                self.graph[i].append(j)
-        
-        #Find initial types
-        has_parent = np.zeros((self.Ntype))
-        for i in self.graph:
-            for j in self.graph[i]:
-                has_parent[j] = 1
-        self.init_types = np.where(has_parent<1)[0]
-        
-    def printGraph(self):
-        print('Initial Types: ', [self.label_dic_rev[i] for i in self.init_types])
-        for i in self.graph:
-            print(self.label_dic_rev[i],' -> ',[self.label_dic_rev[j] for j in self.graph[i]])
+            for i,x in enumerate(vs_part):
+                for j,y in enumerate(vs_part):
+                    out[x,y] = mst_part[i,j]
+        return out

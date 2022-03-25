@@ -16,6 +16,7 @@ from velovae.plotting import plot_sig, plot_time, plot_train_loss, plot_test_los
 from .model_util import  histEqual, convertTime, initParams, getTsGlobal, reinitTypeParams, predSU, getGeneIndex
 from .model_util import odeBr, optimal_transport_duality_gap, optimal_transport_duality_gap_ts, encode_type, str2int, int2str
 from .TrainingData import SCTimedData
+from .TransitionGraph import TransGraph
 from .velocity import rnaVelocityBrODE
 
 ##############################################################
@@ -293,6 +294,9 @@ class decoder(nn.Module):
         self.u0.requires_grad=False
         self.s0.requires_grad=False
         
+        tgraph = TransGraph(adata, tkey, embed_key, cluster_key, train_idx)
+        w = tgraph.compute_transition_deterministic(adata)
+        self.w = torch.tensor(w, device=device)
         #self.update_transition_ot(adata.obsm[embed_key][train_idx], t, cell_labels_raw[train_idx], nbin=40, q=0.02)
         #self.update_transition_similarity(adata, tkey, cluster_key)
         
