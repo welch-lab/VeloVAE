@@ -228,7 +228,8 @@ class decoder(nn.Module):
                  param_key=None,
                  device=torch.device('cpu'), 
                  p=98,
-                 checkpoint=None):
+                 checkpoint = None,
+                 graph_param = None):
         super(decoder,self).__init__()
         
         U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
@@ -295,7 +296,11 @@ class decoder(nn.Module):
         self.s0.requires_grad=False
         
         tgraph = TransGraph(adata, tkey, embed_key, cluster_key, train_idx)
-        w = tgraph.compute_transition_deterministic(adata)
+        if(graph_param is None):
+            w = tgraph.compute_transition_deterministic(adata)
+        else:
+            w = tgraph.compute_transition_deterministic(adata, graph_param['n_par'], graph_param['dt'], graph_param['k'])
+        
         self.w = torch.tensor(w, device=device)
         self.par = torch.argmax(self.w, 1)
         #self.update_transition_ot(adata.obsm[embed_key][train_idx], t, cell_labels_raw[train_idx], nbin=40, q=0.02)
@@ -449,7 +454,8 @@ class BrODE():
                  embed_key,
                  param_key=None,
                  device='cpu', 
-                 checkpoint=None):
+                 checkpoint=None,
+                 graph_param=None):
         """
         adata: anndata object
         Tmax: user-defined maximum time for the process
@@ -493,7 +499,8 @@ class BrODE():
                                self.train_idx, 
                                param_key,
                                device=self.device, 
-                               checkpoint=checkpoint)
+                               checkpoint=checkpoint,
+                               graph_param)
     
     def setDevice(self, device):
         if('cuda' in device):
@@ -729,8 +736,7 @@ class BrODE():
         3. gene_idx : gene index, used for reducing unnecessary memory usage
         """
         if(gene_idx is None):
-            Uhat, Shat = np.zeros((N, G)), np.zeros((N, G))
-            gene_idx = np.array(range(G))
+            Uhat, Shat = None, None
         else:
             Uhat, Shat = np.zeros((N, len(gene_idx))), np.zeros((N, len(gene_idx)))
         ll = 0
@@ -739,8 +745,9 @@ class BrODE():
             Nb = N // B
             for i in range(Nb):
                 uhat, shat = self.evalModel(t[i*B:(i+1)*B], torch.tensor(cell_labels[i*B:(i+1)*B]).to(self.device))
-                Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].cpu().numpy()
-                Shat[i*B:(i+1)*B] = shat[:, gene_idx].cpu().numpy()
+                if(gene_idx is None):
+                    Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].cpu().numpy()
+                    Shat[i*B:(i+1)*B] = shat[:, gene_idx].cpu().numpy()
                 loss = self.ODERisk(torch.tensor(data[i*B:(i+1)*B, :G]).float().to(self.device),
                                     torch.tensor(data[i*B:(i+1)*B, G:]).float().to(self.device),
                                     uhat, shat,
@@ -748,8 +755,9 @@ class BrODE():
                 ll = ll - (B/N)*loss
             if(N > B*Nb):
                 uhat, shat = self.evalModel(t[B*Nb:], torch.tensor(cell_labels[B*Nb:]).to(self.device))
-                Uhat[Nb*B:] = uhat[:, gene_idx].cpu().numpy()
-                Shat[Nb*B:] = shat[:, gene_idx].cpu().numpy()
+                if(gene_idx is None):
+                    Uhat[Nb*B:] = uhat[:, gene_idx].cpu().numpy()
+                    Shat[Nb*B:] = shat[:, gene_idx].cpu().numpy()
                 loss = self.ODERisk(torch.tensor(data[B*Nb:, :G]).float().to(self.device),
                                     torch.tensor(data[B*Nb:, G:]).float().to(self.device),
                                     uhat, shat,
@@ -803,6 +811,7 @@ class BrODE():
         os.makedirs(file_path, exist_ok=True)
         
         X = np.concatenate((adata.layers['Mu'], adata.layers['Ms']), 1)
+        t = adata.obs[self.tkey].to_numpy()
         
         adata.varm[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy()).T
         adata.varm[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy()).T
@@ -818,7 +827,13 @@ class BrODE():
         
         
         self.setMode('eval')
-        Uhat, Shat = self.predAll(torch.tensor(X).float().to(self.device), str2int(adata.obs[self.cluster_key].to_numpy(), self.decoder.label_dic_rev), adata.n_obs, adata.n_vars)
+        Uhat, Shat = self.predAll(torch.tensor(X).to(self.device), 
+                                  torch.tensor(t.reshape(-1,1)).to(self.device), 
+                                  str2int(adata.obs[self.cluster_key].to_numpy(), 
+                                  self.decoder.label_dic), 
+                                  adata.n_obs, 
+                                  adata.n_vars, 
+                                  np.array(range(adata.n_vars)))
         adata.layers[f"{key}_uhat"] = Uhat.numpy()
         adata.layers[f"{key}_shat"] = Shat.numpy()
         
