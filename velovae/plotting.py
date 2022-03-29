@@ -1265,6 +1265,7 @@ def plotUmapTransition(graph, X_embed, cell_labels, label_dic_rev, path='figures
     """
     fig, ax = plt.subplots(figsize=(8,6))
     Xmean = {}
+    range_embed = X_embed.max(0) - X_embed.min(0)
     for i in graph:
         mask = cell_labels==i
         xbar, ybar = np.mean(X_embed[mask,0]),np.mean(X_embed[mask,1])
@@ -1272,16 +1273,15 @@ def plotUmapTransition(graph, X_embed, cell_labels, label_dic_rev, path='figures
     
     for i in graph.keys():
         mask = cell_labels==i
-        ax.plot(X_embed[mask,0],X_embed[mask,1],'.',color=colors[i%len(colors)],alpha=0.1)
+        ax.scatter(X_embed[mask,0],X_embed[mask,1],s=5,color=colors[i%len(colors)],alpha=0.25,edgecolors='none')
     
     for i in graph.keys():
         mask = cell_labels==i
-        if(Xmean[i][0]>0):
-            ax.text(Xmean[i][0]*1.05,Xmean[i][1],label_dic_rev[i],fontsize=14)
-        else:
-            ax.text(Xmean[i][0]*0.95,Xmean[i][1],label_dic_rev[i],fontsize=14)
+        L = len(label_dic_rev[i])
+        ax.text(Xmean[i][0] - L*0.01*range_embed[0], Xmean[i][1] - 0.02*range_embed[1], label_dic_rev[i], fontsize=14)
+        
         for j in graph[i]:
-            ax.arrow(Xmean[i][0],Xmean[i][1],Xmean[j][0]-Xmean[i][0],Xmean[j][1]-Xmean[i][1],width=0.15,head_width=0.6,length_includes_head=True,color='k')
+            ax.arrow(Xmean[i][0], Xmean[i][1], Xmean[j][0]-Xmean[i][0], Xmean[j][1]-Xmean[i][1],width=0.15,head_width=0.6,length_includes_head=True,color='k')
     ax.set_xlabel('Umap Dim 1')
     ax.set_ylabel('Umap Dim 2')
     try:

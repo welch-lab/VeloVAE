@@ -442,7 +442,7 @@ def ode(t,alpha,beta,gamma,to,ts,neg_slope=0.0):
     
 
 ############################################################
-#Branching VAE
+#Branching ODE
 ############################################################
 def encode_type(cell_types_raw):
     """
@@ -536,6 +536,57 @@ def reinitTypeParams(U, S, t, ts, cell_labels, cell_types, init_types):
      
     return alpha,beta,gamma,u0,s0
 
+
+def ode_br(t, y, par, neg_slope=0.0, **kwargs):
+    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
+    t_trans, ts = kwargs['t_trans'], kwargs['ts']
+    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
+    sigma_u = kwargs['sigma_u']
+    sigma_s = kwargs['sigma_s']
+    scaling=kwargs["scaling"]
+    
+    Ntype, G = alpha.shape
+    N = t.shape[0]
+    
+    tau0 = F.leaky_relu(t_trans.view(-1,1) - ts[par], neg_slope)
+    u0_hat, s0_hat = predSU(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) 
+    u0_batch, s0_batch = u0_hat[y], s0_hat[y] #[N x G]
+    tau = F.leaky_relu(t - ts[y], neg_slope)
+    uhat, shat = predSU(tau,
+                        u0_batch,
+                        s0_batch,
+                        alpha[y],
+                        beta[y],
+                        gamma[y])
+    return uhat * scaling, shat
+
+def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
+    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
+    t_trans, ts = kwargs['t_trans'], kwargs['ts']
+    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
+    sigma_u = kwargs['sigma_u']
+    sigma_s = kwargs['sigma_s']
+    scaling=kwargs["scaling"]
+    
+    Ntype, G = alpha.shape
+    N = t.shape[0]
+    
+    tau0 = np.clip(t_trans.reshape(-1,1) - ts, 0, None)
+    u0_hat, s0_hat = predSUNumpy(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) #[Ntype x G]
+    
+    uhat, shat = np.zeros((N,G)), np.zeros((N,G))
+    for i in range(Ntype):
+        tau = np.clip(t[y==i].reshape(-1,1) - ts[i], 0, None)
+        uhat_i, shat_i = predSUNumpy(tau,
+                                     u0_hat[i],
+                                     s0_hat[i],
+                                     alpha[i],
+                                     beta[i],
+                                     gamma[i])
+        uhat[y==i] = uhat_i
+        shat[y==i] = shat_i
+    return uhat, shat
+
 def initAllPairs(alpha,
                  beta,
                  gamma,
@@ -558,7 +609,7 @@ def initAllPairs(alpha,
 
 
 
-def odeBr(t, y_onehot, neg_slope=0, **kwargs):
+def ode_br_weighted(t, y_onehot, neg_slope=0, **kwargs):
     """
     Compute the ODE solution given every possible parent cell type
     """
@@ -611,7 +662,7 @@ def initAllPairsNumpy(alpha,
     
     return np.clip(U0_hat, 0, None), np.clip(S0_hat, 0, None)
 
-def odeBrNumpy(t, y, w, get_init=False, k=10, **kwargs):
+def ode_br_weighted_numpy(t, y, w, get_init=False, k=10, **kwargs):
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
     t_trans, ts = kwargs['t_trans'], kwargs['ts']
     u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
@@ -1110,12 +1161,12 @@ def knn_transition_prob(t,
                         cell_labels, 
                         n_type, 
                         dt, 
-                        k):
+                        k,
+                        soft_assign=True):
     """
     cell_labels: integer-encoded cell cluster annotation
     """
     N, Nq = len(t), len(t_query)
-    A = csr_matrix((N, N))
     P = np.zeros((n_type, n_type))
     t0 = np.zeros((n_type))
     sigma_t = np.zeros((n_type))
@@ -1128,21 +1179,41 @@ def knn_transition_prob(t,
     for i in range(n_type):
         t0[i] = np.quantile(t[cell_labels==i], 0.02)
         sigma_t[i] = t[cell_labels==i].std()
-    for i in range(Nq):
-        t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
-        indices = np.where((t>=t_lb) & (t<t_ub))[0]
-        k_ = len(indices)
-        if(k_>0):
-            if(k_<k):
-                A[i, indices] = 1 #(np.sqrt(np.sum((z_query[i] - z[indices])**2,1)) < dist_thred).astype(int) #np.exp(-((t[i] - t0[cell_labels[i]])/sigma_t[cell_labels[i]])**2)
-            else:
-                knn_model = NearestNeighbors(n_neighbors=k)
-                knn_model.fit(z[indices])
-                dist, ind = knn_model.kneighbors(z_query[i:i+1])
-                A[i,indices[ind.squeeze()]] = 1 #(dist < dist_thred).astype(int) #np.exp(-((t[i] - t0[cell_labels[i]])/sigma_t[cell_labels[i]])**2)
-    for i in range(n_type):
-        for j in range(n_type):
-            P[i,j] = A[cell_labels==i][:,cell_labels==j].sum()
+    if(soft_assign):
+        A = csr_matrix((N, N))
+        for i in range(Nq):
+            t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
+            indices = np.where((t>=t_lb) & (t<t_ub))[0]
+            k_ = len(indices)
+            if(k_>0):
+                if(k_<=k):
+                    A[i, indices] = 1 #(np.sqrt(np.sum((z_query[i] - z[indices])**2,1)) < dist_thred).astype(int) #np.exp(-((t[i] - t0[cell_labels[i]])/sigma_t[cell_labels[i]])**2)
+                else:
+                    knn_model = NearestNeighbors(n_neighbors=k)
+                    knn_model.fit(z[indices])
+                    dist, ind = knn_model.kneighbors(z_query[i:i+1])
+                    A[i,indices[ind.squeeze()]] = 1 #(dist < dist_thred).astype(int) #np.exp(-((t[i] - t0[cell_labels[i]])/sigma_t[cell_labels[i]])**2)
+        for i in range(n_type):
+            for j in range(n_type):
+                P[i,j] = A[cell_labels==i][:,cell_labels==j].sum()
+    else:
+        A = csr_matrix((N, n_type))
+        for i in range(Nq):
+            t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
+            indices = np.where((t>=t_lb) & (t<t_ub))[0]
+            k_ = len(indices)
+            if(k_>0):
+                if(k_<=k):
+                    knn_model = NearestNeighbors(n_neighbors=min(k,k_))
+                    knn_model.fit(z[indices])
+                    dist, ind = knn_model.kneighbors(z_query[i:i+1])
+                    knn_label = cell_labels[indices][ind.squeeze()]
+                else:
+                    knn_label = cell_labels[indices]
+                n_par = np.array([np.sum(knn_label==i) for i in range(n_type)])
+                A[i, np.argmax(n_par)] = 1
+        for i in range(n_type):
+            P[i] = A[cell_labels==i].sum(0)
     psum = P.sum(1)
     psum[psum==0] = 1
     return P/(psum.reshape(-1,1))
