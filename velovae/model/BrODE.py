@@ -808,11 +808,12 @@ class BrODE():
         """
         Save the ODE parameters and cell time to the anndata object and write it to disk.
         """
+        self.setMode('eval')
         os.makedirs(file_path, exist_ok=True)
         
         X = np.concatenate((adata.layers['Mu'], adata.layers['Ms']), 1)
         t = adata.obs[self.tkey].to_numpy()
-        label_int = str2int(adata.obs[self.cluster_key],self.decoder.label_dic)
+        label_int = str2int(adata.obs[self.cluster_key].to_numpy(),self.decoder.label_dic)
         
         adata.obs[f"{key}_time"] = t
         adata.obs[f"{key}_label"] = label_int
@@ -828,8 +829,6 @@ class BrODE():
         adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
         adata.uns[f"{key}_w"] = self.decoder.w.detach().cpu().numpy()
         
-        
-        self.setMode('eval')
         Uhat, Shat, ll = self.predAll(X, 
                                       torch.tensor(t.reshape(-1,1)).to(self.device), 
                                       label_int, 
@@ -842,7 +841,7 @@ class BrODE():
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
         adata.uns[f"{key}_label_dic"] = self.decoder.label_dic
-        adata.uns[f"{key}_label_dic_rev"] = self.decoder.label_dic_rev
+        #adata.uns[f"{key}_label_dic_rev"] = self.decoder.label_dic_rev
         
         rnaVelocityBrODE(adata, key)
         
