@@ -118,10 +118,10 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
     Uhat, Shat, V = {},{},{}
     That, Yhat = {},{}
     
-    scv_idx = np.where(methods=='scVelo')[0]
+    scv_idx = np.where(np.array(methods)=='scVelo')[0]
     scv_key = keys[scv_idx[0]] if(len(scv_idx)>0) else None
     for i, method in enumerate(methods):
-        stats_i = getMetric(adata, method, keys[i], scv_key, (scv_key is None) )
+        stats_i = getMetric(adata, method, keys[i], scv_key, (scv_key is not None) )
         stats[method] = stats_i
         if(method=='scVelo'):
             t_i, Uhat_i, Shat_i = getPredictionSCVDemo(adata, keys[i], genes, Nplot)

@@ -634,7 +634,6 @@ class VAE(VanillaVAE):
             for i in range(Nb):
                 data_in = torch.tensor(data[i*B:(i+1)*B]).float().to(self.device)
                 if(mode=="test"):
-                    start = time.time()
                     u0 = torch.tensor(self.u0[self.test_idx[i*B:(i+1)*B]], dtype=float, device=self.device) if self.use_knn else None
                     s0 = torch.tensor(self.s0[self.test_idx[i*B:(i+1)*B]], dtype=float, device=self.device) if self.use_knn else None
                     t0 = torch.tensor(self.t0[self.test_idx[i*B:(i+1)*B]], dtype=float, device=self.device) if self.use_knn else None
@@ -873,7 +872,7 @@ class decoder_fullvb(nn.Module):
         self.net_rho2 = nn.Sequential(self.fc3, self.bn3, nn.LeakyReLU(), self.dpt3,
                                       self.fc4, self.bn4, nn.LeakyReLU(), self.dpt4)
         
-        sigma_param = np.log(0.1)
+        sigma_param = np.log(0.05)
         if(checkpoint is not None):
             self.alpha = nn.Parameter(torch.empty((2,G), device=device).float())
             self.beta = nn.Parameter(torch.empty((2,G), device=device).float())
