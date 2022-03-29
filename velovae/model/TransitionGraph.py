@@ -180,26 +180,6 @@ def recoverTransitionTime(t_trans, ts, graph, init_type):
         recoverTransitionTimeRec(t_trans_orig, ts_orig, x, graph)
     return t_trans_orig, ts_orig
 
-def get_loop(trace_back, n_nodes, start):
-    """
-    trace_back is a dictionary mapping each node to its antecedent
-    """
-    loop = []
-    v_outside = []
-    ptr = start
-    try:
-        while(not trace_back[ptr]==start):
-            loop.append(trace_back[ptr])
-            ptr = trace_back[ptr]
-        loop.append(start)
-    except KeyError:
-        print(trace_back)
-    
-    for i in range(n_nodes):
-        if(not i in loop):
-            v_outside.append(i)
-    return np.flip(loop), v_outside
-
 def merge_nodes(graph, parents, n_nodes, loop, v_outside):
     """
     Merge nodes into a super node and change the graph accordingly
@@ -220,14 +200,14 @@ def merge_nodes(graph, parents, n_nodes, loop, v_outside):
     weight_from_loop = {}
     for x in loop:
         for y in v_outside:
-            if(graph[x,y]>0): #edge to the loop
+            if(not np.isinf(graph[x,y])): #edge to the loop
                 if(not y in v_to_loop):
                     v_to_loop[y] = x
                     weight_to_loop[y] = graph[x,y] - graph[x,parents[x]]
                 elif(graph[x,y] - graph[x,parents[x]] > weight_to_loop[y]):
                     v_to_loop[y] = x
                     weight_to_loop[y] = graph[x,y] - graph[x,parents[x]]
-            if(graph[y,x]>0): #edge from the loop
+            if(not np.isinf(graph[y,x])): #edge from the loop
                 if(not y in loop_to_v):
                     loop_to_v[y] = x
                     weight_from_loop[y] = graph[y,x]
@@ -235,7 +215,7 @@ def merge_nodes(graph, parents, n_nodes, loop, v_outside):
                     loop_to_v[y] = x
                     weight_from_loop[y] = graph[y,x]
     
-    graph_new = np.zeros((n_nodes-len(loop)+1,n_nodes-len(loop)+1))
+    graph_new = np.ones((n_nodes-len(loop)+1,n_nodes-len(loop)+1)) * (-np.inf)
     vc = v_map[loop[0]]
     for x in v_outside:
         for y in v_outside:
@@ -249,69 +229,114 @@ def merge_nodes(graph, parents, n_nodes, loop, v_outside):
     
     return v_map, v_to_loop, loop_to_v, graph_new
 
+def adj_matrix_to_list(A):
+    n_type = A.shape[0]
+    adj_list = {}
+    for i in range(n_type):
+        adj_list[i] = []
+    for i in range(n_type):
+        idx_noninf = np.where(~(np.isinf(A[i])))[0]
+        for par in idx_noninf:
+            adj_list[par].append(i)
+    return adj_list
+
+def check_connected(adj_list, root, n_nodes):
+    """
+    Check if a directed graph is connected
+    """
+    checked = np.array([False for i in range(n_nodes)])
+    loop = []
+    
+    queue = [root]
+    checked[root] = True
+    while(len(queue)>0):
+        ptr = queue.pop(0)
+        for child in adj_list[ptr]:
+            if(not checked[child]):
+                queue.append(child)
+                checked[child] = True
+        
+    return np.all(checked)
+
+def get_loop(trace_back, n_nodes, start):
+    """
+    trace_back is a dictionary mapping each node to its antecedent
+    """
+    loop = []
+    v_outside = []
+    ptr = start
+    try:
+        while(not trace_back[ptr]==start):
+            loop.append(trace_back[ptr])
+            ptr = trace_back[ptr]
+        loop.append(start)
+    except KeyError:
+        print("Key Error.")
+        print(trace_back)
+    
+    for i in range(n_nodes):
+        if(not i in loop):
+            v_outside.append(i)
+    return np.flip(loop), v_outside
+
+def check_loop(adj_list, n_nodes):
+    loop = []
+    
+    for node in range(n_nodes):
+        checked = np.array([False for i in range(n_nodes)])
+        queue = [node]
+        trace_back = {}
+        while(len(queue)>0):
+            ptr = queue.pop(0)
+            if(checked[ptr]):
+                loop, v_outside = get_loop(trace_back, n_nodes, ptr)
+                return loop, v_outside
+            else:
+                checked[ptr] = True
+            for child in adj_list[ptr]:
+                trace_back[child] = ptr
+                queue.append(child)
+            
+    return np.array([]), np.array(range(n_nodes))
+
 def edmond_chu_liu(graph, r):
     """
     graph: a 2-d array representing an adjacency matrix
     Notice that graph[i,j] is the edge from j to i
     """
-    print(f"root: {r}")
-    print(graph)
+    #print(f"root: {r}")
+    #print(graph)
     n_type = graph.shape[0]
     #step 1: remove any edge to the root
-    graph[r] = 0
+    graph[r] = -np.inf
     
     #step 2: find the best incident edge to each node except for r
     adj_list_pruned = {}
     
     parents = []
     for i in range(n_type):
-        idx_nonzero = np.where(~(graph[i]==0))[0]
-        if(len(idx_nonzero)>0):
-            max_val = np.max(graph[i][idx_nonzero])
+        idx_noninf = np.where(~(np.isinf(graph[i])))[0]
+        if(len(idx_noninf)>0):
+            max_val = np.max(graph[i][idx_noninf])
             parents.append(np.where(graph[i]==max_val)[0][0])
         else:
             parents.append((i+np.random.choice(n_type)) % n_type)
     parents = np.array(parents)
-        
-    for i in range(n_type):
-        graph[i,i] = 0
     
     for i in range(n_type):
         adj_list_pruned[i] = []
     for i in range(n_type):
         if(not i==r):
             adj_list_pruned[parents[i]].append(i)
-    
+
     #step 3: cycle detection using BFS
-    checked = np.array([False for i in range(n_type)])
-    loop = []
-    
-    queue = [r]
-    trace_back = {}
-    while(len(queue)>0):
-        ptr = queue.pop(0)
-        if(checked[ptr]):
-            loop, v_outside = get_loop(trace_back, n_type, ptr)
-        else:
-            checked[ptr] = True
-        for child in adj_list_pruned[ptr]:
-            trace_back[child] = ptr
-            queue.append(child)
-        if(len(loop)>0):
-            break
-        #if the graph is not connected
-        if(len(queue)==0 and not np.all(checked)):
-            candidates = np.where(~checked)[0]
-            for candidate in candidates:
-                if(len(adj_list_pruned[candidate]) > 0):
-                    queue.append(candidate)
-                    break
-        
-        
+    loop, v_outside = check_loop(adj_list_pruned, n_type)
+
     #step 4: recursive call
     mst = np.zeros((n_type, n_type))
     if(len(loop)>0):
         v_map, v_to_loop, loop_to_v, graph_merged = merge_nodes(graph, parents, n_type, loop, v_outside)
+        
         vc = v_map[loop[0]]
         mst_merged = edmond_chu_liu(graph_merged, v_map[r]) #adjacency matrix
         
@@ -379,44 +404,7 @@ class TransGraph():
         self.partition = np.argmax(count, 1)
         print("Number of partitions: ",len(lineages))
     
-    
-    def compute_transition(self, adata, n_par=1):
-        #Estimate initial time
-        t_init = np.zeros((self.n_type))
-        for i in (self.cell_types):
-            t_init[i] = np.quantile(self.t[self.cell_labels==i], 0.02)
-        #Compute cell-type transition probability
-        print("Computing type-to-type transition probability")
-        range_t = np.quantile(self.t, 0.99) - np.quantile(self.t, 0.01)
-        P = knn_transition_prob(self.t, 
-                                self.z, 
-                                self.t, 
-                                self.z, 
-                                self.cell_labels, 
-                                self.n_type, 
-                                [0.03*range_t, 0.05*range_t], 
-                                5)
-        P = P+1e-6
-        psum = P.sum(1)
-        P = P/psum.reshape(-1,1)
-        print(f"Picking {n_par} most likely parents for each cell type")
-        out = np.zeros((self.n_type, self.n_type))
-        for l in range(self.n_lineage):
-            vs_part = np.where(self.partition==l)[0]
-            root = vs_part[np.argmin(t_init[vs_part])]
-            root = np.where(vs_part==root)[0][0]
-            for i,x in enumerate(vs_part):
-                if(x==root):
-                    out[x,x] = 1.0
-                    continue
-                prob_order = np.flip(np.argsort(P[x]))
-                for j, y in enumerate(prob_order[:n_par]):
-                    if(not y==x):
-                        out[x,y] = P[x,y]
-        psum = P.sum(1)
-        P = P/psum.reshape(-1,1)
-        return out
-    def compute_transition_deterministic(self, adata, n_par=2):
+    def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01,0.03), k=5, soft_assign=True):
         """
         Compute a type-to-type transition based a cell-to-cell transition matrix
         """
@@ -427,35 +415,45 @@ class TransGraph():
         #Compute cell-type transition probability
         print("Computing type-to-type transition probability")
         range_t = np.quantile(self.t, 0.99) - np.quantile(self.t, 0.01)
-        P = knn_transition_prob(self.t, 
-                                self.z, 
-                                self.t, 
-                                self.z, 
-                                self.cell_labels, 
-                                self.n_type, 
-                                [0.03*range_t, 0.05*range_t], 
-                                5)
-        psum = P.sum(1)
-        P = P/psum.reshape(-1,1)
-        #print(P)
-        
+        P_raw = knn_transition_prob(self.t, 
+                                    self.z, 
+                                    self.t, 
+                                    self.z, 
+                                    self.cell_labels, 
+                                    self.n_type, 
+                                    [dt[0]*range_t, dt[1]*range_t], 
+                                    k,
+                                    soft_assign)
+        psum = P_raw.sum(1)
+        P = P_raw/psum.reshape(-1,1)
+
         for i in range(P.shape[0]):
+            P[i,i] = 0
             idx_sort = np.argsort(P[i])
             for j in range(P.shape[0]-n_par):
                 P[i,idx_sort[j]] = 0
+            
         psum = P.sum(1)
         P = P/psum.reshape(-1,1)
+        self.w = P
         
         #For each partition, get the MST
         print("Obtaining the MST in each partition")
         out = np.zeros((self.n_type, self.n_type))
         for l in range(self.n_lineage):
             vs_part = np.where(self.partition==l)[0]
-            graph_part = P[vs_part][:, vs_part]
-            
+            graph_part = np.log(P[vs_part][:, vs_part])
+            adj_list = adj_matrix_to_list(graph_part)
             root = vs_part[np.argmin(t_init[vs_part])]
             root = np.where(vs_part==root)[0][0]
-            mst_part = edmond_chu_liu(graph_part, root)
+            
+            if(check_connected(adj_list, root, len(vs_part))):
+                mst_part = edmond_chu_liu(graph_part, root)
+            else:    
+                print("Warning: graph is disconnected! Using the fully-connected graph instead.")
+                graph_part = np.log(P_raw[vs_part][:, vs_part])
+                mst_part = edmond_chu_liu(graph_part, root)
+                
             
             for i,x in enumerate(vs_part):
                 for j,y in enumerate(vs_part):

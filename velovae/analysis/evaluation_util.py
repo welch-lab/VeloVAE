@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import spearmanr
 from sklearn.metrics.pairwise import pairwise_distances
-from ..model.model_util import initParams, predSUNumpy, odeNumpy, odeBrNumpy, scvPred, scvPredSingle, optimal_transport_duality_gap
+from ..model.model_util import initParams, predSUNumpy, odeNumpy, ode_br_numpy, scvPred, scvPredSingle, optimal_transport_duality_gap
 
 def getMSE(U,S,Uhat,Shat):
     return np.mean((U-Uhat)**2+(S-Shat)**2)

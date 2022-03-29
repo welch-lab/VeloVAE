@@ -6,7 +6,7 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.ndimage import gaussian_filter1d
 import pynndescent
 from sklearn.preprocessing import normalize
-from .model_util import odeNumpy, odeBrNumpy, initAllPairsNumpy, predSUNumpy
+from .model_util import odeNumpy, ode_br_numpy, predSUNumpy
 
 def rnaVelocityVanillaVAE(adata, key, use_raw=False, use_scv_genes=False, k=10):
     """
@@ -60,28 +60,26 @@ def rnaVelocityBrODE(adata, key, use_raw=False, use_scv_genes=False):
     
     t = adata.obs[f"{key}_time"].to_numpy()
     y = adata.obs[f"{key}_label"].to_numpy()
-    """
-    y_onehot = np.zeros((adata.n_obs,alpha.shape[0]))
-    w_onehot = np.zeros((adata.n_obs,alpha.shape[0]))
-    for i in range(alpha.shape[0]):
-        y_onehot[y==i, i] = 1
-        w_onehot[y==i, np.argmax(w[i])] = 1
-    """
+    
     if(use_raw):
         U, S = adata.layers['Mu'], adata.layers['Ms']
     else:
-        U, S = odeBrNumpy(t.reshape(-1,1),
-                          y,
-                          w,
-                          alpha=alpha,
-                          beta=beta,
-                          gamma=gamma,
-                          t_trans=t_trans,
-                          ts=ts,
-                          u0=u0,
-                          s0=s0)
-        adata.layers["Uhat"] = U
-        adata.layers["Shat"] = S
+        if(f"{key}_uhat" in adata.layers and f"{key}_shat" in adata.layers):
+            U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
+            U = U/scaling
+        else:
+            U, S = ode_br_numpy(t.reshape(-1,1),
+                                y,
+                                np.argmax(w,1),
+                                alpha=alpha,
+                                beta=beta,
+                                gamma=gamma,
+                                t_trans=t_trans,
+                                ts=ts,
+                                u0=u0,
+                                s0=s0)
+            adata.layers["Uhat"] = U
+            adata.layers["Shat"] = S
     
     V = np.zeros(S.shape)
     for i in range(alpha.shape[0]):

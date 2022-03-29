@@ -14,7 +14,7 @@ from cellrank.tl.kernels import PseudotimeKernel
 from velovae.plotting import plot_sig, plot_time, plot_train_loss, plot_test_loss
 
 from .model_util import  histEqual, convertTime, initParams, getTsGlobal, reinitTypeParams, predSU, getGeneIndex
-from .model_util import odeBr, optimal_transport_duality_gap, optimal_transport_duality_gap_ts, encode_type, str2int, int2str
+from .model_util import ode_br, optimal_transport_duality_gap, optimal_transport_duality_gap_ts, encode_type, str2int, int2str
 from .TrainingData import SCTimedData
 from .TransitionGraph import TransGraph
 from .velocity import rnaVelocityBrODE
@@ -297,64 +297,61 @@ class decoder(nn.Module):
         tgraph = TransGraph(adata, tkey, embed_key, cluster_key, train_idx)
         w = tgraph.compute_transition_deterministic(adata)
         self.w = torch.tensor(w, device=device)
+        self.par = torch.argmax(self.w, 1)
         #self.update_transition_ot(adata.obsm[embed_key][train_idx], t, cell_labels_raw[train_idx], nbin=40, q=0.02)
         #self.update_transition_similarity(adata, tkey, cluster_key)
         
     
-    def forward(self, t, y_onehot, neg_slope=0.0):
+    def forward(self, t, y, neg_slope=0.0):
         """
         t: [B x 1]
-        y_onehot: [B x Ntype]
+        y: [B]
         """
-        w = torch.sum(self.w*y_onehot.unsqueeze(-1), 1)
-        #w_onehot = F.one_hot(torch.argmax(w, 1), y_onehot.shape[1])
-        
-        Uhat, Shat = odeBr(t, y_onehot,
-                           neg_slope=neg_slope,
-                           alpha=torch.exp(self.alpha),
-                           beta=torch.exp(self.beta),
-                           gamma=torch.exp(self.gamma),
-                           t_trans=torch.exp(self.t_trans),
-                           ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
-                           u0=torch.exp(self.u0),
-                           s0=torch.exp(self.s0),
-                           sigma_u = torch.exp(self.sigma_u),
-                           sigma_s = torch.exp(self.sigma_s),
-                           scaling=torch.exp(self.scaling))
-        return (Uhat*w.unsqueeze(-1)).sum(1), (Shat*w.unsqueeze(-1)).sum(1)
+        return ode_br(t, 
+                      y,
+                      self.par,
+                      neg_slope=neg_slope,
+                      alpha=torch.exp(self.alpha),
+                      beta=torch.exp(self.beta),
+                      gamma=torch.exp(self.gamma),
+                      t_trans=torch.exp(self.t_trans),
+                      ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
+                      u0=torch.exp(self.u0),
+                      s0=torch.exp(self.s0),
+                      sigma_u = torch.exp(self.sigma_u),
+                      sigma_s = torch.exp(self.sigma_s),
+                      scaling=torch.exp(self.scaling))
     
-    def predSU(self, t, y_onehot, gidx=None):
-        Ntype = y_onehot.shape[1]
-        
-        w = torch.sum(self.w*y_onehot.unsqueeze(-1), 1)
-        #w_onehot = F.one_hot(torch.argmax(w, 1), y_onehot.shape[1])
+    def predSU(self, t, y, gidx=None):
         if(gidx is None):
-            Uhat, Shat, = odeBr(t, y_onehot,
-                                neg_slope=0.0,
-                                alpha=torch.exp(self.alpha),
-                                beta=torch.exp(self.beta),
-                                gamma=torch.exp(self.gamma),
-                                t_trans=torch.exp(self.t_trans),
-                                ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
-                                u0=torch.exp(self.u0),
-                                s0=torch.exp(self.s0),
-                                sigma_u = torch.exp(self.sigma_u),
-                                sigma_s = torch.exp(self.sigma_s),
-                                scaling=torch.exp(self.scaling))
-        else:
-            Uhat, Shat = odeBr(t, y_onehot, 
-                               neg_slope=0.0,
-                               alpha=torch.exp(self.alpha[:,gidx]),
-                               beta=torch.exp(self.beta[:,gidx]),
-                               gamma=torch.exp(self.gamma[:,gidx]),
-                               t_trans=torch.exp(self.t_trans),
-                               ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts[:,gidx]),
-                               u0=torch.exp(self.u0[:,gidx]),
-                               s0=torch.exp(self.s0[:,gidx]),
-                               sigma_u = torch.exp(self.sigma_u[gidx]),
-                               sigma_s = torch.exp(self.sigma_s[gidx]),
-                               scaling=torch.exp(self.scaling[gidx]))
-        return (Uhat*w.unsqueeze(-1)).sum(1), (Shat*w.unsqueeze(-1)).sum(1)
+            return ode_br(t, 
+                          y,
+                          self.par,
+                          neg_slope=0.0,
+                          alpha=torch.exp(self.alpha),
+                          beta=torch.exp(self.beta),
+                          gamma=torch.exp(self.gamma),
+                          t_trans=torch.exp(self.t_trans),
+                          ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
+                          u0=torch.exp(self.u0),
+                          s0=torch.exp(self.s0),
+                          sigma_u = torch.exp(self.sigma_u),
+                          sigma_s = torch.exp(self.sigma_s),
+                          scaling=torch.exp(self.scaling))
+        return ode_br(t, 
+                      y, 
+                      self.par,
+                      neg_slope=0.0,
+                      alpha=torch.exp(self.alpha[:,gidx]),
+                      beta=torch.exp(self.beta[:,gidx]),
+                      gamma=torch.exp(self.gamma[:,gidx]),
+                      t_trans=torch.exp(self.t_trans),
+                      ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts[:,gidx]),
+                      u0=torch.exp(self.u0[:,gidx]),
+                      s0=torch.exp(self.s0[:,gidx]),
+                      sigma_u = torch.exp(self.sigma_u[gidx]),
+                      sigma_s = torch.exp(self.sigma_s[gidx]),
+                      scaling=torch.exp(self.scaling[gidx]))
     
     def update_transition_ot(self, 
                              X_embed, 
@@ -518,16 +515,16 @@ class BrODE():
     
     
     
-    def forward(self, t, y_onehot):
-        uhat, shat = self.decoder.forward(t, y_onehot.float(), neg_slope=self.config['neg_slope'])
+    def forward(self, t, y):
+        uhat, shat = self.decoder.forward(t, y, neg_slope=self.config['neg_slope'])
         
         return uhat, shat
     
-    def evalModel(self, t, y_onehot, gidx=None):
+    def evalModel(self, t, y, gidx=None):
         """
         Run the full model with determinisic parent types.
         """
-        uhat, shat = self.decoder.predSU(t, y_onehot, gidx)
+        uhat, shat = self.decoder.predSU(t, y, gidx)
         
         return uhat, shat
     
@@ -585,8 +582,7 @@ class BrODE():
             xbatch, label_batch, tbatch, idx = batch[0].to(self.device), batch[1].to(self.device), batch[2].to(self.device), batch[4]
             u, s = xbatch[:,:xbatch.shape[1]//2],xbatch[:,xbatch.shape[1]//2:]
             
-            y_onehot_fix = F.one_hot(label_batch, self.decoder.Ntype)
-            uhat, shat = self.forward(tbatch, y_onehot_fix)
+            uhat, shat = self.forward(tbatch, label_batch.squeeze())
             
             loss = self.ODERisk(u, s,
                                 uhat, shat,
@@ -737,13 +733,12 @@ class BrODE():
             gene_idx = np.array(range(G))
         else:
             Uhat, Shat = np.zeros((N, len(gene_idx))), np.zeros((N, len(gene_idx)))
-        y_onehot_fix = F.one_hot(torch.tensor(cell_labels), self.decoder.Ntype).to(self.device)
         ll = 0
         with torch.no_grad():
             B = min(N//5, 5000)
             Nb = N // B
             for i in range(Nb):
-                uhat, shat = self.evalModel(t[i*B:(i+1)*B], y_onehot_fix[i*B:(i+1)*B])
+                uhat, shat = self.evalModel(t[i*B:(i+1)*B], torch.tensor(cell_labels[i*B:(i+1)*B]).to(self.device))
                 Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].cpu().numpy()
                 Shat[i*B:(i+1)*B] = shat[:, gene_idx].cpu().numpy()
                 loss = self.ODERisk(torch.tensor(data[i*B:(i+1)*B, :G]).float().to(self.device),
@@ -752,7 +747,7 @@ class BrODE():
                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
                 ll = ll - (B/N)*loss
             if(N > B*Nb):
-                uhat, shat = self.evalModel(t[B*Nb:], y_onehot_fix[B*Nb:])
+                uhat, shat = self.evalModel(t[B*Nb:], torch.tensor(cell_labels[B*Nb:]).to(self.device))
                 Uhat[Nb*B:] = uhat[:, gene_idx].cpu().numpy()
                 Shat[Nb*B:] = shat[:, gene_idx].cpu().numpy()
                 loss = self.ODERisk(torch.tensor(data[B*Nb:, :G]).float().to(self.device),
