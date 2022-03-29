@@ -500,7 +500,7 @@ class BrODE():
                                param_key,
                                device=self.device, 
                                checkpoint=checkpoint,
-                               graph_param)
+                               graph_param=graph_param)
     
     def setDevice(self, device):
         if('cuda' in device):
@@ -676,7 +676,7 @@ class BrODE():
         #define optimizer
         print("*********                 Creating optimizers                 *********")
         param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma,
-                    self.decoder.t_trans, self.decoder.dts, self.decoder.u0, self.decoder.s0]
+                    self.decoder.t_trans, self.decoder.dts]#, self.decoder.u0, self.decoder.s0]
         if(self.config["train_scaling"]):
             param_ode = param_ode+[self.decoder.scaling]
         if(self.config["train_std"]):
@@ -745,7 +745,7 @@ class BrODE():
             Nb = N // B
             for i in range(Nb):
                 uhat, shat = self.evalModel(t[i*B:(i+1)*B], torch.tensor(cell_labels[i*B:(i+1)*B]).to(self.device))
-                if(gene_idx is None):
+                if(gene_idx is not None):
                     Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].cpu().numpy()
                     Shat[i*B:(i+1)*B] = shat[:, gene_idx].cpu().numpy()
                 loss = self.ODERisk(torch.tensor(data[i*B:(i+1)*B, :G]).float().to(self.device),
@@ -755,7 +755,7 @@ class BrODE():
                 ll = ll - (B/N)*loss
             if(N > B*Nb):
                 uhat, shat = self.evalModel(t[B*Nb:], torch.tensor(cell_labels[B*Nb:]).to(self.device))
-                if(gene_idx is None):
+                if(gene_idx is not None):
                     Uhat[Nb*B:] = uhat[:, gene_idx].cpu().numpy()
                     Shat[Nb*B:] = shat[:, gene_idx].cpu().numpy()
                 loss = self.ODERisk(torch.tensor(data[B*Nb:, :G]).float().to(self.device),
@@ -812,7 +812,10 @@ class BrODE():
         
         X = np.concatenate((adata.layers['Mu'], adata.layers['Ms']), 1)
         t = adata.obs[self.tkey].to_numpy()
+        label_int = str2int(adata.obs[self.cluster_key],self.decoder.label_dic)
         
+        adata.obs[f"{key}_time"] = t
+        adata.obs[f"{key}_label"] = label_int
         adata.varm[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy()).T
         adata.varm[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy()).T
         adata.varm[f"{key}_gamma"] = np.exp(self.decoder.gamma.detach().cpu().numpy()).T
@@ -827,15 +830,14 @@ class BrODE():
         
         
         self.setMode('eval')
-        Uhat, Shat = self.predAll(torch.tensor(X).to(self.device), 
-                                  torch.tensor(t.reshape(-1,1)).to(self.device), 
-                                  str2int(adata.obs[self.cluster_key].to_numpy(), 
-                                  self.decoder.label_dic), 
-                                  adata.n_obs, 
-                                  adata.n_vars, 
-                                  np.array(range(adata.n_vars)))
-        adata.layers[f"{key}_uhat"] = Uhat.numpy()
-        adata.layers[f"{key}_shat"] = Shat.numpy()
+        Uhat, Shat, ll = self.predAll(X, 
+                                      torch.tensor(t.reshape(-1,1)).to(self.device), 
+                                      label_int, 
+                                      adata.n_obs, 
+                                      adata.n_vars, 
+                                      np.array(range(adata.n_vars)))
+        adata.layers[f"{key}_uhat"] = Uhat
+        adata.layers[f"{key}_shat"] = Shat
         
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
