@@ -17,12 +17,14 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
     """
     stats = {}
     if method=='scVelo':
-        Uhat, Shat, logp_train = getPredictionSCV(adata, key)
+        Uhat, Shat, logp_train = get_pred_scv(adata, key)
         logp_test = "N/A"
     elif method=='Vanilla VAE':
-        Uhat, Shat, logp_train, logp_test = getPredictionVanilla(adata, key, scv_key)
+        Uhat, Shat, logp_train, logp_test = get_pred_vanilla(adata, key, scv_key)
     elif method=='VeloVAE':
-        Uhat, Shat, logp_train, logp_test = getPredictionVAEpp(adata, key, scv_key)
+        Uhat, Shat, logp_train, logp_test = get_pred_velovae(adata, key, scv_key)
+    elif(method=='BrODE'):
+        Uhat, Shat, logp_train, logp_test = get_pred_brode(adata, key, scv_key)
 
     U, S = adata.layers['Mu'], adata.layers['Ms']
     if(method=='scVelo'):
@@ -30,6 +32,7 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
         test_idx = np.array([])
     else:
         train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
+    
     if(scv_mask):
         try:
             gene_mask = ~np.isnan(adata.var['fit_alpha'].to_numpy())
@@ -124,17 +127,16 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
         stats_i = getMetric(adata, method, keys[i], scv_key, (scv_key is not None) )
         stats[method] = stats_i
         if(method=='scVelo'):
-            t_i, Uhat_i, Shat_i = getPredictionSCVDemo(adata, keys[i], genes, Nplot)
+            t_i, Uhat_i, Shat_i = get_pred_scv_demo(adata, keys[i], genes, Nplot)
             Yhat[method] = np.concatenate((np.zeros((Nplot)), np.ones((Nplot))))
             V[method] = adata.layers["velocity"][:,gene_indices]
         elif(method=='Vanilla VAE'):
-            t_i, Uhat_i, Shat_i = getPredictionVanillaDemo(adata, keys[i], genes, Nplot)
+            t_i, Uhat_i, Shat_i = get_pred_vanilla_demo(adata, keys[i], genes, Nplot)
             Yhat[method] = None
             V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
         elif(method=='VeloVAE'):
-            Uhat_i, Shat_i, logp_train, logp_test = getPredictionVAEpp(adata, keys[i], None)
+            Uhat_i, Shat_i = get_pred_velovae_demo(adata, keys[i], genes)
             V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
-            
             t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
             cell_labels_raw = adata.obs["clusters"].to_numpy()
             cell_types_raw = np.unique(cell_labels_raw)
@@ -142,9 +144,12 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
             for i in range(len(cell_types_raw)):
                 cell_labels[cell_labels_raw==cell_types_raw[i]] = i
             Yhat[method] = cell_labels
+        elif(method=='BrODE'):
+            t_brode, y_brode, Uhat_i, Shat_i = get_pred_brode_demo(adata, keys[i], genes)
+            Yhat[method] = y_i
         That[method] = t_i
-        Uhat[method] = Uhat_i[:,gene_indices] if method=='VeloVAE' else Uhat_i
-        Shat[method] = Shat_i[:,gene_indices] if method=='VeloVAE' else Shat_i
+        Uhat[method] = Uhat_i
+        Shat[method] = Shat_i
     
     print("---     Post Analysis     ---")
     print(f"Dataset Size: {adata.n_obs} cells, {adata.n_vars} genes")
@@ -226,23 +231,25 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
         T = {}
         Labels_sig = {}
         Legends_sig = {}
+        
         for i, method in enumerate(methods):
+            Legends_sig[method] = cell_types_raw
             if(method=='scVelo'):
                 methods_ = np.concatenate((methods,['scVelo Global']))
                 T[method] = adata.layers[f"{keys[i]}_t"][:,gene_indices]
                 T['scVelo Global'] = adata.obs["latent_time"].to_numpy()*20
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs["clusters"].to_numpy()])
                 Labels_sig['scVelo Global'] = Labels_sig[method]
-                Legends_sig[method] = cell_types_raw
                 Legends_sig['scVelo Global'] = cell_types_raw
             elif(method=='Vanilla VAE' or method=='VeloVAE'):
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs["clusters"].to_numpy()])
-                Legends_sig[method] = cell_types_raw
+            elif(method=='BrODE'):
+                T[method] = t_brode
+                Labels_sig[method] = y_brode
             else:
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = adata.obs[f"{keys[i]}_label"].to_numpy()
-                Legends_sig[method] = cell_types_raw
 
         plot_sig_grid(grid_size[0], 
                       grid_size[1], 

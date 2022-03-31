@@ -26,12 +26,12 @@ def cellState(adata, method, key, gene_indices=None):
         return cell_state[:, gene_indices]
     return cell_state
 
-def getPredictionSCV(adata, key='fit'):
+def get_pred_scv(adata, key='fit'):
     Uhat, Shat = scvPred(adata, key)
     logp = np.sum(np.log(adata.var[f"{key}_likelihood"]))
     return Uhat, Shat, logp
 
-def getPredictionSCVDemo(adata, key='fit', genes=None, N=100):
+def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
     if(genes is None):
         genes = adata.var_names
     alpha, beta, gamma = adata.var[f"{key}_alpha"].to_numpy(),adata.var[f"{key}_beta"].to_numpy(),adata.var[f"{key}_gamma"].to_numpy()
@@ -49,7 +49,7 @@ def getPredictionSCVDemo(adata, key='fit', genes=None, N=100):
         Shat[:,i] = shat
     return T_demo, Uhat, Shat
 
-def getPredictionVanilla(adata, key, scv_key=None):
+def get_pred_vanilla(adata, key, scv_key=None):
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     #Vanilla VAE
     alpha = adata.var[f"{key}_alpha"].to_numpy()
@@ -82,7 +82,7 @@ def getPredictionVanilla(adata, key, scv_key=None):
     
     return Uhat, Shat, logp_train, logp_test
 
-def getPredictionVanillaDemo(adata, key, genes=None, N=100):
+def get_pred_vanilla_demo(adata, key, genes=None, N=100):
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()
     gamma = adata.var[f"{key}_gamma"].to_numpy()
@@ -100,19 +100,21 @@ def getPredictionVanillaDemo(adata, key, genes=None, N=100):
     
     return t_demo, Uhat_demo, Shat_demo
 
-def getPredictionVAEpp(adata, key, scv_key=None):
+def get_pred_velovae(adata, key, scv_key=None):
     U, S = adata.layers["Mu"], adata.layers["Ms"]
-    alpha = adata.var[f"{key}_alpha"].to_numpy()
-    beta = adata.var[f"{key}_beta"].to_numpy()
-    gamma = adata.var[f"{key}_gamma"].to_numpy()
-    t = adata.obs[f"{key}_time"].to_numpy()
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
     sigma_u, sigma_s = adata.var[f"{key}_sigma_u"].to_numpy(), adata.var[f"{key}_sigma_s"].to_numpy()
-    u0, s0 = adata.layers[f"{key}_u0"], adata.layers[f"{key}_s0"]
-    t0 = adata.obs[f"{key}_t0"].to_numpy()
-    
     if( (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers)):
-        Uhat, Shat = predSUNUmpy((t-t0).reshape(-1,1), u0, s0, alpha, beta, gamma)
+        rho = adata.layers[f"{key}_rho"]
+        alpha = adata.var[f"{key}_alpha"].to_numpy()
+        beta = adata.var[f"{key}_beta"].to_numpy()
+        gamma = adata.var[f"{key}_gamma"].to_numpy()
+        t = adata.obs[f"{key}_time"].to_numpy()
+        scaling = adata.var[f"{key}_scaling"].to_numpy()
+        
+        u0, s0 = adata.layers[f"{key}_u0"], adata.layers[f"{key}_s0"]
+        t0 = adata.obs[f"{key}_t0"].to_numpy()
+        
+        Uhat, Shat = predSUNUmpy((t-t0).reshape(-1,1), u0, s0, rho*alpha, beta, gamma)
         Uhat = Uhat*scaling
     else:
         Uhat, Shat = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
@@ -130,6 +132,120 @@ def getPredictionVAEpp(adata, key, scv_key=None):
         logp_train = np.nanmean(np.sum(logp_train[:,scv_mask],1))
         logp_test = np.nanmean(np.sum(logp_test[:,scv_mask],1))
     return Uhat, Shat, logp_train, logp_test
+
+def get_pred_velovae_demo(adata, key, genes=None):
+    if( (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers)):
+        alpha = adata.var[f"{key}_alpha"].to_numpy()
+        beta = adata.var[f"{key}_beta"].to_numpy()
+        gamma = adata.var[f"{key}_gamma"].to_numpy()
+        t = adata.obs[f"{key}_time"].to_numpy()
+        scaling = adata.var[f"{key}_scaling"].to_numpy()
+        sigma_u, sigma_s = adata.var[f"{key}_sigma_u"].to_numpy(), adata.var[f"{key}_sigma_s"].to_numpy()
+        u0, s0 = adata.layers[f"{key}_u0"], adata.layers[f"{key}_s0"]
+        t0 = adata.obs[f"{key}_t0"].to_numpy()
+        if(genes is None):
+            rho = adata.layers[f"{key}_rho"]
+            Uhat, Shat = predSUNUmpy((t-t0).reshape(-1,1), u0, s0, alpha, beta, gamma)
+            Uhat = Uhat*scaling
+        else:
+            gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
+            rho = adata.layers[f"{key}_rho"][:,gene_indices]
+            Uhat, Shat = predSUNUmpy((t-t0).reshape(-1,1), u0[:,gene_indices], s0[:,gene_indices], rho*alpha[gene_indices], beta[gene_indices], gamma[gene_indices])
+            Uhat = Uhat*scaling[gene_indices]
+    else:
+        if(genes is None):
+            Uhat, Shat = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
+        else:
+            gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
+            Uhat, Shat = adata.layers[f"{key}_uhat"][:,gene_indices], adata.layers[f"{key}_shat"][:,gene_indices]
+    
+    return Uhat, Shat
+
+
+def get_pred_brode(adata, key, scv_key=None):
+    U, S = adata.layers["Mu"], adata.layers["Ms"]
+    sigma_u, sigma_s = adata.var[f"{key}_sigma_u"].to_numpy(), adata.var[f"{key}_sigma_s"].to_numpy()
+    if( (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers)):
+        alpha = adata.varm[f"{key}_alpha"]
+        beta = adata.varm[f"{key}_beta"]
+        gamma = adata.varm[f"{key}_gamma"]
+        u0, s0 = adata.varm[f"{key}_u0"], adata.varm[f"{key}_s0"]
+        t_trans = adata.uns[f"{key}_t_trans"]
+        ts = adata.varm[f"{key}_ts"]
+        scaling = adata.var[f"{key}_scaling"].to_numpy()
+        par = np.argmax(adata.uns[f"{key}_w"], 1)
+        
+        t = adata.obs[f"{key}_time"].to_numpy()
+        y = adata.obs[f"{key}_label"]
+        
+        Uhat, Shat = ode_br_numpy(t.reshape(-1,1),
+                                  y,
+                                  par,
+                                  alpha=alpha,
+                                  beta=beta,
+                                  gamma=gamma,
+                                  t_trans=t_trans,
+                                  ts=ts,
+                                  scaling=scaling)
+        Uhat = Uhat*scaling
+    else:
+        Uhat, Shat = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
+    
+    train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
+    logp_train = -(U[train_idx]-Uhat[train_idx])**2/(2*sigma_u**2)-(S[train_idx]-Shat[train_idx])**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
+    logp_test = -(U[test_idx]-Uhat[test_idx])**2/(2*sigma_u**2)-(S[test_idx]-Shat[test_idx])**2/(2*sigma_s**2) - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
+    
+    
+    if(scv_key is None):
+        logp_train = np.nanmean(np.sum(logp_train,1))
+        logp_test = np.nanmean(np.sum(logp_test,1))
+    else:
+        scv_mask = ~np.isnan(adata.var[f"{scv_key}_alpha"].to_numpy())
+        logp_train = np.nanmean(np.sum(logp_train[:,scv_mask],1))
+        logp_test = np.nanmean(np.sum(logp_test[:,scv_mask],1))
+    
+    return Uhat, Shat, logp_train, logp_test
+
+def get_pred_brode_demo(adata, key, genes=None, N=100):
+    t_trans = adata.uns[f"{key}_t_trans"]
+    
+    
+    t = adata.obs[f"{key}_time"].to_numpy()
+    y = adata.obs[f"{key}_label"].to_numpy() #integer
+    par = np.argmax(adata.uns[f"{key}_w"], 1)
+    n_type = len(par)
+    t_demo = np.zeros((N*n_type))
+    y_demo = np.zeros((N*n_type))
+    for i in range(n_type):
+        y_demo[i*N:(i+1)*N] = N
+        t_demo[i*N:(i+1)*N] = np.linspace(t_trans[i], t[y==i].max(), N)
+    if(genes is None):
+        alpha = adata.varm[f"{key}_alpha"]
+        beta = adata.varm[f"{key}_beta"]
+        gamma = adata.varm[f"{key}_gamma"]
+        u0, s0 = adata.varm[f"{key}_u0"], adata.varm[f"{key}_s0"]
+        ts = adata.varm[f"{key}_ts"]
+        scaling = adata.var[f"{key}_scaling"].to_numpy()
+    else:
+        gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
+        alpha = adata.varm[f"{key}_alpha"][gene_indices]
+        beta = adata.varm[f"{key}_beta"][gene_indices]
+        gamma = adata.varm[f"{key}_gamma"][gene_indices]
+        u0, s0 = adata.varm[f"{key}_u0"][:,gene_indices], adata.varm[f"{key}_s0"][:,gene_indices]
+        ts = adata.varm[f"{key}_ts"][:,gene_indices]
+        scaling = adata.var[f"{key}_scaling"][gene_indices].to_numpy()
+    
+    Uhat_demo, Shat_demo = ode_br_numpy(t_demo,
+                                        y_demo,
+                                        par,
+                                        alpha=alpha,
+                                        beta=beta,
+                                        gamma=gamma,
+                                        t_trans=t_trans,
+                                        ts=ts,
+                                        scaling=scaling)
+    
+    return t_demo, Uhat_demo, Shat_demo
 
 def transition_prob_util(x_embed, t, cell_labels, nbin=20, epsilon = 0.05, batch_size = 5, lambda1 = 1, lambda2 = 50, max_iter = 2000, q = 0.01):
     cell_types = np.unique(cell_labels)
