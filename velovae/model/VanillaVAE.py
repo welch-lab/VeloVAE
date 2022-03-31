@@ -236,13 +236,13 @@ class VanillaVAE():
             "init_method": init_method,
             "init_key": init_key,
             "tprior":tprior,
-            "tail":0.05,
+            "tail":0.01,
             "time_overlap":0.5,
 
             #Training Parameters
             "n_epochs":500, 
-            "learning_rate":1e-4, 
-            "learning_rate_ode":1e-4, 
+            "learning_rate":2e-4, 
+            "learning_rate_ode":2e-4, 
             "lambda":1e-3, 
             "reg_t":1.0, 
             "neg_slope":0.0,
@@ -408,14 +408,12 @@ class VanillaVAE():
                 elbo_test = self.test(test_set, None, self.counter)
                 test_loss.append(elbo_test)
                 self.setMode('train')
-                if((self.counter // self.config["test_iter"]) % 10 == 0):
-                    print(f"Iteration {self.counter}: Test ELBO = {elbo_test:.3f}")
             
             optimizer.zero_grad()
             if(optimizer2 is not None):
                 optimizer2.zero_grad()
             batch = iterX.next()
-            xbatch, weight, idx = batch[0].float().to(self.device), batch[2].float().to(self.device), batch[3].to(self.device)
+            xbatch, weight, idx = batch[0].float().to(self.device), batch[2].float().to(self.device), batch[3]
             u = xbatch[:,:xbatch.shape[1]//2]
             s = xbatch[:,xbatch.shape[1]//2:]
             mu_tx, std_tx, t_global, uhat, shat = self.forward(xbatch)
@@ -427,9 +425,8 @@ class VanillaVAE():
                                 torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
                                 None,
                                 self.config["reg_t"])
-            loss_list.append(loss.detach().cpu().item())
-            with torch.autograd.detect_anomaly():
-                loss.backward()
+            #with torch.autograd.detect_anomaly():
+            loss.backward()
             
             if( optimizer2 is not None and ((i+1) % (K+1) == 0 or i==B-1)):
                 optimizer2.step()
@@ -530,22 +527,24 @@ class VanillaVAE():
                     train_loss_epoch, test_loss_epoch = self.train_epoch(data_loader, test_set, optimizer, optimizer_ode, self.config["K_alt"])
                 else:
                     train_loss_epoch, test_loss_epoch = self.train_epoch(data_loader, test_set, optimizer, None, self.config["K_alt"])
-            for loss in loss_train_epoch:
+            for loss in train_loss_epoch:
                 loss_train.append(loss)
-            for loss in loss_test_epoch:
+            for loss in test_loss_epoch:
                 loss_test.append(loss)
             
             if(plot and (epoch==0 or (epoch+1) % self.config["save_epoch"] == 0)):
                 elbo_train = self.test(train_set,
                                        Xembed[self.train_idx],
                                        f"train{epoch+1}", 
+                                       False,
                                        gind, 
                                        gene_plot,
                                        True, 
                                        figure_path)
                 self.setMode('train')
-                if(save):
-                    print(f"Epoch {epoch+1}: Train MSE = {elbo_train:.3f}, Test MSE = {elbo_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
+                elbo_test = loss_test[-1] if len(loss_test)>0 else -np.inf
+                print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f}, Test ELBO = {elbo_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
+                
                 if(len(loss_test)>1):
                     n_drop = n_drop + 1 if (loss_test[-1]-loss_test[-2]<=adata.n_vars*1e-3) else 0
                     if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
@@ -553,7 +552,7 @@ class VanillaVAE():
                         break
                 
                 
-        print("*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
+        print(f"*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
         plot_train_loss(loss_train, range(1,len(loss_train)+1),f'{figure_path}/train_loss_vanilla.png')
         plot_test_loss(loss_test, [i*self.config["test_iter"] for i in range(1,len(loss_test)+1)],f'{figure_path}/test_loss_vanilla.png')
         return
@@ -625,14 +624,15 @@ class VanillaVAE():
         if("shat" in output):
             out.append(Shat)
         if("t" in output):
-            output.append(t_out)
-            output.append(std_t_out)
+            out.append(t_out)
+            out.append(std_t_out)
         return out, elbo.cpu().item()/N
     
     def test(self,
              test_set, 
              Xembed,
              testid=0, 
+             test_mode=True,
              gind=None, 
              gene_plot=None,
              plot=False, 
@@ -643,7 +643,8 @@ class VanillaVAE():
         """
         self.setMode('eval')
         data = test_set.data
-        out, elbo = self.predAll(data, gene_idx=gind)
+        mode = "test" if test_mode else "train"
+        out, elbo = self.predAll(data, mode, gene_idx=gind)
         Uhat, Shat, t, std_t = out[0], out[1], out[2], out[3]
         
         G = data.shape[1]//2
@@ -651,7 +652,7 @@ class VanillaVAE():
             ton, toff = np.exp(self.decoder.ton.detach().cpu().numpy()), np.exp(self.decoder.toff.detach().cpu().numpy())
             state = np.ones(toff.shape)*(t.reshape(-1,1)>toff)+np.ones(ton.shape)*2*(t.reshape(-1,1)<ton)
             #Plot Time
-            plot_time(t, Xembed, f"Training Epoch {testid}", plot, path, f"{path}/time-{testid}-vanilla.png")
+            plot_time(t, Xembed, f"{path}/time-{testid}-vanilla.png")
             
             #Plot u/s-t and phase portrait for each gene
             for i in range(len(gind)):

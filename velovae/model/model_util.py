@@ -541,8 +541,6 @@ def ode_br(t, y, par, neg_slope=0.0, **kwargs):
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
     t_trans, ts = kwargs['t_trans'], kwargs['ts']
     u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
-    sigma_u = kwargs['sigma_u']
-    sigma_s = kwargs['sigma_s']
     scaling=kwargs["scaling"]
     
     Ntype, G = alpha.shape
@@ -550,8 +548,12 @@ def ode_br(t, y, par, neg_slope=0.0, **kwargs):
     
     tau0 = F.leaky_relu(t_trans.view(-1,1) - ts[par], neg_slope)
     u0_hat, s0_hat = predSU(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) 
-    u0_batch, s0_batch = u0_hat[y], s0_hat[y] #[N x G]
-    tau = F.leaky_relu(t - ts[y], neg_slope)
+    
+    mask = (t >= t_trans[y]).float()
+    par_batch = par[y]
+    u0_batch = u0_hat[y] * mask + u0_hat[par_batch] * (1-mask)
+    s0_batch = s0_hat[y] * mask + s0_hat[par_batch] * (1-mask) #[N x G]
+    tau = F.leaky_relu(t - ts[y], neg_slope) * mask + F.leaky_relu(t - ts[par_batch], neg_slope) * (1-mask)
     uhat, shat = predSU(tau,
                         u0_batch,
                         s0_batch,
@@ -564,8 +566,6 @@ def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
     t_trans, ts = kwargs['t_trans'], kwargs['ts']
     u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
-    sigma_u = kwargs['sigma_u']
-    sigma_s = kwargs['sigma_s']
     scaling=kwargs["scaling"]
     
     Ntype, G = alpha.shape
@@ -574,12 +574,14 @@ def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
     tau0 = np.clip(t_trans.reshape(-1,1) - ts, 0, None)
     u0_hat, s0_hat = predSUNumpy(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) #[Ntype x G]
     
+    
     uhat, shat = np.zeros((N,G)), np.zeros((N,G))
     for i in range(Ntype):
-        tau = np.clip(t[y==i].reshape(-1,1) - ts[i], 0, None)
+        mask = (t[y==i] >= t_trans[y])
+        tau = np.clip(t[y==i].reshape(-1,1) - ts[i], 0, None) * mask + np.clip(t[y==i].reshape(-1,1) - ts[par[i]], 0, None) * (1-mask)
         uhat_i, shat_i = predSUNumpy(tau,
-                                     u0_hat[i],
-                                     s0_hat[i],
+                                     u0_hat[i]*mask+u0_hat[par[i]]*(1-mask),
+                                     s0_hat[i]*mask+s0_hat[par[i]]*(1-mask),
                                      alpha[i],
                                      beta[i],
                                      gamma[i])

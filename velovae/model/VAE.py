@@ -376,10 +376,8 @@ class VAE(VanillaVAE):
                                       None, 
                                       self.counter, 
                                       True)
-                
                 test_loss.append(elbo_test)
                 self.setMode('train')
-                print(f"Iteration {self.counter}: Test ELBO = {elbo_test:.3f}")
             
             optimizer.zero_grad()
             if(optimizer2 is not None):
@@ -531,6 +529,8 @@ class VAE(VanillaVAE):
                                        True, 
                                        figure_path)
                 self.setMode('train')
+                elbo_test = loss_test[-1] if len(loss_test)>0 else -np.inf
+                print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f}, Test ELBO = {elbo_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
             
             if(len(loss_test)>1):
                 for i in range(len(loss_test_epoch)):
@@ -594,6 +594,8 @@ class VAE(VanillaVAE):
                                        True, 
                                        figure_path)
                 self.decoder.train()
+                elbo_test = loss_test[-1] if len(loss_test)>0 else -np.inf
+                print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f}, Test ELBO = {elbo_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
             
             if(len(loss_test)>n_test1+1):
                 for i in range(len(loss_test_epoch)):
@@ -748,7 +750,7 @@ class VAE(VanillaVAE):
 
         if(plot):
             #Plot Time
-            plot_time(t, Xembed, f"{path}/{testid}-velovae.png")
+            plot_time(t, Xembed, f"{path}/time-{testid}-velovae.png")
             
             #Plot u/s-t and phase portrait for each gene
             for i in range(len(gind)):
