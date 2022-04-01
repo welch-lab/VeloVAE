@@ -331,11 +331,14 @@ def edmond_chu_liu(graph, r):
 
     #step 3: cycle detection using BFS
     loop, v_outside = check_loop(adj_list_pruned, n_type)
+    #print(loop, v_outside)
 
     #step 4: recursive call
     mst = np.zeros((n_type, n_type))
     if(len(loop)>0):
         v_map, v_to_loop, loop_to_v, graph_merged = merge_nodes(graph, parents, n_type, loop, v_outside)
+        #print("Merged")
+        #print(graph_merged)
         
         vc = v_map[loop[0]]
         mst_merged = edmond_chu_liu(graph_merged, v_map[r]) #adjacency matrix
@@ -425,13 +428,22 @@ class TransGraph():
                                     k,
                                     soft_assign)
         psum = P_raw.sum(1)
-        P = P_raw/psum.reshape(-1,1)
-
+        P_raw = P_raw/psum.reshape(-1,1)
+        
+        P = np.zeros(P_raw.shape)
         for i in range(P.shape[0]):
-            P[i,i] = 0
-            idx_sort = np.argsort(P[i])
-            for j in range(P.shape[0]-n_par):
-                P[i,idx_sort[j]] = 0
+            idx_sort = np.flip(np.argsort(P_raw[i]))
+            count = 0
+            for j in range(P.shape[1]):
+                if(not idx_sort[j]==i):
+                    P[i,idx_sort[j]] = P_raw[i,idx_sort[j]]
+                    count = count + 1
+                if(count==n_par):
+                    break
+            assert P[i,i] == 0
+            for j in range(P.shape[1]): #Prevents disconnected parts in the same partition
+                if(t_init[j]<t_init[i]):
+                    P[i,j] += 1e-3
             
         psum = P.sum(1)
         P = P/psum.reshape(-1,1)
@@ -450,8 +462,18 @@ class TransGraph():
             if(check_connected(adj_list, root, len(vs_part))):
                 mst_part = edmond_chu_liu(graph_part, root)
             else:    
-                print("Warning: graph is disconnected! Using the fully-connected graph instead.")
-                graph_part = np.log(P_raw[vs_part][:, vs_part])
+                print("Warning: graph is disconnected! Using the unpruned graph instead.")
+                P_part = P_raw[vs_part][:, vs_part]
+                psum = P_part.sum(1)
+                P_part = P_part/psum.reshape(-1,1)
+                self.w[vs_part][:, vs_part] = P_part
+                
+                graph_part = np.log(P_part)
+                adj_list = adj_matrix_to_list(graph_part)
+                #if(not check_connected(adj_list, root, len(vs_part))):
+                #    print("Warning: the full graph is disconnected! Using the fully-connected graph instead.")
+                    
+                    
                 mst_part = edmond_chu_liu(graph_part, root)
                 
             
