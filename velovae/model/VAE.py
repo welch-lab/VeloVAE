@@ -126,14 +126,17 @@ class decoder(nn.Module):
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_s"].to_numpy()), device=device).float())
             elif(init_method == "random"):
                 print("Random Initialization.")
-                
-                self.alpha = nn.Parameter(torch.normal(0.0, 1.0, size=(U.shape[1],), device=device).float())
-                self.beta =  nn.Parameter(torch.normal(0.0, 1.0, size=(U.shape[1],), device=device).float())
-                self.gamma = nn.Parameter(torch.normal(0.0, 1.0, size=(U.shape[1],), device=device).float())
+                #alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
+                self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
+                self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
+                self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
                 self.ton = torch.nn.Parameter(torch.ones(adata.n_vars, device=device).float()*(-10))
                 self.scaling = nn.Parameter(torch.tensor(np.log(np.std(U,0)/np.std(S,0)), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(np.std(U,0)), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(np.std(S,0)), device=device).float())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(np.std(U,0))-2, device=device).float())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(np.std(S,0))-2, device=device).float())
+                #self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
+                #self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+                #self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
             elif(init_method == "tprior"):
                 print("Initialization using prior time.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
@@ -246,18 +249,18 @@ class VAE(VanillaVAE):
             "init_method":init_method,
             "init_key":init_key,
             "tprior":tprior,
-            "tail":0.05,
+            "tail":0.01,
             "time_overlap":0.5,
-            "n_neighbors":30,
-            "dt": (0.03,0.05),
+            "n_neighbors":10,
+            "dt": (0.03,0.06),
             "n_bin": None,
             
             #Training Parameters
-            "n_epochs":250, 
-            "n_epochs_post":250,
-            "learning_rate":1e-4, 
-            "learning_rate_ode":1e-4, 
-            "learning_rate_post":2e-5,
+            "n_epochs":1000, 
+            "n_epochs_post":1000,
+            "learning_rate":2e-4, 
+            "learning_rate_ode":2e-4, 
+            "learning_rate_post":2e-4,
             "lambda":1e-3, 
             "lambda_rho":1e-3,
             "reg_t":1.0, 
@@ -483,8 +486,11 @@ class VAE(VanillaVAE):
         if(self.config['train_ton']):
             param_ode.append(self.decoder.ton)
         if(self.config['train_scaling']):
+            self.decoder.scaling.requires_grad = True
             param_ode = param_ode+[self.decoder.scaling]
         if(self.config['train_std']):
+            self.decoder.sigma_u.requires_grad = True
+            self.decoder.sigma_s.requires_grad = True
             param_ode = param_ode+[self.decoder.sigma_u, self.decoder.sigma_s]
 
         optimizer = torch.optim.Adam(param_nn, lr=self.config["learning_rate"], weight_decay=self.config["lambda"])
@@ -532,8 +538,8 @@ class VAE(VanillaVAE):
                 elbo_test = loss_test[-1] if len(loss_test)>0 else -np.inf
                 print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f}, Test ELBO = {elbo_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
             
-            if(len(loss_test)>1):
-                for i in range(len(loss_test_epoch)):
+            if(len(loss_test)>2):
+                for i in range(len(loss_test_epoch)-1):
                     n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*1e-3) else 0
                 if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
                     print(f"*********       Stage 1: Early Stop Triggered at epoch {epoch+1}.       *********")
@@ -541,6 +547,7 @@ class VAE(VanillaVAE):
                     
         n_stage1 = epoch+1
         n_test1 = len(loss_test)
+        
         
         print("*********                      Stage  2                       *********")
         self.encoder.eval()
@@ -594,8 +601,8 @@ class VAE(VanillaVAE):
                                        True, 
                                        figure_path)
                 self.decoder.train()
-                elbo_test = loss_test[-1] if len(loss_test)>0 else -np.inf
-                print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f}, Test ELBO = {elbo_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
+                elbo_test = loss_test[-1] if len(loss_test)>n_test1 else -np.inf
+                print(f"Epoch {epoch+n_stage1+1}: Train ELBO = {elbo_train:.3f}, Test ELBO = {elbo_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
             
             if(len(loss_test)>n_test1+1):
                 for i in range(len(loss_test_epoch)):
