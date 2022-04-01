@@ -550,9 +550,9 @@ def ode_br(t, y, par, neg_slope=0.0, **kwargs):
     u0_hat, s0_hat = predSU(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) 
     
     mask = (t >= t_trans[y]).float()
-    par_batch = par[y]
-    u0_batch = u0_hat[y] * mask + u0_hat[par_batch] * (1-mask)
-    s0_batch = s0_hat[y] * mask + s0_hat[par_batch] * (1-mask) #[N x G]
+    par_batch = par[y].squeeze()
+    u0_batch = u0_hat[par_batch] * mask + u0_hat[par_batch] * (1-mask)
+    s0_batch = s0_hat[par_batch] * mask + s0_hat[par_batch] * (1-mask) #[N x G]
     tau = F.leaky_relu(t - ts[y], neg_slope) * mask + F.leaky_relu(t - ts[par_batch], neg_slope) * (1-mask)
     uhat, shat = predSU(tau,
                         u0_batch,
