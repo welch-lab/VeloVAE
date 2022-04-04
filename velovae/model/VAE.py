@@ -101,13 +101,13 @@ class decoder(nn.Module):
         
         
         if(checkpoint is not None):
-            self.alpha = nn.Parameter(torch.empty(G, device=device).float())
-            self.beta = nn.Parameter(torch.empty(G, device=device).float())
-            self.gamma = nn.Parameter(torch.empty(G, device=device).float())
-            self.scaling = nn.Parameter(torch.empty(G, device=device).float())
-            self.ton = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_u = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_s = nn.Parameter(torch.empty(G, device=device).float())
+            self.alpha = nn.Parameter(torch.empty(G, device=device).double())
+            self.beta = nn.Parameter(torch.empty(G, device=device).double())
+            self.gamma = nn.Parameter(torch.empty(G, device=device).double())
+            self.scaling = nn.Parameter(torch.empty(G, device=device).double())
+            self.ton = nn.Parameter(torch.empty(G, device=device).double())
+            self.sigma_u = nn.Parameter(torch.empty(G, device=device).double())
+            self.sigma_s = nn.Parameter(torch.empty(G, device=device).double())
             
             self.load_state_dict(torch.load(checkpoint, map_location=device))
         else:
@@ -117,26 +117,26 @@ class decoder(nn.Module):
             U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
             X = np.concatenate((U,S),1)
             if(init_method == "existing" and init_key is not None):
-                self.alpha = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_alpha"].to_numpy()), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_beta"].to_numpy()), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_gamma"].to_numpy()), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_scaling"].to_numpy()), device=device).float())
-                self.ton = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_ton"].to_numpy()), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_u"].to_numpy()), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_s"].to_numpy()), device=device).float())
+                self.alpha = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_alpha"].to_numpy()), device=device).double())
+                self.beta = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_beta"].to_numpy()), device=device).double())
+                self.gamma = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_gamma"].to_numpy()), device=device).double())
+                self.scaling = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_scaling"].to_numpy()), device=device).double())
+                self.ton = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_ton"].to_numpy()), device=device).double())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_u"].to_numpy()), device=device).double())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_s"].to_numpy()), device=device).double())
             elif(init_method == "random"):
                 print("Random Initialization.")
                 #alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
-                self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
-                self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
-                self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
-                self.ton = torch.nn.Parameter(torch.ones(adata.n_vars, device=device).float()*(-10))
-                self.scaling = nn.Parameter(torch.tensor(np.log(np.std(U,0)/np.std(S,0)), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(np.std(U,0))-2, device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(np.std(S,0))-2, device=device).float())
-                #self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                #self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                #self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).double())
+                self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).double())
+                self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).double())
+                self.ton = torch.nn.Parameter(torch.ones(adata.n_vars, device=device).double()*(-10))
+                self.scaling = nn.Parameter(torch.tensor(np.log(np.std(U,0)/np.std(S,0)), device=device).double())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(np.std(U,0))-2, device=device).double())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(np.std(S,0))-2, device=device).double())
+                #self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
+                #self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
+                #self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
             elif(init_method == "tprior"):
                 print("Initialization using prior time.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
@@ -150,13 +150,13 @@ class decoder(nn.Module):
                 toff = getTsGlobal(self.t_init, U/scaling, S, 95)
                 alpha, beta, gamma, ton = reinitParams(U/scaling, S, self.t_init, toff)
                 
-                self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+                self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).double())
+                self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).double())
+                self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).double())
+                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
+                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).double()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).double())
             else:
                 print("Initialization using the steady-state and dynamical models.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
@@ -172,13 +172,13 @@ class decoder(nn.Module):
                 toff = getTsGlobal(self.t_init, U/scaling, S, 95)
                 alpha, beta, gamma, ton = reinitParams(U/scaling, S, self.t_init, toff)
                 
-                self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).double())
+                self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).double())
+                self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).double())
+                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
+                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).double()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).double())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
         
 
         self.scaling.requires_grad = False
@@ -287,7 +287,7 @@ class VAE(VanillaVAE):
         G = adata.n_vars
         self.Cz = Cz
         try:
-            self.encoder = encoder(2*G, Cz, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0]).float()
+            self.encoder = encoder(2*G, Cz, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0]).double()
         except IndexError:
             print('Please provide two dimensions!')
         
@@ -301,7 +301,7 @@ class VAE(VanillaVAE):
                                device=self.device, 
                                init_method = init_method,
                                init_key = init_key,
-                               checkpoint=checkpoints[1]).float()
+                               checkpoint=checkpoints[1]).double()
         self.Tmax=Tmax
         self.time_distribution = time_distribution
         self.getPrior(adata, time_distribution, Tmax, tprior)
@@ -386,7 +386,7 @@ class VAE(VanillaVAE):
             if(optimizer2 is not None):
                 optimizer2.zero_grad()
             #batch = iterX.next()
-            xbatch, idx = batch[0].float().to(self.device), batch[3]
+            xbatch, idx = batch[0].double().to(self.device), batch[3]
             u = xbatch[:,:xbatch.shape[1]//2]
             s = xbatch[:,xbatch.shape[1]//2:]
             
@@ -539,7 +539,7 @@ class VAE(VanillaVAE):
                 print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f}, Test ELBO = {elbo_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
             
             if(len(loss_test)>2):
-                for i in range(len(loss_test_epoch)-1):
+                for i in range(len(loss_test_epoch)):
                     n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*1e-3) else 0
                 if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
                     print(f"*********       Stage 1: Early Stop Triggered at epoch {epoch+1}.       *********")
@@ -641,7 +641,7 @@ class VAE(VanillaVAE):
             B = min(N//5, 5000)
             Nb = N // B
             for i in range(Nb):
-                data_in = torch.tensor(data[i*B:(i+1)*B]).float().to(self.device)
+                data_in = torch.tensor(data[i*B:(i+1)*B]).double().to(self.device)
                 if(mode=="test"):
                     u0 = torch.tensor(self.u0[self.test_idx[i*B:(i+1)*B]], dtype=float, device=self.device) if self.use_knn else None
                     s0 = torch.tensor(self.s0[self.test_idx[i*B:(i+1)*B]], dtype=float, device=self.device) if self.use_knn else None
@@ -682,7 +682,7 @@ class VAE(VanillaVAE):
                     z_out[i*B:(i+1)*B] = mu_zx.cpu().numpy()
                     std_z_out[i*B:(i+1)*B] = std_zx.cpu().numpy()
             if(N > B*Nb):
-                data_in = torch.tensor(data[Nb*B:]).float().to(self.device)
+                data_in = torch.tensor(data[Nb*B:]).double().to(self.device)
                 if(mode=="test"):
                     u0 = torch.tensor(self.u0[self.test_idx[Nb*B:]], dtype=float, device=self.device) if self.use_knn else None
                     s0 = torch.tensor(self.s0[self.test_idx[Nb*B:]], dtype=float, device=self.device) if self.use_knn else None
@@ -814,9 +814,9 @@ class VAE(VanillaVAE):
             B = min(U.shape[0]//10, 1000)
             Nb = U.shape[0] // B
             for i in range(Nb):
-                rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[i*B:(i+1)*B]).float().to(self.device))))
+                rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[i*B:(i+1)*B]).double().to(self.device))))
                 rho[i*B:(i+1)*B] = rho_batch.cpu().numpy()
-            rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[Nb*B:]).float().to(self.device))))
+            rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[Nb*B:]).double().to(self.device))))
             rho[Nb*B:] = rho_batch.cpu().numpy()
         
         adata.layers[f"{key}_rho"] = rho
