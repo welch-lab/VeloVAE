@@ -538,47 +538,53 @@ def reinitTypeParams(U, S, t, ts, cell_labels, cell_types, init_types):
 
 
 def ode_br(t, y, par, neg_slope=0.0, **kwargs):
+    """
+    t: [B x 1]
+    y: [B]
+    par: [Ntype]
+    """
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
-    t_trans, ts = kwargs['t_trans'], kwargs['ts']
+    t_trans = kwargs['t_trans']
     u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
     scaling=kwargs["scaling"]
     
     Ntype, G = alpha.shape
     N = t.shape[0]
     
-    tau0 = F.leaky_relu(t_trans.view(-1,1) - ts[par], neg_slope)
+    tau0 = F.leaky_relu((t_trans - t_trans[par]).view(-1,1), neg_slope)
     u0_hat, s0_hat = predSU(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) 
     
-    mask = (t >= t_trans[y]).float()
-    par_batch = par[y].squeeze()
-    u0_batch = u0_hat[par_batch] * mask + u0_hat[par_batch] * (1-mask)
-    s0_batch = s0_hat[par_batch] * mask + s0_hat[par_batch] * (1-mask) #[N x G]
-    tau = F.leaky_relu(t - ts[y], neg_slope) * mask + F.leaky_relu(t - ts[par_batch], neg_slope) * (1-mask)
+    #For cells with time violation, we use its parent type 
+    mask = (t >= t_trans[y].view(-1,1)).float()
+    par_batch = par[y]
+    u0_batch = u0_hat[y] * mask + u0_hat[par_batch] * (1-mask)
+    s0_batch = s0_hat[y] * mask + s0_hat[par_batch] * (1-mask) #[N x G]
+    tau = F.leaky_relu(t - t_trans[y].view(-1,1), neg_slope) * mask + F.leaky_relu(t - t_trans[par_batch].view(-1,1), neg_slope) * (1-mask)
     uhat, shat = predSU(tau,
                         u0_batch,
                         s0_batch,
-                        alpha[y],
-                        beta[y],
-                        gamma[y])
+                        alpha[y] * mask + alpha[par_batch] * (1-mask),
+                        beta[y] * mask + beta[par_batch] * (1-mask),
+                        gamma[y] * mask + gamma[par_batch] * (1-mask))
     return uhat * scaling, shat
 
 def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
-    t_trans, ts = kwargs['t_trans'], kwargs['ts']
+    t_trans = kwargs['t_trans']
     u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
     scaling=kwargs["scaling"]
     
     Ntype, G = alpha.shape
     N = t.shape[0]
     
-    tau0 = np.clip(t_trans.reshape(-1,1) - ts, 0, None)
+    tau0 = np.clip((t_trans - t_trans[par]).reshape(-1,1), 0, None)
     u0_hat, s0_hat = predSUNumpy(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) #[Ntype x G]
     
     
     uhat, shat = np.zeros((N,G)), np.zeros((N,G))
     for i in range(Ntype):
-        mask = (t[y==i] >= t_trans[y])
-        tau = np.clip(t[y==i].reshape(-1,1) - ts[i], 0, None) * mask + np.clip(t[y==i].reshape(-1,1) - ts[par[i]], 0, None) * (1-mask)
+        mask = (t[y==i] >= t_trans[i])
+        tau = np.clip(t[y==i].reshape(-1,1) - t_trans[i], 0, None) * mask + np.clip(t[y==i].reshape(-1,1) - t_trans[par[i]], 0, None) * (1-mask)
         uhat_i, shat_i = predSUNumpy(tau,
                                      u0_hat[i]*mask+u0_hat[par[i]]*(1-mask),
                                      s0_hat[i]*mask+s0_hat[par[i]]*(1-mask),
@@ -1179,7 +1185,7 @@ def knn_transition_prob(t,
     dist_thred = np.quantile(ind, 0.25)
     """
     for i in range(n_type):
-        t0[i] = np.quantile(t[cell_labels==i], 0.02)
+        t0[i] = np.quantile(t[cell_labels==i], 0.01)
         sigma_t[i] = t[cell_labels==i].std()
     if(soft_assign):
         A = csr_matrix((N, N))
