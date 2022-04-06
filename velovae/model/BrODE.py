@@ -11,7 +11,7 @@ import time
 import matplotlib.pyplot as plt
 from cellrank.tl.kernels import PseudotimeKernel
 
-from velovae.plotting import plot_sig, plot_time, plot_train_loss, plot_test_loss
+from velovae.plotting import plot_sig, plot_time, plot_train_loss, plot_test_loss, plotUmapTransition
 
 from .model_util import  histEqual, convertTime, initParams, getTsGlobal, reinitTypeParams, predSU, getGeneIndex
 from .model_util import ode_br, optimal_transport_duality_gap, optimal_transport_duality_gap_ts, encode_type, str2int, int2str
@@ -245,14 +245,24 @@ class decoder(nn.Module):
         cell_types_int = str2int(self.cell_types, self.label_dic)
         self.Ntype = len(cell_types_int)
         
+        #Transition Graph
+        tgraph = TransGraph(adata, tkey, embed_key, cluster_key, train_idx)
+        if(graph_param is None):
+            w = tgraph.compute_transition_deterministic(adata)
+        else:
+            w = tgraph.compute_transition_deterministic(adata, graph_param['n_par'], graph_param['dt'], graph_param['k'])
+        
+        self.w = torch.tensor(w, device=device)
+        self.par = torch.argmax(self.w, 1)
+        
         #Dynamical Model Parameters
         if(checkpoint is not None):
-            self.alpha = nn.Parameter(torch.empty(G, device=device).float())
-            self.beta = nn.Parameter(torch.empty(G, device=device).float())
-            self.gamma = nn.Parameter(torch.empty(G, device=device).float())
-            self.scaling = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_u = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_s = nn.Parameter(torch.empty(G, device=device).float())
+            self.alpha = nn.Parameter(torch.empty(G, device=device).double())
+            self.beta = nn.Parameter(torch.empty(G, device=device).double())
+            self.gamma = nn.Parameter(torch.empty(G, device=device).double())
+            self.scaling = nn.Parameter(torch.empty(G, device=device).double())
+            self.sigma_u = nn.Parameter(torch.empty(G, device=device).double())
+            self.sigma_s = nn.Parameter(torch.empty(G, device=device).double())
             
             self.load_state_dict(torch.load(checkpoint, map_location=device))
         else:
@@ -276,33 +286,24 @@ class decoder(nn.Module):
             
             alpha, beta, gamma, u0, s0 = reinitTypeParams(U/scaling, S, t, ts, cell_labels_int, cell_types_int, cell_types_int)
             
-            self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
-            self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
-            self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
+            self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).double())
+            self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).double())
+            self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).double())
             self.t_trans = nn.Parameter(torch.tensor(np.log(t_trans+1e-10), device=device).double())
-            self.dts = nn.Parameter(torch.tensor(np.log(dts+1e-10), device=device).double())
             self.u0 = nn.Parameter(torch.tensor(np.log(u0), device=device).double())
             self.s0 = nn.Parameter(torch.tensor(np.log(s0), device=device).double())
-            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-            self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-            self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
+            self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
+            self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
         
         self.t_trans.requires_grad = False
-        self.dts.requires_grad = False
         self.scaling.requires_grad = False
         self.sigma_u.requires_grad = False
         self.sigma_s.requires_grad = False
         self.u0.requires_grad=False
         self.s0.requires_grad=False
         
-        tgraph = TransGraph(adata, tkey, embed_key, cluster_key, train_idx)
-        if(graph_param is None):
-            w = tgraph.compute_transition_deterministic(adata)
-        else:
-            w = tgraph.compute_transition_deterministic(adata, graph_param['n_par'], graph_param['dt'], graph_param['k'])
         
-        self.w = torch.tensor(w, device=device)
-        self.par = torch.argmax(self.w, 1)
         #self.update_transition_ot(adata.obsm[embed_key][train_idx], t, cell_labels_raw[train_idx], nbin=40, q=0.02)
         #self.update_transition_similarity(adata, tkey, cluster_key)
         
@@ -320,7 +321,7 @@ class decoder(nn.Module):
                       beta=torch.exp(self.beta),
                       gamma=torch.exp(self.gamma),
                       t_trans=torch.exp(self.t_trans),
-                      ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
+                      #ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
                       u0=torch.exp(self.u0),
                       s0=torch.exp(self.s0),
                       sigma_u = torch.exp(self.sigma_u),
@@ -337,7 +338,7 @@ class decoder(nn.Module):
                           beta=torch.exp(self.beta),
                           gamma=torch.exp(self.gamma),
                           t_trans=torch.exp(self.t_trans),
-                          ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
+                          #ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
                           u0=torch.exp(self.u0),
                           s0=torch.exp(self.s0),
                           sigma_u = torch.exp(self.sigma_u),
@@ -351,7 +352,7 @@ class decoder(nn.Module):
                       beta=torch.exp(self.beta[:,gidx]),
                       gamma=torch.exp(self.gamma[:,gidx]),
                       t_trans=torch.exp(self.t_trans),
-                      ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts[:,gidx]),
+                      #ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts[:,gidx]),
                       u0=torch.exp(self.u0[:,gidx]),
                       s0=torch.exp(self.s0[:,gidx]),
                       sigma_u = torch.exp(self.sigma_u[gidx]),
@@ -439,7 +440,7 @@ class decoder(nn.Module):
                 idx_max = np.argmax(P[self.label_dic[x]])
                 P[self.label_dic[x]] = P[self.label_dic[x]] / P[self.label_dic[x]].sum()
                 
-        self.w = torch.tensor(P).float().to(self.alpha.device)
+        self.w = torch.tensor(P).double().to(self.alpha.device)
 
 
 
@@ -477,6 +478,7 @@ class BrODE():
             "save_epoch":100, 
             "batch_size":128, 
             "early_stop":5,
+            "early_stop_thred":adata.n_vars*1e-3,
             "train_test_split":0.7,
             "train_scaling":False, 
             "train_std":False, 
@@ -501,6 +503,11 @@ class BrODE():
                                device=self.device, 
                                checkpoint=checkpoint,
                                graph_param=graph_param)
+        
+        #class attributes for training
+        self.loss_train, self.loss_test = [], []
+        self.counter = 0 #Count the number of iterations
+        self.n_drop = 0 #Count the number of consecutive epochs with negative/low ELBO gain
     
     def setDevice(self, device):
         if('cuda' in device):
@@ -575,15 +582,22 @@ class BrODE():
         Training in each epoch
         """
         self.setMode('train')
-        train_loss, test_loss = [], []
+        stop_training = False
+        
         for i, batch in enumerate(train_loader):
-            self.counter = self.counter + 1
-            if( self.counter % self.config["test_iter"] == 0):
-                ll = self.test(test_set, self.counter)
-                
-                test_loss.append(ll)
+            if( self.counter==1 or self.counter % self.config["test_iter"] == 0):
+                ll_test = self.test(test_set, self.counter)
+                if(len(self.loss_test)>0):
+                    if(ll_test - self.loss_test[-1] <= self.config["early_stop_thred"]):
+                        self.n_drop = self.n_drop + 1
+                    else:
+                        self.n_drop = 0
+                #print(ll_test, self.n_drop)
+                self.loss_test.append(ll_test)
                 self.setMode('train')
-                print(f"Iteration {self.counter}: Test Log Likelihood = {ll:.3f}")
+                if(self.n_drop>=self.config["early_stop"] and self.config["early_stop"]>0):
+                    stop_training=True
+                    break
             
             optimizer.zero_grad()
             xbatch, label_batch, tbatch, idx = batch[0].to(self.device), batch[1].to(self.device), batch[2].to(self.device), batch[4]
@@ -594,12 +608,12 @@ class BrODE():
             loss = self.ODERisk(u, s,
                                 uhat, shat,
                                 torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
-            
-            train_loss.append(loss.detach().cpu().item())
             loss.backward()
             optimizer.step()
-        
-        return train_loss, test_loss
+            
+            self.loss_train.append(loss.detach().cpu().item())
+            self.counter = self.counter + 1
+        return stop_training
     
     def loadConfig(self, config):
         #We don't have to specify all the hyperparameters. Just pass the ones we want to modify.
@@ -648,6 +662,9 @@ class BrODE():
             self.decoder.sigma_u.requires_grad = True
             self.decoder.sigma_s.requires_grad = True
         
+        #if(plot):
+        #    plotUmapTransition()
+        
         print("------------------------ Train a Branching ODE ------------------------")
         #Get data loader
         X = np.concatenate((adata.layers['Mu'], adata.layers['Ms']), 1)
@@ -676,7 +693,7 @@ class BrODE():
         #define optimizer
         print("*********                 Creating optimizers                 *********")
         param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma,
-                    self.decoder.t_trans, self.decoder.dts]#, self.decoder.u0, self.decoder.s0]
+                     self.decoder.t_trans, self.decoder.u0, self.decoder.s0]
         if(self.config["train_scaling"]):
             param_ode = param_ode+[self.decoder.scaling]
         if(self.config["train_std"]):
@@ -690,21 +707,14 @@ class BrODE():
         print(f"Total Number of Iterations Per Epoch: {len(data_loader)}")
         
         n_epochs = self.config["n_epochs"]
-        loss_train, loss_test = [],[]
-        self.counter = 0 #Count the number of iterations
-        n_drop = 0 #Count the number of consecutive iterations with little decrease in loss
         
         start = time.time()
         
         for epoch in range(n_epochs):
             #Optimize the encoder
-            loss_train_epoch, loss_test_epoch = self.train_epoch(data_loader, 
-                                                                 test_set,
-                                                                 optimizer)
-            for loss in loss_train_epoch:
-                loss_train.append(loss)
-            for loss in loss_test_epoch:
-                loss_test.append(loss)
+            stop_training = self.train_epoch(data_loader, 
+                                             test_set,
+                                             optimizer)
             
             if(plot and (epoch==0 or (epoch+1) % self.config["save_epoch"] == 0)):
                 ll_train = self.test(train_set,
@@ -714,17 +724,16 @@ class BrODE():
                                      True, 
                                      figure_path)
                 self.setMode('train')
+                ll = -np.inf if len(self.loss_test)==0 else self.loss_test[-1]
+                print(f"Epoch {epoch+1}: Train Log Likelihood = {ll_train:.3f}, Test Log Likelihood = {ll:.3f}")
                 
-            if(len(loss_test)>1):
-                for i in range(len(loss_test_epoch)):
-                    n_drop = n_drop + 1 if (loss_test[-i-1]-loss_test[-i-2]<=adata.n_vars*1e-3) else 0
-                if(n_drop >= self.config["early_stop"] and self.config["early_stop"]>0):
-                    print(f"*********           Early Stop Triggered at epoch {epoch+1}.            *********")
-                    break
+            if(stop_training):
+                print(f"*********           Early Stop Triggered at epoch {epoch+1}.            *********")
+                break
         
         print("***     Finished Training     ***")
-        plot_train_loss(loss_train, range(1,len(loss_train)+1),f'{figure_path}/train_loss_brode.png')
-        plot_test_loss(loss_test, [i*self.config["test_iter"] for i in range(1,len(loss_test)+1)],f'{figure_path}/test_loss_brode.png')
+        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1),f'{figure_path}/train_loss_brode.png')
+        plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)],f'{figure_path}/test_loss_brode.png')
         return
     
     #ToDo 
@@ -748,8 +757,8 @@ class BrODE():
                 if(gene_idx is not None):
                     Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].cpu().numpy()
                     Shat[i*B:(i+1)*B] = shat[:, gene_idx].cpu().numpy()
-                loss = self.ODERisk(torch.tensor(data[i*B:(i+1)*B, :G]).float().to(self.device),
-                                    torch.tensor(data[i*B:(i+1)*B, G:]).float().to(self.device),
+                loss = self.ODERisk(torch.tensor(data[i*B:(i+1)*B, :G]).double().to(self.device),
+                                    torch.tensor(data[i*B:(i+1)*B, G:]).double().to(self.device),
                                     uhat, shat,
                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
                 ll = ll - (B/N)*loss
@@ -758,8 +767,8 @@ class BrODE():
                 if(gene_idx is not None):
                     Uhat[Nb*B:] = uhat[:, gene_idx].cpu().numpy()
                     Shat[Nb*B:] = shat[:, gene_idx].cpu().numpy()
-                loss = self.ODERisk(torch.tensor(data[B*Nb:, :G]).float().to(self.device),
-                                    torch.tensor(data[B*Nb:, G:]).float().to(self.device),
+                loss = self.ODERisk(torch.tensor(data[B*Nb:, :G]).double().to(self.device),
+                                    torch.tensor(data[B*Nb:, G:]).double().to(self.device),
                                     uhat, shat,
                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
                 ll = ll - ((N-B*Nb)/N)*loss
@@ -780,7 +789,7 @@ class BrODE():
         
         self.setMode('eval')
         
-        Uhat, Shat, ll = self.predAll(dataset.data, torch.tensor(dataset.time).float().to(self.device), dataset.labels, dataset.N, dataset.G, gind)
+        Uhat, Shat, ll = self.predAll(dataset.data, torch.tensor(dataset.time).double().to(self.device), dataset.labels, dataset.N, dataset.G, gind)
         
         cell_labels_raw = int2str(dataset.labels, self.decoder.label_dic_rev)
         if(plot):
@@ -792,7 +801,8 @@ class BrODE():
                          cell_labels_raw,
                          gene_plot[i],
                          f"{path}/sig-{gene_plot[i]}-{testid}.png",
-                         sparsify=self.config["sparsify"])
+                         sparsify=self.config["sparsify"],
+                         t_trans=self.decoder.t_trans.detach().cpu().exp().numpy())
                 
         return ll
     
@@ -820,7 +830,7 @@ class BrODE():
         adata.varm[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy()).T
         adata.varm[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy()).T
         adata.varm[f"{key}_gamma"] = np.exp(self.decoder.gamma.detach().cpu().numpy()).T
-        adata.varm[f"{key}_ts"] = np.exp(self.decoder.dts.detach().cpu().numpy()).T + np.exp(self.decoder.t_trans.detach().cpu().numpy())
+        #adata.varm[f"{key}_ts"] = np.exp(self.decoder.dts.detach().cpu().numpy()).T + np.exp(self.decoder.t_trans.detach().cpu().numpy())
         adata.uns[f"{key}_t_trans"] = np.exp(self.decoder.t_trans.detach().cpu().numpy())
         adata.varm[f"{key}_u0"] = np.exp(self.decoder.u0.detach().cpu().numpy()).T
         adata.varm[f"{key}_s0"] = np.exp(self.decoder.s0.detach().cpu().numpy()).T
