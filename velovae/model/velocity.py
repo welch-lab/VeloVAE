@@ -48,7 +48,7 @@ def rnaVelocityBrODE(adata, key, use_raw=False, use_scv_genes=False):
     alpha = adata.varm[f"{key}_alpha"].T
     beta = adata.varm[f"{key}_beta"].T
     gamma = adata.varm[f"{key}_gamma"].T
-    ts = adata.varm[f"{key}_ts"].T
+    #ts = adata.varm[f"{key}_ts"].T
     t_trans = adata.uns[f"{key}_t_trans"]
     u0 = adata.varm[f"{key}_u0"].T
     s0 = adata.varm[f"{key}_s0"].T
@@ -75,7 +75,7 @@ def rnaVelocityBrODE(adata, key, use_raw=False, use_scv_genes=False):
                                 beta=beta,
                                 gamma=gamma,
                                 t_trans=t_trans,
-                                ts=ts,
+                                #ts=ts,
                                 u0=u0,
                                 s0=s0)
             adata.layers["Uhat"] = U

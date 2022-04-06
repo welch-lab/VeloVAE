@@ -142,42 +142,39 @@ def plot_sig(t,
     else:
         fig, ax = plt.subplots(2,2,figsize=(24,12))
         labels_pred = kwargs['labels_pred'] if 'labels_pred' in kwargs else []
-        labels_demo = kwargs['labels_demo'] if 'labels_demo' in kwargs else labels_pred
+        labels_demo = kwargs['labels_demo'] if 'labels_demo' in kwargs else None
         cell_types = np.unique(cell_labels)
         
+        #Plot the input data in the true labels
         for i, type_ in enumerate(cell_types):
             mask_type = cell_labels==type_
-            ax[0,0].plot(tscv[mask_type][::D], u[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
-            ax[0,1].plot(tscv[mask_type][::D], s[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
+            ax[0,0].scatter(tscv[mask_type][::D], u[mask_type][::D],s=8.0, color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
+            ax[0,1].scatter(tscv[mask_type][::D], s[mask_type][::D],s=8.0, color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
             if(len(labels_pred) > 0):
                 mask_mytype = labels_pred==type_
-                ax[1,0].plot(t[mask_mytype][::D], u[mask_mytype][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
-                ax[1,1].plot(t[mask_mytype][::D], s[mask_mytype][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
+                ax[1,0].scatter(t[mask_mytype][::D], u[mask_mytype][::D],s=8.0,color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
+                ax[1,1].scatter(t[mask_mytype][::D], s[mask_mytype][::D],s=8.0,color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
             else:
-                ax[1,0].plot(t[mask_type][::D], u[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
-                ax[1,1].plot(t[mask_type][::D], s[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
+                ax[1,0].scatter(t[mask_type][::D], u[mask_type][::D],s=8.0,color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
+                ax[1,1].scatter(t[mask_type][::D], s[mask_type][::D],s=8.0,color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
 
         
-        if(len(labels_pred) > 0):
+        if(labels_demo is not None):
             for i, type_ in enumerate(cell_types):
                 mask_mytype = labels_demo==type_
                 order = np.argsort(tdemo[mask_mytype])
-                ax[1,0].plot(tdemo[mask_mytype][order], upred[mask_mytype][order], '.', color=colors[i%len(colors)], label=type_+" ode", linewidth=1.5)
-                ax[1,1].plot(tdemo[mask_mytype][order], spred[mask_mytype][order], '.', color=colors[i%len(colors)], label=type_+" ode", linewidth=1.5)
+                ax[1,0].plot(tdemo[mask_mytype][order], upred[mask_mytype][order], color=colors[i%len(colors)], linewidth=2.0)
+                ax[1,1].plot(tdemo[mask_mytype][order], spred[mask_mytype][order], color=colors[i%len(colors)], linewidth=2.0)
         else:
             order = np.argsort(tdemo)
-            ax[1,0].plot(tdemo[order], upred[order], 'k.', linewidth=1.5)
-            ax[1,1].plot(tdemo[order], spred[order], 'k.', linewidth=1.5)
+            ax[1,0].plot(tdemo[order], upred[order], 'k.', linewidth=2.0)
+            ax[1,1].plot(tdemo[order], spred[order], 'k.', linewidth=2.0)
 
-        if('ts' in kwargs and 't_trans' in kwargs):
-            ts = kwargs['ts']
+        if('t_trans' in kwargs):
             t_trans = kwargs['t_trans']
             for i, type_ in enumerate(cell_types):
-                for j in range(2):
-                    ax[j,0].plot([t_trans[i],t_trans[i]], [0, u.max()], '-x', color=colors[i%len(colors)])
-                    ax[j,0].plot([ts[i],ts[i]], [0, u.max()], '--x', color=colors[i%len(colors)])
-                    ax[j,1].plot([t_trans[i],t_trans[i]], [0, s.max()], '-x', color=colors[i%len(colors)])
-                    ax[j,1].plot([ts[i],ts[i]], [0, s.max()], '--x', color=colors[i%len(colors)])
+                ax[1,0].plot([t_trans[i],t_trans[i]], [0, u.max()], '-x', color=colors[i%len(colors)])
+                ax[1,1].plot([t_trans[i],t_trans[i]], [0, s.max()], '-x', color=colors[i%len(colors)])
         for j in range(2): 
             ax[j,0].set_xlabel("Time")
             ax[j,0].set_ylabel("U", fontsize=18)
@@ -198,7 +195,7 @@ def plot_sig(t,
             ax[1,0].set_title('Unspliced, VAE')
             ax[1,1].set_title('Spliced, VAE')
     
-    lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, bbox_to_anchor=(1.0,1.0), loc='upper left')
+    lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, ncol=4, bbox_to_anchor=(0.0, 1.0, 1.0, 0.25), loc='center')
     fig.suptitle(title)
     try:
         fig.savefig(figname,bbox_extra_artists=(lgd,), bbox_inches='tight')
