@@ -171,7 +171,7 @@ def get_pred_brode(adata, key, scv_key=None):
         gamma = adata.varm[f"{key}_gamma"]
         u0, s0 = adata.varm[f"{key}_u0"], adata.varm[f"{key}_s0"]
         t_trans = adata.uns[f"{key}_t_trans"]
-        ts = adata.varm[f"{key}_ts"]
+        #ts = adata.varm[f"{key}_ts"]
         scaling = adata.var[f"{key}_scaling"].to_numpy()
         par = np.argmax(adata.uns[f"{key}_w"], 1)
         
@@ -185,7 +185,7 @@ def get_pred_brode(adata, key, scv_key=None):
                                   beta=beta,
                                   gamma=gamma,
                                   t_trans=t_trans,
-                                  ts=ts,
+                                  #ts=ts,
                                   scaling=scaling)
         Uhat = Uhat*scaling
     else:
@@ -215,37 +215,39 @@ def get_pred_brode_demo(adata, key, genes=None, N=100):
     par = np.argmax(adata.uns[f"{key}_w"], 1)
     n_type = len(par)
     t_demo = np.zeros((N*n_type))
-    y_demo = np.zeros((N*n_type))
+    y_demo = np.zeros((N*n_type)).astype(int)
     for i in range(n_type):
-        y_demo[i*N:(i+1)*N] = N
+        y_demo[i*N:(i+1)*N] = i
         t_demo[i*N:(i+1)*N] = np.linspace(t_trans[i], t[y==i].max(), N)
     if(genes is None):
-        alpha = adata.varm[f"{key}_alpha"]
-        beta = adata.varm[f"{key}_beta"]
-        gamma = adata.varm[f"{key}_gamma"]
-        u0, s0 = adata.varm[f"{key}_u0"], adata.varm[f"{key}_s0"]
-        ts = adata.varm[f"{key}_ts"]
+        alpha = adata.varm[f"{key}_alpha"].T
+        beta = adata.varm[f"{key}_beta"].T
+        gamma = adata.varm[f"{key}_gamma"].T
+        u0, s0 = adata.varm[f"{key}_u0"].T, adata.varm[f"{key}_s0"].T
+        #ts = adata.varm[f"{key}_ts"].T
         scaling = adata.var[f"{key}_scaling"].to_numpy()
     else:
         gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
-        alpha = adata.varm[f"{key}_alpha"][gene_indices]
-        beta = adata.varm[f"{key}_beta"][gene_indices]
-        gamma = adata.varm[f"{key}_gamma"][gene_indices]
-        u0, s0 = adata.varm[f"{key}_u0"][:,gene_indices], adata.varm[f"{key}_s0"][:,gene_indices]
-        ts = adata.varm[f"{key}_ts"][:,gene_indices]
+        alpha = adata.varm[f"{key}_alpha"][gene_indices].T
+        beta = adata.varm[f"{key}_beta"][gene_indices].T
+        gamma = adata.varm[f"{key}_gamma"][gene_indices].T
+        u0, s0 = adata.varm[f"{key}_u0"][gene_indices].T, adata.varm[f"{key}_s0"][gene_indices].T
+        #ts = adata.varm[f"{key}_ts"][gene_indices].T
         scaling = adata.var[f"{key}_scaling"][gene_indices].to_numpy()
     
-    Uhat_demo, Shat_demo = ode_br_numpy(t_demo,
+    Uhat_demo, Shat_demo = ode_br_numpy(t_demo.reshape(-1,1),
                                         y_demo,
                                         par,
                                         alpha=alpha,
                                         beta=beta,
                                         gamma=gamma,
                                         t_trans=t_trans,
-                                        ts=ts,
+                                        #ts=ts,
+                                        u0=u0,
+                                        s0=s0,
                                         scaling=scaling)
     
-    return t_demo, Uhat_demo, Shat_demo
+    return t_demo, y_demo, Uhat_demo, Shat_demo
 
 def transition_prob_util(x_embed, t, cell_labels, nbin=20, epsilon = 0.05, batch_size = 5, lambda1 = 1, lambda2 = 50, max_iter = 2000, q = 0.01):
     cell_types = np.unique(cell_labels)

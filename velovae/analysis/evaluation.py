@@ -145,9 +145,10 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
                 cell_labels[cell_labels_raw==cell_types_raw[i]] = i
             Yhat[method] = cell_labels
         elif(method=='BrODE'):
-            t_brode, y_brode, Uhat_i, Shat_i = get_pred_brode_demo(adata, keys[i], genes)
-            Yhat[method] = y_i
+            t_i, y_brode, Uhat_i, Shat_i = get_pred_brode_demo(adata, keys[i], genes)
+            Yhat[method] = y_brode
         That[method] = t_i
+        t_brode = t_i
         Uhat[method] = Uhat_i
         Shat[method] = Shat_i
     
@@ -245,8 +246,8 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs["clusters"].to_numpy()])
             elif(method=='BrODE'):
-                T[method] = t_brode
-                Labels_sig[method] = y_brode
+                T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
+                Labels_sig[method] = adata.obs[f"{keys[i]}_label"].to_numpy()
             else:
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = adata.obs[f"{keys[i]}_label"].to_numpy()
