@@ -394,8 +394,9 @@ class TransGraph():
         
         #Partition the graph
         print("Graph Partition")
-        sc.pp.neighbors(adata, n_neighbors=k, key_added="lineage")
-        sc.tl.louvain(adata, resolution=res, key_added="partition", neighbors_key="lineage")
+        if(not "partition" in adata.obs):
+            sc.pp.neighbors(adata, n_neighbors=k, key_added="lineage")
+            sc.tl.louvain(adata, resolution=res, key_added="partition", neighbors_key="lineage")
         partition_labels = adata.obs["partition"].to_numpy() if train_idx is None else adata.obs["partition"][train_idx].to_numpy()
         lineages = np.unique(partition_labels)
         self.n_lineage = len(lineages)
@@ -414,7 +415,7 @@ class TransGraph():
         #Estimate initial time
         t_init = np.zeros((self.n_type))
         for i in (self.cell_types):
-            t_init[i] = np.quantile(self.t[self.cell_labels==i], 0.02)
+            t_init[i] = np.quantile(self.t[self.cell_labels==i], 0.01)
         #Compute cell-type transition probability
         print("Computing type-to-type transition probability")
         range_t = np.quantile(self.t, 0.99) - np.quantile(self.t, 0.01)
@@ -435,7 +436,7 @@ class TransGraph():
             idx_sort = np.flip(np.argsort(P_raw[i]))
             count = 0
             for j in range(P.shape[1]):
-                if(not idx_sort[j]==i):
+                if( (not idx_sort[j]==i) and (t_init[idx_sort[j]]<=t_init[i]) ):
                     P[i,idx_sort[j]] = P_raw[i,idx_sort[j]]
                     count = count + 1
                 if(count==n_par):
