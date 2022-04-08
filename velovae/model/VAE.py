@@ -549,7 +549,7 @@ class VAE(VanillaVAE):
                         break
             else:
                 if(epoch>=self.config["n_warmup"]):
-                    stop_training = self.train_epoch(data_loader, test_set, optimizer, optimizer_ode, self.config["k_alt"])
+                    stop_training = self.train_epoch(data_loader, test_set, optimizer_ode, optimizer, self.config["k_alt"])
                 else:
                     stop_training = self.train_epoch(data_loader, test_set, optimizer, None, self.config["k_alt"])
             
