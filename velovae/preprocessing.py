@@ -14,6 +14,7 @@ def preprocess(adata,
                npc=30,
                n_neighbors=30,
                umap_min_dist=0.5,
+               resolution=1.0,
                tkey=None):
     """
     Perform all kinds of preprocessing steps using scanpy
@@ -27,7 +28,7 @@ def preprocess(adata,
     moments(adata, n_pcs=npc, n_neighbors=n_neighbors)
     #3. Obtain cell clusters
     if(not 'clusters' in adata.obs):
-        scanpy.tl.leiden(adata, key_added='clusters')
+        scanpy.tl.leiden(adata, key_added='clusters', resolution=resolution)
     #4. Obtain Capture Time (If available)
     if(tkey is not None):
         capture_time = adata.obs[tkey].to_numpy()
