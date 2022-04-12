@@ -91,7 +91,7 @@ class decoder(nn.Module):
         self.net_rho = nn.Sequential(self.fc1, self.bn1, nn.LeakyReLU(), self.dpt1,
                                      self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2)
         
-        self.fc3 = nn.Linear(dim_z, N1).to(device)
+        self.fc3 = nn.Linear(dim_z+dim_cond, N1).to(device)
         self.bn3 = nn.BatchNorm1d(num_features=N1).to(device)
         self.dpt3 = nn.Dropout(p=0.2).to(device)
         self.fc4 = nn.Linear(N1, N2).to(device)
@@ -145,9 +145,9 @@ class decoder(nn.Module):
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(std_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(std_s), device=device).float())
                 """
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
             elif(init_method == "tprior"):
                 print("Initialization using prior time.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
@@ -226,7 +226,10 @@ class decoder(nn.Module):
             #Uhat, Shat = ode(t, alpha, torch.exp(self.beta), torch.exp(self.gamma), self.ton.exp(), self.toff.exp(), neg_slope)
             Uhat, Shat = predSU(F.leaky_relu(t - self.ton.exp(), neg_slope), 0, 0, alpha, self.beta.exp(), self.gamma.exp())
         else:
-            rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
+            if(condition is None):
+                rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
+            else:
+                rho = torch.sigmoid(self.fc_out2(self.net_rho2(torch.cat((z,condition),1))))
             alpha = self.alpha.exp()*rho
             Uhat, Shat = predSU(F.leaky_relu(t-t0, neg_slope), u0/self.scaling.exp(), s0, alpha, self.beta.exp(), self.gamma.exp())
         Uhat = Uhat * torch.exp(self.scaling)
@@ -928,13 +931,13 @@ class decoder_fullvb(nn.Module):
         
         sigma_param = np.log(0.05)
         if(checkpoint is not None):
-            self.alpha = nn.Parameter(torch.empty((2,G), device=device).float())
-            self.beta = nn.Parameter(torch.empty((2,G), device=device).float())
-            self.gamma = nn.Parameter(torch.empty((2,G), device=device).float())
-            self.scaling = nn.Parameter(torch.empty(G, device=device).float())
-            self.ton = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_u = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_s = nn.Parameter(torch.empty(G, device=device).float())
+            self.alpha = nn.Parameter(torch.empty((2,G), device=device).double())
+            self.beta = nn.Parameter(torch.empty((2,G), device=device).double())
+            self.gamma = nn.Parameter(torch.empty((2,G), device=device).double())
+            self.scaling = nn.Parameter(torch.empty(G, device=device).double())
+            self.ton = nn.Parameter(torch.empty(G, device=device).double())
+            self.sigma_u = nn.Parameter(torch.empty(G, device=device).double())
+            self.sigma_s = nn.Parameter(torch.empty(G, device=device).double())
             
             self.load_state_dict(torch.load(checkpoint, map_location=device))
         else:
@@ -944,20 +947,20 @@ class decoder_fullvb(nn.Module):
             U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
             X = np.concatenate((U,S),1)
             if(init_method == "existing" and init_key is not None):
-                self.alpha = nn.Parameter(torch.tensor(np.stack([np.log(adata.var[f"{init_key}_alpha"].to_numpy()), sigma_param*np.ones((G))]), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.stack([np.log(adata.var[f"{init_key}_beta"].to_numpy()), sigma_param*np.ones((G))]), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.stack([np.log(adata.var[f"{init_key}_gamma"].to_numpy()), sigma_param*np.ones((G))]), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_scaling"].to_numpy()), device=device).float())
-                self.ton = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_ton"].to_numpy()), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_u"].to_numpy()), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_s"].to_numpy()), device=device).float())
+                self.alpha = nn.Parameter(torch.tensor(np.stack([np.log(adata.var[f"{init_key}_alpha"].to_numpy()), sigma_param*np.ones((G))]), device=device).double())
+                self.beta = nn.Parameter(torch.tensor(np.stack([np.log(adata.var[f"{init_key}_beta"].to_numpy()), sigma_param*np.ones((G))]), device=device).double())
+                self.gamma = nn.Parameter(torch.tensor(np.stack([np.log(adata.var[f"{init_key}_gamma"].to_numpy()), sigma_param*np.ones((G))]), device=device).double())
+                self.scaling = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_scaling"].to_numpy()), device=device).double())
+                self.ton = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_ton"].to_numpy()), device=device).double())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_u"].to_numpy()), device=device).double())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_s"].to_numpy()), device=device).double())
             elif(init_method == "random"):
                 print("Random Initialization.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
-                self.alpha = nn.Parameter(torch.normal(0.0, 1.0, size=(2,U.shape[1]), device=device).float())
-                self.beta =  nn.Parameter(torch.normal(0.0, 1.0, size=(2,U.shape[1]), device=device).float())
-                self.gamma = nn.Parameter(torch.normal(0.0, 1.0, size=(2,U.shape[1]), device=device).float())
-                self.ton = torch.nn.Parameter(torch.ones(adata.n_vars, device=device).float()*(-10))
+                self.alpha = nn.Parameter(torch.normal(0.0, 1.0, size=(2,U.shape[1]), device=device).double())
+                self.beta =  nn.Parameter(torch.normal(0.0, 1.0, size=(2,U.shape[1]), device=device).double())
+                self.gamma = nn.Parameter(torch.normal(0.0, 1.0, size=(2,U.shape[1]), device=device).double())
+                self.ton = torch.nn.Parameter(torch.ones(adata.n_vars, device=device).double()*(-10))
                 """
                 std_u = np.std(U,0)
                 std_s = np.std(S,0)
@@ -967,9 +970,9 @@ class decoder_fullvb(nn.Module):
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(std_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(std_s), device=device).float())
                 """
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
             elif(init_method == "tprior"):
                 print("Initialization using prior time.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
@@ -983,13 +986,13 @@ class decoder_fullvb(nn.Module):
                 toff = getTsGlobal(self.t_init, U/scaling, S, 95)
                 alpha, beta, gamma, ton = reinitParams(U/scaling, S, self.t_init, toff)
                 
-                self.alpha = nn.Parameter(torch.tensor(np.stack([np.log(alpha), sigma_param*np.ones((G))]), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.stack([np.log(beta), sigma_param*np.ones((G))]), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.stack([np.log(gamma), sigma_param*np.ones((G))]), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+                self.alpha = nn.Parameter(torch.tensor(np.stack([np.log(alpha), sigma_param*np.ones((G))]), device=device).double())
+                self.beta = nn.Parameter(torch.tensor(np.stack([np.log(beta), sigma_param*np.ones((G))]), device=device).double())
+                self.gamma = nn.Parameter(torch.tensor(np.stack([np.log(gamma), sigma_param*np.ones((G))]), device=device).double())
+                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
+                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).double()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).double())
             else:
                 print("Initialization using the steady-state and dynamical models.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
@@ -1005,13 +1008,13 @@ class decoder_fullvb(nn.Module):
                 toff = getTsGlobal(self.t_init, U/scaling, S, 95)
                 alpha, beta, gamma, ton = reinitParams(U/scaling, S, self.t_init, toff)
                 
-                self.alpha = nn.Parameter(torch.tensor(np.stack([np.log(alpha), sigma_param*np.ones((G))]), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.stack([np.log(beta), sigma_param*np.ones((G))]), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.stack([np.log(gamma), sigma_param*np.ones((G))]), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                self.alpha = nn.Parameter(torch.tensor(np.stack([np.log(alpha), sigma_param*np.ones((G))]), device=device).double())
+                self.beta = nn.Parameter(torch.tensor(np.stack([np.log(beta), sigma_param*np.ones((G))]), device=device).double())
+                self.gamma = nn.Parameter(torch.tensor(np.stack([np.log(gamma), sigma_param*np.ones((G))]), device=device).double())
+                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
+                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).double()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).double())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
         
 
         self.scaling.requires_grad = False
@@ -1045,18 +1048,24 @@ class decoder_fullvb(nn.Module):
         gamma = torch.exp(self.gamma[0] + eps[2]*(self.gamma[1].exp()))
         return alpha, beta, gamma
     
-    def forward(self, t, z, u0=None, s0=None, t0=None, neg_slope=0.0):
+    def forward(self, t, z, condition=None, u0=None, s0=None, t0=None, neg_slope=0.0):
         alpha, beta, gamma = self.reparameterize_param()
         if(u0 is None or s0 is None or t0 is None):
-            rho = torch.sigmoid(self.fc_out1(self.net_rho(z)))
+            if(condition is None):
+                rho = torch.sigmoid(self.fc_out1(self.net_rho(z)))
+            else:
+                rho = torch.sigmoid(self.fc_out1(self.net_rho(torch.cat((z,condition),1))))
             Uhat, Shat = predSU(F.leaky_relu(t - self.ton.exp(), neg_slope), 0, 0, rho*alpha, beta, gamma)
         else:
-            rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
+            if(condition is None):
+                rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
+            else:
+                rho = torch.sigmoid(self.fc_out2(self.net_rho2(torch.cat((z,condition),1))))
             Uhat, Shat = predSU(F.leaky_relu(t-t0, neg_slope), u0/self.scaling.exp(), s0, rho*alpha, beta, gamma)
         Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
     
-    def eval_model(self, t, z, u0=None, s0=None, t0=None, neg_slope=0.0):
+    def eval_model(self, t, z, condition=None, u0=None, s0=None, t0=None, neg_slope=0.0):
         """
         Evaluate the decoder. Here, we use the mean 
         instead of randomly sample the ODE parameters.
@@ -1065,10 +1074,16 @@ class decoder_fullvb(nn.Module):
         beta = self.beta[0].exp()
         gamma = self.gamma[0].exp()
         if(u0 is None or s0 is None or t0 is None):
-            rho = torch.sigmoid(self.fc_out1(self.net_rho(z)))
+            if(condition is None):
+                rho = torch.sigmoid(self.fc_out1(self.net_rho(z)))
+            else:
+                rho = torch.sigmoid(self.fc_out1(self.net_rho(torch.cat((z,condition),1))))
             Uhat, Shat = predSU(F.leaky_relu(t - self.ton.exp(), neg_slope), 0, 0, rho*alpha, beta, gamma)
         else:
-            rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
+            if(condition is None):
+                rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
+            else:
+                rho = torch.sigmoid(self.fc_out2(self.net_rho2(torch.cat((z,condition),1))))
             Uhat, Shat = predSU(F.leaky_relu(t-t0, neg_slope), u0/self.scaling.exp(), s0, rho*alpha, beta, gamma)
         Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
@@ -1078,6 +1093,7 @@ class VAEFullVB(VAE):
                  adata, 
                  tmax, 
                  dim_z, 
+                 dim_cond=0,
                  device='cpu', 
                  hidden_size=(500, 250, 250, 500), 
                  init_method="steady", 
@@ -1127,6 +1143,7 @@ class VAEFullVB(VAE):
             "save_epoch":100, 
             "n_warmup":5,
             "early_stop":5,
+            "early_stop_thred":adata.n_vars*1e-3,
             "train_test_split":0.7,
             "k_alt":None, 
             "train_scaling":False, 
@@ -1142,8 +1159,9 @@ class VAEFullVB(VAE):
         
         G = adata.n_vars
         self.dim_z = dim_z
+        self.enable_cvae = dim_cond>0
         try:
-            self.encoder = encoder(2*G, dim_z, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0]).float()
+            self.encoder = encoder(2*G, dim_z, dim_cond, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0]).double()
         except IndexError:
             print('Please provide two dimensions!')
         
@@ -1157,7 +1175,7 @@ class VAEFullVB(VAE):
                                       device=self.device, 
                                       init_method = init_method,
                                       init_key = init_key,
-                                      checkpoint=checkpoints[1]).float()
+                                      checkpoint=checkpoints[1]).double()
         self.tmax=tmax
         self.time_distribution = time_distribution
         self.getPrior(adata, time_distribution, tmax, tprior)
@@ -1169,16 +1187,21 @@ class VAEFullVB(VAE):
         self.s0 = None
         self.t0 = None
         
+        #Class attributes for training
+        self.loss_train, self.loss_test = [],[]
+        self.counter = 0 #Count the number of iterations
+        self.n_drop = 0 #Count the number of consecutive iterations with little decrease in loss
+        
         #Prior of Decoder Parameters
         self.p_log_alpha = torch.tensor([[0.0], [1.0]]).to(self.device)
         self.p_log_beta = torch.tensor([[0.0], [0.5]]).to(self.device)
         self.p_log_gamma = torch.tensor([[0.0], [0.5]]).to(self.device)
     
-    def evalModel(self, data_in, u0=None, s0=None, t0=None):
+    def evalModel(self, data_in, u0=None, s0=None, t0=None, condition=None):
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale)
          
-        uhat, shat = self.decoder.eval_model(mu_t, mu_z, u0=u0, s0=s0, t0=t0, neg_slope=0.0)
+        uhat, shat = self.decoder.eval_model(mu_t, mu_z, condition=condition, u0=u0, s0=s0, t0=t0, neg_slope=0.0)
         return mu_t, std_t, mu_z, std_z, uhat, shat    
     
     def VAERisk(self, 
@@ -1251,9 +1274,9 @@ class VAEFullVB(VAE):
             B = min(U.shape[0]//10, 1000)
             Nb = U.shape[0] // B
             for i in range(Nb):
-                rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[i*B:(i+1)*B]).float().to(self.device))))
+                rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[i*B:(i+1)*B]).double().to(self.device))))
                 rho[i*B:(i+1)*B] = rho_batch.cpu().numpy()
-            rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[Nb*B:]).float().to(self.device))))
+            rho_batch = torch.sigmoid(self.decoder.fc_out2(self.decoder.net_rho2(torch.tensor(z[Nb*B:]).double().to(self.device))))
             rho[Nb*B:] = rho_batch.cpu().numpy()
         
         adata.layers[f"{key}_rho"] = rho
