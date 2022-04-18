@@ -1267,4 +1267,60 @@ def convertTime(t):
     second = int(t - hour*3600 - minute*60)
     
     return f"{hour:3d} h : {minute:2d} m : {second:2d} s"
+
+def count_peak_expression(adata, cluster_key = "clusters"):
+    def encodeType(cell_types_raw):
+        """
+        Use integer to encode the cell types
+        Each cell type has one unique integer label.
+        """
+        #Map cell types to integers 
+        label_dic = {}
+        label_dic_rev = {}
+        for i, type_ in enumerate(cell_types_raw):
+            label_dic[type_] = i
+            label_dic_rev[i] = type_
+            
+        return label_dic, label_dic_rev
+    cell_labels = adata.obs[cluster_key]
+    cell_types = np.unique(cell_labels)
+    label_dic, label_dic_rev = encodeType(cell_types)
+    cell_labels = np.array([label_dic[x] for x in cell_labels])
+    n_type = len(cell_types)
+    peak_hist = np.zeros((n_type))
+    peak_val_hist = [[] for i in range(n_type)]
+    peak_gene = [[] for i in range(n_type)]
+    for i in range(adata.n_vars):
+        peak_expression = [np.quantile(adata.layers["Ms"][cell_labels==j,i],0.9) for j in range(n_type)]
+        peak_hist[np.argmax(peak_expression)] = peak_hist[np.argmax(peak_expression)]+1
+        peak_gene[np.argmax(peak_expression)].append(i)
+        for j in range(n_type):
+            peak_val_hist[j].append(peak_expression[j])
+    out = {}
+    out_val = {}
+    out_peak_gene = {}
+    for i in range(n_type):
+        out[label_dic_rev[i]] = peak_hist[i]
+        out_val[label_dic_rev[i]] = peak_val_hist[i]
+        out_peak_gene[label_dic_rev[i]] = peak_gene[i]
+    return out,out_val,out_peak_gene
+
+def check_init_cond(adata, tkey, init_type=None, q=0.01):
+    if(init_type is None):
+        t = adata.obs[tkey].to_numpy()
+        t_start = np.quantile(t, q)
+        u0 = adata.layers["Mu"][t<=t_start].mean(0)
+        s0 = adata.layers["Ms"][t<=t_start].mean(0)
+        u_top = np.quantile(adata.layers["Mu"], 0.99, 0)+1e-10
+        s_top = np.quantile(adata.layers["Ms"], 0.99, 0)+1e-10
+    else:
+        cell_labels = adata.obs["clusters"].to_numpy()
+        mask = cell_labels==init_type
+        u0 = np.quantile(adata.layers["Mu"][mask],0.05,0)
+        s0 = np.quantile(adata.layers["Ms"][mask],0.05,0)
+        u_top = np.quantile(adata.layers["Mu"][~mask], 0.99, 0)+1e-10
+        s_top = np.quantile(adata.layers["Ms"][~mask], 0.99, 0)+1e-10
+    
+    
+    return
     
