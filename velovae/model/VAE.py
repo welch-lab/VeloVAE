@@ -74,8 +74,9 @@ class decoder(nn.Module):
                  p=98, 
                  init_ton_zero=False,
                  device=torch.device('cpu'), 
-                 init_method ="steady", 
+                 init_method="steady", 
                  init_key=None, 
+                 init_type=None,
                  checkpoint=None):
         super(decoder,self).__init__()
         G = adata.n_vars
@@ -103,7 +104,6 @@ class decoder(nn.Module):
         self.net_rho2 = nn.Sequential(self.fc3, self.bn3, nn.LeakyReLU(), self.dpt3,
                                       self.fc4, self.bn4, nn.LeakyReLU(), self.dpt4)
         
-        
         if(checkpoint is not None):
             self.alpha = nn.Parameter(torch.empty(G, device=device).double())
             self.beta = nn.Parameter(torch.empty(G, device=device).double())
@@ -120,15 +120,7 @@ class decoder(nn.Module):
             #Dynamical Model Parameters
             U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
             X = np.concatenate((U,S),1)
-            if(init_method == "existing" and init_key is not None):
-                self.alpha = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_alpha"].to_numpy()), device=device).double())
-                self.beta = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_beta"].to_numpy()), device=device).double())
-                self.gamma = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_gamma"].to_numpy()), device=device).double())
-                self.scaling = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_scaling"].to_numpy()), device=device).double())
-                self.ton = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_ton"].to_numpy()), device=device).double())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_u"].to_numpy()), device=device).double())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_s"].to_numpy()), device=device).double())
-            elif(init_method == "random"):
+            if(init_method == "random"):
                 print("Random Initialization.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
                 self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).double())
@@ -191,6 +183,32 @@ class decoder(nn.Module):
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
         
+        cell_labels = adata.obs["clusters"].to_numpy()[train_idx]
+        cell_types = np.unique(cell_labels)
+        
+        if(init_type is None):  
+            #self.u0 = nn.Parameter(torch.ones(G, device=device).double()*(-10))
+            #self.s0 = nn.Parameter(torch.ones(G, device=device).double()*(-10))
+            cell_mask = self.t_init <= np.quantile(self.t_init, 0.05)
+            self.u0 = nn.Parameter(torch.tensor(np.log(U[cell_mask].mean(0)+1e-10), device=device).double())
+            self.s0 = nn.Parameter(torch.tensor(np.log(S[cell_mask].mean(0)+1e-10), device=device).double())
+        elif(init_type == "random"):
+            rv_u = stats.gamma(1.0, 0, 4.0)
+            rv_s = stats.gamma(1.0, 0, 4.0)
+            r_u_gamma = rv_u.rvs(size=(G))
+            r_s_gamma = rv_s.rvs(size=(G))
+            r_u_bern = stats.bernoulli(0.02).rvs(size=(G))
+            r_s_bern = stats.bernoulli(0.02).rvs(size=(G))
+            u_top = np.quantile(U, 0.99, 0)
+            s_top = np.quantile(S, 0.99, 0)
+            
+            u0, s0 = u_top*r_u_gamma*r_u_bern, s_top*r_s_gamma*r_s_bern
+            self.u0 = nn.Parameter(torch.tensor(np.log(u0+1e-10), device=device).double())
+            self.s0 = nn.Parameter(torch.tensor(np.log(s0+1e-10), device=device).double())
+        else: #use the mean count of the initial type
+            cell_mask = cell_labels==init_type
+            self.u0 = nn.Parameter(torch.tensor(np.log(U[cell_mask].mean(0)+1e-10), device=device).double())
+            self.s0 = nn.Parameter(torch.tensor(np.log(S[cell_mask].mean(0)+1e-10), device=device).double())
 
         self.scaling.requires_grad = False
         self.sigma_u.requires_grad = False
@@ -224,7 +242,7 @@ class decoder(nn.Module):
                 rho = torch.sigmoid(self.fc_out1(self.net_rho(torch.cat((z,condition),1))))
             alpha = self.alpha.exp()*rho
             #Uhat, Shat = ode(t, alpha, torch.exp(self.beta), torch.exp(self.gamma), self.ton.exp(), self.toff.exp(), neg_slope)
-            Uhat, Shat = predSU(F.leaky_relu(t - self.ton.exp(), neg_slope), 0, 0, alpha, self.beta.exp(), self.gamma.exp())
+            Uhat, Shat = predSU(F.leaky_relu(t - self.ton.exp(), neg_slope), self.u0.exp()/self.scaling.exp(),  self.s0.exp(), alpha, self.beta.exp(), self.gamma.exp())
         else:
             if(condition is None):
                 rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
@@ -246,6 +264,7 @@ class VAE(VanillaVAE):
                  init_method="steady", 
                  init_key=None,
                  tprior=None, 
+                 init_type=None,
                  init_ton_zero=False,
                  time_distribution="uniform",
                  std_z_prior=0.01,
@@ -326,6 +345,7 @@ class VAE(VanillaVAE):
                                device=self.device, 
                                init_method = init_method,
                                init_key = init_key,
+                               init_type = init_type,
                                checkpoint=checkpoints[1]).double()
         self.tmax=tmax
         self.time_distribution = time_distribution
@@ -349,14 +369,14 @@ class VAE(VanillaVAE):
         t = self.sample(mu_t, std_t)
         z = self.sample(mu_z, std_z)
          
-        uhat, shat = self.decoder.forward(t, z, None, u0, s0, t0, neg_slope=self.config["neg_slope"])
+        uhat, shat = self.decoder.forward(t, z, condition, u0, s0, t0, neg_slope=self.config["neg_slope"])
         return mu_t, std_t, mu_z, std_z, t, z, uhat, shat
     
     def evalModel(self, data_in, u0=None, s0=None, t0=None, condition=None):
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale, condition)
          
-        uhat, shat = self.decoder.forward(mu_t, mu_z, None, u0=u0, s0=s0, t0=t0, neg_slope=0.0)
+        uhat, shat = self.decoder.forward(mu_t, mu_z, condition, u0=u0, s0=s0, t0=t0, neg_slope=0.0)
         return mu_t, std_t, mu_z, std_z, uhat, shat
     
     def VAERisk(self, 
@@ -462,6 +482,21 @@ class VAE(VanillaVAE):
             self.counter = self.counter + 1
         return stop_training
     
+    #def updateX0_stage1(self, X, q=0.01):
+    #    """
+    #    Estimate the initial conditions in stage 1
+    #    """
+    #    out, elbo = self.predAll(X, self.cell_labels, "train", ["t"])
+    #    t = out[0]
+    #    #Clip the time to avoid outliers
+    #    t = np.clip(t, 0, np.quantile(t, 0.99))
+    #    
+    #    x0 = X[t<=np.quantile(t,q)].mean(0)
+    #    x0 = np.log(x0+1e-10) 
+    #    self.decoder.u0 = nn.Parameter(torch.tensor(x0[:x0.shape[0]//2], device=self.device).double())
+    #    self.decoder.s0 = nn.Parameter(torch.tensor(x0[x0.shape[0]//2:], device=self.device).double())
+    #    return
+    
     def updateX0(self, U, S, n_bin=None):
         """
         Estimate the initial conditions using KNN
@@ -527,7 +562,7 @@ class VAE(VanillaVAE):
         #define optimizer
         print("*********                 Creating optimizers                 *********")
         param_nn = list(self.encoder.parameters())+list(self.decoder.net_rho.parameters())+list(self.decoder.fc_out1.parameters())
-        param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma] 
+        param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma, self.decoder.u0, self.decoder.s0] 
         if(self.config['train_ton']):
             param_ode.append(self.decoder.ton)
         if(self.config['train_scaling']):
@@ -585,7 +620,8 @@ class VAE(VanillaVAE):
             if(stop_training):
                 print(f"*********       Stage 1: Early Stop Triggered at epoch {epoch+1}.       *********")
                 break
-                    
+            #self.updateX0_stage1(train_set.data)
+        
         n_stage1 = epoch+1
         n_test1 = len(self.loss_test)
         
