@@ -67,8 +67,8 @@ def plot_sig_(t,
 
     for i, type_ in enumerate(cell_types):
         mask_type = cell_labels==type_
-        ax[0].plot(t[mask_type][::D], u[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
-        ax[1].plot(t[mask_type][::D], s[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.25, label=type_)
+        ax[0].plot(t[mask_type][::D], u[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.7, label=type_)
+        ax[1].plot(t[mask_type][::D], s[mask_type][::D],'.',color=colors[i%len(colors)], alpha=0.7, label=type_)
     
     if((tpred is not None) and (upred is not None) and (spred is not None)):
         if(type_specific):
@@ -148,15 +148,15 @@ def plot_sig(t,
         #Plot the input data in the true labels
         for i, type_ in enumerate(cell_types):
             mask_type = cell_labels==type_
-            ax[0,0].scatter(tscv[mask_type][::D], u[mask_type][::D],s=8.0, color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
-            ax[0,1].scatter(tscv[mask_type][::D], s[mask_type][::D],s=8.0, color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
+            ax[0,0].scatter(tscv[mask_type][::D], u[mask_type][::D],s=8.0, color=colors[i%len(colors)], alpha=0.7, label=type_, edgecolors='none')
+            ax[0,1].scatter(tscv[mask_type][::D], s[mask_type][::D],s=8.0, color=colors[i%len(colors)], alpha=0.7, label=type_, edgecolors='none')
             if(len(labels_pred) > 0):
                 mask_mytype = labels_pred==type_
-                ax[1,0].scatter(t[mask_mytype][::D], u[mask_mytype][::D],s=8.0,color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
-                ax[1,1].scatter(t[mask_mytype][::D], s[mask_mytype][::D],s=8.0,color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
+                ax[1,0].scatter(t[mask_mytype][::D], u[mask_mytype][::D],s=8.0,color=colors[i%len(colors)], alpha=0.7, label=type_, edgecolors='none')
+                ax[1,1].scatter(t[mask_mytype][::D], s[mask_mytype][::D],s=8.0,color=colors[i%len(colors)], alpha=0.7, label=type_, edgecolors='none')
             else:
-                ax[1,0].scatter(t[mask_type][::D], u[mask_type][::D],s=8.0,color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
-                ax[1,1].scatter(t[mask_type][::D], s[mask_type][::D],s=8.0,color=colors[i%len(colors)], alpha=0.25, label=type_, edgecolors='none')
+                ax[1,0].scatter(t[mask_type][::D], u[mask_type][::D],s=8.0,color=colors[i%len(colors)], alpha=0.7, label=type_, edgecolors='none')
+                ax[1,1].scatter(t[mask_type][::D], s[mask_type][::D],s=8.0,color=colors[i%len(colors)], alpha=0.7, label=type_, edgecolors='none')
 
         
         if(labels_demo is not None):
