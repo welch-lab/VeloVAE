@@ -18,6 +18,9 @@ Generalizing RNA velocity to transient cell states through dynamical modeling.
 Nature biotechnology, 38(12), 1408-1414.
 """
 def scvPredSingle(t,alpha,beta,gamma,ts,scaling=1.0, uinit=0, sinit=0):
+    """
+    Predicts u and s using the dynamical model.
+    """
     beta = beta*scaling
     tau, alpha, u0, s0 = vectorize(t, ts, alpha, beta, gamma, u0=uinit, s0=sinit)
     tau = np.clip(tau,a_min=0,a_max=None)
@@ -52,14 +55,16 @@ def scvPred(adata, key, glist=None):
 		
 		ut[:,i] = u_g
 		st[:,i] = s_g
-	#assert not np.any(np.isnan(ut))
-	#assert not np.any(np.isnan(st))
+    
 	return ut, st
 
 ############################################################
 #Shared among all VAEs
 ############################################################
 def histEqual(t, Tmax, perc=0.95, Nbin=101):
+    """
+    Perform histogram equalization across all local times.
+    """
     t_ub = np.quantile(t, perc)
     t_lb = t.min()
     delta_t = (t_ub - t_lb)/(Nbin-1)
@@ -113,9 +118,6 @@ def predSU(tau, u0, s0, alpha, beta, gamma):
     spred = s0*expg+alpha/gamma*(1-expg)+(alpha-beta*u0)/(gamma-beta+eps)*(expg-expb)*(1-unstability)+(alpha-beta*u0)*tau*expg*unstability
     return nn.functional.relu(upred), nn.functional.relu(spred)
 
-############################################################
-#Vanilla VAE
-############################################################
 """
 Initialization Methods
 
@@ -332,7 +334,9 @@ def reinitParams(U, S, t, ts):
     return alpha, beta, gamma, ton
     
 
-
+############################################################
+#Vanilla VAE
+############################################################
 """
 ODE Solution, with both numpy (for post-training analysis or plotting) and pytorch versions (for training)
 """
@@ -593,166 +597,11 @@ def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
                                      gamma[i])
         uhat[y==i] = uhat_i
         shat[y==i] = shat_i
-    return uhat, shat
-
-def initAllPairs(alpha,
-                 beta,
-                 gamma,
-                 t_trans,
-                 ts,
-                 u0,
-                 s0,
-                 neg_slope=0.0):
-    """
-    Notice: t_trans and ts are all the absolute values, not relative values
-    """
-    Ntype = alpha.shape[0]
-    G = alpha.shape[1]
-    
-    #Compute different initial conditions
-    tau0 = F.leaky_relu(t_trans.view(-1,1,1) - ts, neg_slope)
-    U0_hat, S0_hat = predSU(tau0, u0, s0, alpha, beta, gamma) #initial condition of the current type considering all possible parent types
-    
-    return F.relu(U0_hat), F.relu(S0_hat)
-
-
-
-def ode_br_weighted(t, y_onehot, neg_slope=0, **kwargs):
-    """
-    Compute the ODE solution given every possible parent cell type
-    """
-    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
-    t_trans, ts = kwargs['t_trans'], kwargs['ts']
-    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
-    sigma_u = kwargs['sigma_u']
-    sigma_s = kwargs['sigma_s']
-    scaling=kwargs["scaling"]
-    
-    Ntype, G = alpha.shape
-    N = y_onehot.shape[0]
-    
-    U0_hat, S0_hat = initAllPairs(alpha,
-                                  beta,
-                                  gamma,
-                                  t_trans,
-                                  ts,
-                                  u0,
-                                  s0,
-                                  neg_slope) #(type, parent type, gene)
-    
-    tau = F.leaky_relu( t.view(N,1,1,1) - ts.view(Ntype,1,G), neg_slope) #(cell, type, parent type, gene)
-    Uhat, Shat = predSU(tau,
-                        U0_hat,
-                        S0_hat,
-                        alpha.view(Ntype, 1, G),
-                        beta.view(Ntype, 1, G),
-                        gamma.view(Ntype, 1, G))
-    
-    return ((Uhat*y_onehot.view(N,Ntype,1,1)).sum(1))*scaling, (Shat*y_onehot.view(N,Ntype,1,1)).sum(1)
-
-def initAllPairsNumpy(alpha,
-                      beta,
-                      gamma,
-                      t_trans,
-                      ts,
-                      u0,
-                      s0,
-                      k=10):
-    """
-    Notice: t_trans and ts are all the absolute values, not relative values
-    """
-    Ntype = alpha.shape[0]
-    G = alpha.shape[1]
-    
-    #Compute different initial conditions
-    tau0 = F.softplus(torch.tensor(t_trans.reshape(-1,1,1) - ts), beta=k).numpy()
-    U0_hat, S0_hat = predSUNumpy(tau0, u0, s0, alpha, beta, gamma) #initial condition of the current type considering all possible parent types
-    
-    return np.clip(U0_hat, 0, None), np.clip(S0_hat, 0, None)
-
-def ode_br_weighted_numpy(t, y, w, get_init=False, k=10, **kwargs):
-    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
-    t_trans, ts = kwargs['t_trans'], kwargs['ts']
-    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
-    scaling=kwargs.pop("scaling", None)
-    
-    Ntype, G = alpha.shape
-    N = len(y)
-    
-    U0_hat, S0_hat = initAllPairsNumpy(alpha,
-                                       beta,
-                                       gamma,
-                                       t_trans,
-                                       ts,
-                                       u0,
-                                       s0,
-                                       k) #(type, parent type, gene)
-    Uhat, Shat = np.zeros((N,G)), np.zeros((N,G))
-    for i in range(Ntype):
-        parent = np.argmax(w[i])
-        tau = F.softplus( torch.tensor(t[y==i] - ts[i]), beta=k).numpy() #(cell, type, gene)
-        Uhat_type, Shat_type = predSUNumpy(tau,
-                                           U0_hat[i, parent],
-                                           S0_hat[i, parent], 
-                                           alpha[i],
-                                           beta[i],
-                                           gamma[i])
-        
-        Uhat[y==i] = Uhat_type
-        Shat[y==i] = Shat_type
-    if(scaling is not None):
-        Uhat = Uhat * scaling
-    if(get_init):
-        return Uhat, Shat, U0_hat, S0_hat
-    return Uhat, Shat
+    return uhat*scaling, shat
 
 
 
 
-def computeMixWeight(mu_t, sigma_t,
-                     cell_labels,
-                     alpha,
-                     beta,
-                     gamma,
-                     t_trans,
-                     t_end,
-                     ts,
-                     u0,
-                     s0,
-                     sigma_u,
-                     sigma_s,
-                     eps_t,
-                     k=1):
-    
-    U0_hat, S0_hat = initAllPairs(alpha,
-                                  beta,
-                                  gamma,
-                                  t_trans,
-                                  ts,
-                                  u0,
-                                  s0,
-                                  False)
-    
-    Ntype = alpha.shape[0]
-    var = torch.mean(sigma_u.pow(2)+sigma_s.pow(2))
-    
-    tscore = torch.empty(Ntype, Ntype).to(alpha.device)
-    
-    mu_t_type = [mu_t[cell_labels==i] for i in range(Ntype)]
-    std_t_type = [sigma_t[cell_labels==i] for i in range(Ntype)]
-    for i in range(Ntype):#child
-        for j in range(Ntype):#parent
-            mask1, mask2 = (mu_t_type[j]<t_trans[i]-3*eps_t).float(), (mu_t_type[j]>=t_trans[i]+3*eps_t).float()
-            tscore[i, j] = torch.mean( ((mu_t_type[j]-t_trans[i]).pow(2) + (std_t_type[j] - eps_t).pow(2))*(mask1+mask2*k) )
-    
-    xscore = torch.mean(((U0_hat-u0.unsqueeze(1))).pow(2)+((S0_hat-s0.unsqueeze(1))).pow(2),-1) + torch.eye(alpha.shape[0]).to(alpha.device)*var*0.1
-    
-    #tmask = t_trans.view(-1,1)<t_trans
-    #xscore[tmask] = var*1e3
-    mu_tscore, mu_xscore = tscore.mean(), xscore.mean()
-    logit_w = - tscore/mu_tscore - xscore/mu_xscore
-    
-    return logit_w, tscore, xscore
 
 ############################################################
 #  Optimal Transport
@@ -1230,16 +1079,20 @@ def knn_transition_prob(t,
 #Other Auxilliary Functions
 ############################################################
 def makeDir(file_path):
-    directories = file_path.split('/')
-    cur_path = ''
-    for directory in directories:
-        if(directory==''):
-            continue
-        cur_path += directory
-        cur_path += '/'
-        if(not (directory=='.' or directory == '..') ):
-            if not os.path.exists(cur_path):
-                os.mkdir(cur_path)
+    if(os.path.exists(file_path)):
+        return
+    else:
+        directories = file_path.split('/')
+        cur_path = ''
+        for directory in directories:
+            if(directory==''):
+                continue
+            cur_path += directory
+            cur_path += '/'
+            if(not (directory=='.' or directory == '..') ):
+                if not os.path.exists(cur_path):
+                    os.mkdir(cur_path)
+    
 
 def getGeneIndex(genes_all, gene_list):
     gind = []
@@ -1254,6 +1107,7 @@ def getGeneIndex(genes_all, gene_list):
         else:
             gind.append(matches[0])
             print('Warning: Gene {gene} has multiple matches. Pick the first one.')
+    gene_list = list(gene_list)
     for gene in gremove:
         gene_list.remove(gene)
     return gind, gene_list
@@ -1268,6 +1122,32 @@ def convertTime(t):
     
     return f"{hour:3d} h : {minute:2d} m : {second:2d} s"
 
+def sample_genes(adata, n, key, mode='top',q=0.5):
+    if(mode=='random'):
+        return np.random.choice(adata.var_names, n, replace=False)
+    val_sorted = adata.var[key].sort_values(ascending=False)
+    genes_sorted = val_sorted.index.to_numpy()
+    if(mode=='threshold'):
+        N = np.sum(val_sorted.to_numpy()>=q)
+        return np.random.choice(genes_sorted[:N], min(n,N), replace=False)
+    return genes_sorted[:n]
+
+def add_capture_time(adata, tkey, save_key="tprior"):
+    capture_time = adata.obs[tkey].to_numpy()
+    if(isinstance(capture_time[0], str)):
+        j = 0
+        while(not (capture_time[0][j]>='0' and capture_time[0][j]>='9') ):
+            j = j+1
+        tprior = np.array([float(x[1:]) for x in capture_time])
+    else:
+        tprior = capture_time
+    tprior = tprior - tprior.min() + 0.01
+    adata.obs["tprior"] = tprior
+
+def add_cell_cluster(adata, cluster_key, save_key="clusters"):
+    cell_labels = adata.obs[cluster_key].to_numpy()
+    adata.obs["clusters"] = np.array([str(x) for x in cell_labels])
+    
 def count_peak_expression(adata, cluster_key = "clusters"):
     def encodeType(cell_types_raw):
         """
