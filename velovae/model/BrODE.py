@@ -10,7 +10,7 @@ import time
 import matplotlib.pyplot as plt
 from cellrank.tl.kernels import PseudotimeKernel
 
-from velovae.plotting import plot_sig, plot_time, plot_train_loss, plot_test_loss, plotUmapTransition
+from velovae.plotting import plot_sig, plot_time, plot_train_loss, plot_test_loss
 
 from .model_util import  histEqual, convertTime, initParams, getTsGlobal, reinitTypeParams, predSU, getGeneIndex
 from .model_util import ode_br, optimal_transport_duality_gap, optimal_transport_duality_gap_ts, encode_type, str2int, int2str
@@ -473,9 +473,6 @@ class BrODE():
         if(self.config["train_std"]):
             self.decoder.sigma_u.requires_grad = True
             self.decoder.sigma_s.requires_grad = True
-        
-        #if(plot):
-        #    plotUmapTransition()
         
         print("------------------------ Train a Branching ODE ------------------------")
         #Get data loader
