@@ -6,81 +6,6 @@ from sklearn.neighbors import NearestNeighbors
 from .model_util import knn_transition_prob
 
 #######################################################################
-# Prior Knowledge of the transition graph
-#######################################################################
-graph_default = {'pancreas':
-                    {
-                        'Ductal':['Ngn3 low EP'],\
-                        'Ngn3 low EP':['Ngn3 high EP'],\
-                        'Ngn3 high EP':['Pre-endocrine'],\
-                        'Pre-endocrine':['Alpha','Beta','Delta','Epsilon'],\
-                        'Alpha':[],\
-                        'Beta':[],\
-                        'Delta':[],\
-                        'Epsilon':[]
-                    },
-                 'dentategyrus':
-                    {
-                        'Radial Glia-like':['nIPC', 'Astrocytes'],
-                        'Astrocytes':[],
-                        'nIPC':['Neuroblast'],
-                        'Neuroblast':['Granule immature'],
-                        'Granule immature': ['Granule mature'],
-                        'Granule mature':[],
-                        'Mossy':[],
-                        'Cck-Tox':[],
-                        'OPC':['OL'],
-                        'OL':[],
-                        'GABA':[],
-                        'Endothelial':[],
-                        'Microglia':[],
-                        'Cajal Retzius':[]
-                    },
-                 'retina':
-                    {
-                        '0':['1'],
-                        '1':['2','3','4','5'],
-                        '2':[],
-                        '3':[],
-                        '4':[],
-                        '5':[]
-                    },
-                 'mouse_brain':
-                     {
-                         'RG, Astro, OPC':['IPCs'],
-                         'IPCs':['V-SVZ','Ependymal cells'],
-                         'Ependymal cells':[],
-                         'V-SVZ':['Upper Layer', 'Subplate'],
-                         'Upper Layer':[],
-                         'Subplate':['Deeper Layer'],
-                         'Deeper Layer':[]
-                     },
-                 'braindev':
-                     {
-                         'Neural tube':['Neural crest'],
-                         'Neural crest':['Mesenchyme', 'Radial glia'],
-                         'Mesenchyme':['Fibroblast'],
-                         'Radial glia':['Neuroblast', 'Ependymal', 'Glioblast'],
-                         'Neuroblast':['Neuron'],
-                         'Glioblast':['Oligodendrocyte'],
-                         'Ependymal':[],
-                         'Fibroblast':[],
-                         'Neuron':[],
-                         'Oligodendrocyte':[]
-                     }
-                }
-
-
-
-init_types = {
-                'pancreas':['Ductal'],
-                'dentategyrus':['Radial Glia-like', 'OPC', 'GABA', 'Mossy', 'Endothelial', 'Cck-Tox', 'Microglia', 'Cajal Retzius'],
-                'retina':['0'],
-                'mouse_brain':['RG, Astro, OPC'],
-                'braindev':['Neural tube']
-             }
-
-#######################################################################
 # Functions to encode string-type data as integers
 #######################################################################
 def encodeType(cell_types_raw):
@@ -290,6 +215,8 @@ def check_loop(adj_list, n_nodes):
             ptr = queue.pop(0)
             if(checked[ptr]):
                 loop, v_outside = get_loop(trace_back, n_nodes, ptr)
+                if(len(loop)==1):
+                    break
                 return loop, v_outside
             else:
                 checked[ptr] = True
@@ -328,6 +255,8 @@ def edmond_chu_liu(graph, r):
     for i in range(n_type):
         if(not i==r):
             adj_list_pruned[parents[i]].append(i)
+    
+    #print(adj_list_pruned)
 
     #step 3: cycle detection using BFS
     loop, v_outside = check_loop(adj_list_pruned, n_type)
@@ -406,9 +335,10 @@ class TransGraph():
             for j, lin in enumerate(lineages):
                 count[i, j] = np.sum((self.cell_labels==i)&(partition_labels==lin))
         self.partition = np.argmax(count, 1)
+        self.n_lineage = len(np.unique(self.partition))
         print("Number of partitions: ",len(lineages))
     
-    def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01,0.03), k=5, soft_assign=True):
+    def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01,0.03), k=15, soft_assign=True):
         """
         Compute a type-to-type transition based a cell-to-cell transition matrix
         """
@@ -453,6 +383,7 @@ class TransGraph():
         #For each partition, get the MST
         print("Obtaining the MST in each partition")
         out = np.zeros((self.n_type, self.n_type))
+        
         for l in range(self.n_lineage):
             vs_part = np.where(self.partition==l)[0]
             graph_part = np.log(P[vs_part][:, vs_part])
@@ -473,8 +404,7 @@ class TransGraph():
                 adj_list = adj_matrix_to_list(graph_part)
                 #if(not check_connected(adj_list, root, len(vs_part))):
                 #    print("Warning: the full graph is disconnected! Using the fully-connected graph instead.")
-                    
-                    
+                
                 mst_part = edmond_chu_liu(graph_part, root)
                 
             
