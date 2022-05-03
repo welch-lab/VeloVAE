@@ -16,7 +16,7 @@ from .velocity import rnaVelocityVanillaVAE
 ############################################################
 def kl_uniform(mu_t, std_t, t_start, t_end, **kwargs):
     """
-    <Deprecated>
+    < Description >
     KL Divergence for the 1D near-uniform model
     KL(q||p) where
     q = uniform(t0, t0+dt)
@@ -117,24 +117,15 @@ class decoder(nn.Module):
         X = np.concatenate((U,S),1)
         N,G = U.shape
         #Dynamical Model Parameters
-        if(init_method == "existing" and init_key is not None):
-            self.alpha = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_alpha"].to_numpy()), device=device).float())
-            self.beta = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_beta"].to_numpy()), device=device).float())
-            self.gamma = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_gamma"].to_numpy()), device=device).float())
-            self.scaling = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_scaling"].to_numpy()), device=device).float())
-            self.ton = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_ton"].to_numpy()), device=device).float())
-            self.toff = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_toff"].to_numpy()), device=device).float())
-            self.sigma_u = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_u"].to_numpy()), device=device).float())
-            self.sigma_s = nn.Parameter(torch.tensor(np.log(adata.var[f"{init_key}_sigma_s"].to_numpy()), device=device).float())
-        elif(init_method == "random"):
+        if(init_method == "random"):
             print("Random Initialization.")
             alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
             
-            self.alpha = nn.Parameter(torch.normal(0.0, 1.0, size=(G,), device=device).float())
-            self.beta =  nn.Parameter(torch.normal(0.0, 1.0, size=(G,), device=device).float())
-            self.gamma = nn.Parameter(torch.normal(0.0, 1.0, size=(G,), device=device).float())
-            self.ton = nn.Parameter(torch.normal(0.0, 1.0, size=(G,), device=device).float())
-            self.toff = nn.Parameter(torch.normal(0.0, 1.0, size=(G,), device=device).float()+self.ton.detach())
+            self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+            self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+            self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+            self.ton = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+            self.toff = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float()+self.ton.detach())
             self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
             self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
             self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
@@ -143,7 +134,7 @@ class decoder(nn.Module):
             alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
             t_prior = adata.obs[init_key].to_numpy()
             t_prior = t_prior[train_idx]
-            std_t = np.std(t_prior)*0.2
+            std_t = (np.std(t_prior)+1e-3)*0.2
             self.t_init = np.random.uniform(t_prior-std_t, t_prior+std_t)
             self.t_init -= self.t_init.min()
             self.t_init = self.t_init
@@ -240,19 +231,19 @@ class VanillaVAE():
             "time_overlap":0.5,
 
             #Training Parameters
-            "n_epochs":500, 
+            "n_epochs":2000, 
+            "batch_size":128,
             "learning_rate":2e-4, 
-            "learning_rate_ode":2e-4, 
+            "learning_rate_ode":5e-4, 
             "lambda":1e-3, 
             "kl_t":1.0, 
-            "test_iter":100, 
+            "test_iter":None, 
             "save_epoch":100,
             "n_warmup":5,
-            "batch_size":128,
             "early_stop":5,
             "early_stop_thred":1e-3*adata.n_vars,
             "train_test_split":0.7,
-            "k_alt":0,
+            "k_alt":1,
             "neg_slope":0.0,
             "train_scaling":False, 
             "train_std":False, 
@@ -294,7 +285,7 @@ class VanillaVAE():
             self.kl_time = kl_gaussian
             self.sample = self.reparameterize
             if(tprior is None):
-                self.p_t = torch.stack([torch.ones(adata.n_obs,1)*tmax*0.5,torch.ones(adata.n_obs,1)*tmax*self.config["time_overlap"]]).double().to(self.device)
+                self.p_t = torch.stack([torch.ones(adata.n_obs,1)*tmax*0.5,torch.ones(adata.n_obs,1)*tmax*self.config["time_overlap"]]).float().to(self.device)
             else:
                 print('Using informative time prior.')
                 t = adata.obs[tprior].to_numpy()
@@ -307,15 +298,15 @@ class VanillaVAE():
                     std_t[t==t_cap[i]] = 0.5*(t_cap[i] - t_cap[i-1])*(0.5+0.5*self.config["time_overlap"]) + 0.5*(t_cap[i+1] - t_cap[i])*(0.5+0.5*self.config["time_overlap"])
                 std_t[t==t_cap[-1]] = (t_cap[-1] - t_cap[-2])*(0.5+0.5*self.config["time_overlap"])
                 
-                self.p_t = torch.stack( [torch.tensor(t).view(-1,1),torch.tensor(std_t).view(-1,1)] ).double().to(self.device)
+                self.p_t = torch.stack( [torch.tensor(t).view(-1,1),torch.tensor(std_t).view(-1,1)] ).float().to(self.device)
                 #n_capture = len(np.unique(t))
-                #self.p_t = torch.stack( [torch.tensor(t).view(-1,1),torch.ones(adata.n_obs,1)*tmax/n_capture] ).double().to(self.device)
+                #self.p_t = torch.stack( [torch.tensor(t).view(-1,1),torch.ones(adata.n_obs,1)*tmax/n_capture] ).float().to(self.device)
         else:
             print("Tailed Uniform Prior.")
             self.kl_time = kl_uniform
             self.sample = self.reparameterize_uniform
             if(tprior is None):
-                self.p_t = torch.stack([torch.zeros(adata.n_obs,1),torch.ones(adata.n_obs,1)*tmax]).double().to(self.device)
+                self.p_t = torch.stack([torch.zeros(adata.n_obs,1),torch.ones(adata.n_obs,1)*tmax]).float().to(self.device)
             else:
                 print('Using informative time prior.')
                 t = adata.obs[tprior].to_numpy()
@@ -331,7 +322,7 @@ class VanillaVAE():
                     t_start[t==t_cap[i]] = max(0, t_cap[i] - (t_cap[i] - t_cap[i-1])*(0.5+0.5*self.config["time_overlap"]))
                 t_start[t==t_cap[0]] = max(0, t_cap[0] - (t_cap[1] - t_cap[0])*(0.5+0.5*self.config["time_overlap"]))
                 
-                self.p_t = torch.stack( [torch.tensor(t).unsqueeze(-1),torch.tensor(t_end).unsqueeze(-1)] ).double().to(self.device)
+                self.p_t = torch.stack( [torch.tensor(t).unsqueeze(-1),torch.tensor(t_end).unsqueeze(-1)] ).float().to(self.device)
     
     def setDevice(self, device, device_number=None):
         if('cuda' in device):
@@ -402,9 +393,16 @@ class VanillaVAE():
         
     def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
         """
-        Training in each epoch
-        train_loader: Data loader of the input data
-        optimizer, optimizer2(optional): from torch.optim
+        < Description >
+        Training in each epoch. Validation will be performed is the number of
+        iterations is a multiple of config['test_iter']
+        
+        < Input Argument >
+        1.  train_loader [torch.utils.data.DataLoader]
+            Data loader of the input data
+        
+        2.  test_set [torch.utils.data.Dataset]
+        2.  optimizer, optimizer2(optional): from torch.optim
         K: alternatingly update optimizer and optimizer2
         """
         B = len(train_loader)
@@ -441,13 +439,17 @@ class VanillaVAE():
                                 torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s), 
                                 None,
                                 self.config["kl_t"])
-            #with torch.autograd.detect_anomaly():
-            loss.backward()
             
-            if( optimizer2 is not None and ((i+1) % (K+1) == 0 or i==B-1)):
-                optimizer2.step()
-            else:
+            loss.backward()
+            if(K==0):
                 optimizer.step()
+                if( optimizer2 is not None ):
+                    optimizer2.step()
+            else:
+                if( optimizer2 is not None and ((i+1) % (K+1) == 0 or i==B-1)):
+                    optimizer2.step()
+                else:
+                    optimizer.step()
             
             self.loss_train.append(loss.detach().cpu().item())
             self.counter = self.counter + 1
@@ -478,7 +480,7 @@ class VanillaVAE():
     def train(self, 
               adata, 
               config={}, 
-              plot=True, 
+              plot=False, 
               gene_plot=[], 
               figure_path="figures", 
               embed="umap"):
@@ -502,6 +504,9 @@ class VanillaVAE():
         if(len(self.test_idx)>0):
             test_set = SCData(X[self.test_idx], cell_labels_raw[self.test_idx], self.decoder.Rscore[self.test_idx]) if self.config['weight_sample'] else SCData(X[self.test_idx], cell_labels_raw[self.test_idx])
         data_loader = torch.utils.data.DataLoader(train_set, batch_size=self.config["batch_size"], shuffle=True)
+        #Automatically set test iteration if not given
+        if(self.config["test_iter"] is None):
+            self.config["test_iter"] = len(self.train_idx)//self.config["batch_size"]*2
         print("*********                      Finished.                      *********")
         
         gind, gene_plot = getGeneIndex(adata.var_names, gene_plot)
@@ -523,7 +528,7 @@ class VanillaVAE():
       
         #Main Training Process
         print("*********                    Start training                   *********")
-        print(f"Total Number of Iterations Per Epoch: {len(data_loader)}")
+        print(f"Total Number of Iterations Per Epoch: {len(data_loader)}, test iteration: {self.config['test_iter']}")
         
         n_epochs, n_save = self.config["n_epochs"], self.config["save_epoch"]
         n_warmup = self.config["n_warmup"]
@@ -531,7 +536,7 @@ class VanillaVAE():
         start = time.time()
         for epoch in range(n_epochs):
             #Train the encoder
-            if(self.config["k_alt"]==0):
+            if(self.config["k_alt"] is None):
                 stop_training = self.train_epoch(data_loader, test_set, optimizer)
                 if(epoch>=n_warmup):
                     stop_training_ode = self.train_epoch(data_loader, test_set, optimizer_ode)
@@ -540,7 +545,7 @@ class VanillaVAE():
                         break
             else:
                 if(epoch>=n_warmup):
-                    stop_training = self.train_epoch(data_loader, test_set, optimizer, optimizer_ode, self.config["k_alt"])
+                    stop_training = self.train_epoch(data_loader, test_set, optimizer_ode, optimizer, self.config["k_alt"])
                 else:
                     stop_training = self.train_epoch(data_loader, test_set, optimizer, None, self.config["k_alt"])
             
@@ -566,7 +571,8 @@ class VanillaVAE():
                 
         print(f"*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
         plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1),f'{figure_path}/train_loss_vanilla.png')
-        plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)],f'{figure_path}/test_loss_vanilla.png')
+        if(self.config["test_iter"]>0):
+            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)],f'{figure_path}/test_loss_vanilla.png')
         return
     
     def predAll(self, data, mode='test', output=["uhat", "shat", "t"], gene_idx=None):
@@ -717,13 +723,13 @@ class VanillaVAE():
         adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
         scaling = adata.var[f"{key}_scaling"].to_numpy()
         
-        out = self.predAll(np.concatenate((adata.layers['Mu'], adata.layers['Ms']),axis=1), mode="both", gene_idx=np.array(range(adata.n_vars)))
+        out, elbo = self.predAll(np.concatenate((adata.layers['Mu'], adata.layers['Ms']),axis=1), mode="both", gene_idx=np.array(range(adata.n_vars)))
         Uhat, Shat, t, std_t = out[0], out[1], out[2], out[3]
         
-        adata.obs[f"{key}_time"] = t.numpy()
-        adata.obs[f"{key}_std_t"] = std_t.numpy()
-        adata.layers[f"{key}_uhat"] = Uhat.numpy()
-        adata.layers[f"{key}_shat"] = Shat.numpy()
+        adata.obs[f"{key}_time"] = t
+        adata.obs[f"{key}_std_t"] = std_t
+        adata.layers[f"{key}_uhat"] = Uhat
+        adata.layers[f"{key}_shat"] = Shat
         
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
