@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import os
 import sklearn
-from sklearn.metrics import adjusted_rand_score
 import time
 import matplotlib.pyplot as plt
 from cellrank.tl.kernels import PseudotimeKernel
@@ -19,200 +18,6 @@ from .TrainingData import SCTimedData
 from .TransitionGraph import TransGraph
 from .velocity import rnaVelocityBrODE
 
-##############################################################
-# Some basic building blocks of the neural network
-##############################################################
-class ForwardBlock(nn.Module):
-    """
-    A subnetwork as the building block of the entire NN in the VAE.
-    There are four layers in this block:
-    1. Linear layer
-    2. Batch normalization
-    3. Dropout
-    4. Nonlinear Unit
-    """
-    def __init__(self, Cin, Cout, activation='ReLU'):
-        super(ForwardBlock, self).__init__()
-        self.fc = nn.Linear(Cin, Cout)
-        self.bn = nn.BatchNorm1d(num_features=Cout)
-        self.act = nn.ReLU()
-        if(activation == 'LeakyReLU'):
-            self.act == nn.LeakyReLU()
-        elif(activation == 'ReLU'):
-            self.act = nn.ReLU()
-        elif(activation == 'ELU'):
-            self.act = nn.ELU()
-        elif(activation == 'tanh'):
-            self.act = nn.Tanh() 
-        else:
-            print('Warning: activation not supported! Pick the default setting (ReLU)')
-            self.act = nn.ReLU()
-        self.dpt = nn.Dropout(p=0.2)
-        self.block = nn.Sequential(self.fc, self.bn, self.act, self.dpt)
-
-    def forward(self, data_in):
-        return self.block(data_in)
-
-class ResBlock(nn.Module):
-    """
-    A subnetwork with skip connections
-    """
-    def __init__(self, Cin, Cmid, Cout, activation='ReLU'):
-        super(ResBlock, self).__init__()
-        self.fb1 = ForwardBlock(Cin, Cmid, activation=activation)
-        self.fb2 = ForwardBlock(Cmid, Cout, activation=activation)
-        self.downsample = Cin > Cout
-        self.sampling = nn.AvgPool1d(Cin//Cout) if Cin >= Cout else nn.Upsample(Cout)
-    
-    def forward(self, data_in):
-        yres = self.fb2.forward(self.fb1.forward(data_in))
-        #y = torch.mean(data_in,1).unsqueeze(-1)
-        y = self.sampling(data_in.unsqueeze(1)).squeeze(1)
-        if(y.shape[1] <= yres.shape[1]):
-            d = yres.shape[1] - y.shape[1]
-            y = F.pad(y,(d//2,d-d//2))
-        else:
-            d = y.shape[1] - yres.shape[1]
-            y = y[:,d//2:y.shape[1]-(d-d//2)]
-        return yres+y
-
-class encoder_part(nn.Module):
-    def __init__(self, Cin, Cout, N1=500, N2=250, device=torch.device('cpu'), **kwargs):
-        super(encoder_part, self).__init__()
-        self.fc1 = nn.Linear(Cin, N1).to(device)
-        self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
-        self.dpt1 = nn.Dropout(p=0.2).to(device)
-        self.fc2 = nn.Linear(N1, N2).to(device)
-        self.bn2 = nn.BatchNorm1d(num_features=N2).to(device)
-        self.dpt2 = nn.Dropout(p=0.2).to(device)
-        
-        self.net = nn.Sequential(self.fc1, self.bn1, nn.LeakyReLU(), self.dpt1,
-                                 self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2,
-                                 )
-        
-        self.fc_mu, self.spt1 = nn.Linear(N2,Cout).to(device), nn.Softplus()
-        self.fc_std, self.spt2 = nn.Linear(N2,Cout).to(device), nn.Softplus()
-        
-        if('checkpoint' in kwargs):
-            self.load_state_dict(torch.load(kwargs['checkpoint'],map_location=device))
-        else:
-            self.init_weights()
-
-    def init_weights(self):
-        for m in self.net.modules():
-            if(isinstance(m, nn.Linear)):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0.0)
-            elif(isinstance(m, nn.BatchNorm1d)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-        for m in [self.fc_mu, self.fc_std]:
-            nn.init.xavier_uniform_(m.weight)
-            nn.init.constant_(m.bias, 0.0)
-
-    def forward(self, data_in):
-        z = self.net(data_in)
-        mu_zx, std_zx = self.spt1(self.fc_mu(z)), self.spt2(self.fc_std(z))
-        return mu_zx, std_zx
-
-#############################################################
-# VAE: 
-#	Encoder learns the cell time and type
-#
-#	Decoder is an ODE. Instead of explicitly using a transition
-#	graph, the ODE takes a probabilistic view of the predecessor
-#   of each cell type.
-##############################################################
-class encoder_type(nn.Module):
-    def __init__(self, Cin, Cout, hidden_size=(500,250), device=torch.device('cpu')):
-        super(encoder_type, self).__init__()
-        self.fw = ResBlock(Cz, hidden_size[0], hidden_size[1]).to(device)
-        self.fc_yout = nn.Linear(hidden_size[1], Cout).to(device)
-        self.ky = torch.tensor([1e4]).double().to(device)
-        
-        self.init_weights()
-    
-    def init_weights(self):
-        for m in self.fw.modules():
-            if(isinstance(m, nn.Linear)):
-                nn.init.xavier_uniform_(m.weight,np.sqrt(2))
-                nn.init.constant_(m.bias, 0.0)
-            elif(isinstance(m, nn.BatchNorm1d)):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-        for m in [self.fc_yout]:
-                nn.init.xavier_uniform_(m.weight,np.sqrt(2))
-                nn.init.constant_(m.bias, 0.0)
-    
-    def forward(self, z, t, t_trans, temp):
-        logit_y = self.fc_yout(self.fw(z)) - self.ky*F.relu(t_trans - t)
-        y = F.gumbel_softmax(logit_y, tau=temp, hard=True) 
-        return logit_y, y
-        
-class encoder(nn.Module):
-    """
-    Encoder Network
-    Given the observation, it learns a latent representation z and cell time t.
-    """
-    def __init__(self, Cin, Ntype, Cz=None, hidden_size=[(500,250),(500,250),(500,250)], device=torch.device('cpu'), **kwargs):
-        super(encoder, self).__init__()
-        try:
-            hidden_t, hidden_z, hidden_y = hidden_size[0], hidden_size[1], hidden_size[2]
-        except IndexError:
-            try:
-                hidden_t, hidden_z = hidden_size[1], hidden_size[2]
-            except IndexError:
-                print(f'Expect hidden layer sizes of at least two networks, but got {len(hidden_size)} instead!')
-            
-        if(Cz is None):
-            Cz = Ntype
-        self.Cz = Cz
-        
-        #q(T | X)
-        self.encoder_t = encoder_part(Cin, 1, hidden_t[0], hidden_t[1], device)
-
-        #q(Z | X)
-        self.encoder_z = encoder_part(Cin, Cz, hidden_z[0], hidden_z[1], device)
-
-        #q(Y | Z,T,X)
-        fix_cell_type = kwargs.pop('fix_cell_type', True)
-        self.nn_y = None if fix_cell_type else encoder_type(Cz, Ntype, hidden_y, device)
-        
-        if('checkpoint' in kwargs):
-            self.load_state_dict(torch.load(kwargs['checkpoint'],map_location=device))
-        else:
-            self.init_weights()
-        
-
-    def init_weights(self):
-        #Initialize forward blocks
-        self.encoder_t.init_weights()
-        self.encoder_z.init_weights()
-        if(self.nn_y is not None):
-            self.nn_y.init_weights()
-    
-    def reparameterize(self, mu, std):
-        eps = torch.normal(mean=torch.zeros(mu.shape),std=torch.ones(mu.shape)).to(mu.device)
-        return std*eps+mu
-
-    def forward(self, data_in, scaling, t_trans, temp=1.0):
-        data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/scaling, data_in[:,data_in.shape[1]//2:]),1).double()
-        #q(T | X)
-        mu_tx, std_tx = self.encoder_t.forward(data_in_scale)
-
-        #q(Z | X)
-        mu_zx, std_zx = self.encoder_z.forward(data_in_scale)
-
-        #Sampling
-        t = self.reparameterize(mu_tx, std_tx)
-        z = self.reparameterize(mu_zx, std_zx)
-
-        #q(Y | Z,T,X)
-        if(self.nn_y is not None):
-            logit_y, y = self.nn_y.forward(z, t, t_trans, temp)
-            return mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y
-        return mu_tx, std_tx, mu_zx, std_zx, None, t, z, None
 
 
 class decoder(nn.Module):
@@ -471,13 +276,14 @@ class BrODE():
         #Training Configuration
         self.config = {
             #Training Parameters
-            "n_epochs":250, 
-            "learning_rate":1e-4, 
+            "n_epochs":1000, 
+            "learning_rate":2e-4, 
             "neg_slope":0.0,
-            "test_iter":500, 
+            "test_iter":None, 
             "save_epoch":100, 
+            "n_update_noise":25,
             "batch_size":128, 
-            "early_stop":5,
+            "early_stop":8,
             "early_stop_thred":adata.n_vars*1e-3,
             "train_test_split":0.7,
             "train_scaling":False, 
@@ -592,7 +398,6 @@ class BrODE():
                         self.n_drop = self.n_drop + 1
                     else:
                         self.n_drop = 0
-                #print(ll_test, self.n_drop)
                 self.loss_test.append(ll_test)
                 self.setMode('train')
                 if(self.n_drop>=self.config["early_stop"] and self.config["early_stop"]>0):
@@ -642,13 +447,20 @@ class BrODE():
                 w_dic[self.decoder.label_dic_rev[i]] = w[:, i]
             w_df = pd.DataFrame(w_dic, index=pd.Index(cell_types))
             print(w_df)
-    #ToDo 
+    
+    def update_std_noise(self, train_set):
+        G = train_set.G
+        Uhat, Shat, ll = self.predAll(train_set.data, torch.tensor(train_set.time).double().to(self.device), train_set.labels, train_set.N, train_set.G, np.array(range(G)))
+        self.decoder.sigma_u = nn.Parameter(torch.tensor(np.log((Uhat-train_set.data[:,:G]).std(0)+1e-10), device=self.device))
+        self.decoder.sigma_s = nn.Parameter(torch.tensor(np.log((Shat-train_set.data[:,G:]).std(0)+1e-10), device=self.device))
+        return
+    
     def train(self, 
               adata, 
               tkey,
               cluster_key,
               config={}, 
-              plot=True, 
+              plot=False, 
               gene_plot=[], 
               figure_path="figures", 
               embed="umap"):
@@ -685,6 +497,9 @@ class BrODE():
         if(len(self.test_idx)>0):
             test_set = SCTimedData(X[self.test_idx], cell_labels[self.test_idx], t[self.test_idx])
         data_loader = torch.utils.data.DataLoader(train_set, batch_size=self.config["batch_size"], shuffle=True)
+        #Automatically set test iteration if not given
+        if(self.config["test_iter"] is None):
+            self.config["test_iter"] = len(self.train_idx)//self.config["batch_size"]*2
         print("*********                      Finished.                      *********")
         
         gind, gene_plot = getGeneIndex(adata.var_names, gene_plot)
@@ -704,17 +519,14 @@ class BrODE():
         
         #Main Training Process
         print("*********                    Start training                   *********")
-        print(f"Total Number of Iterations Per Epoch: {len(data_loader)}")
+        print(f"Total Number of Iterations Per Epoch: {len(data_loader)}, test iteration: {self.config['test_iter']}")
         
         n_epochs = self.config["n_epochs"]
         
         start = time.time()
         
         for epoch in range(n_epochs):
-            #Optimize the encoder
-            stop_training = self.train_epoch(data_loader, 
-                                             test_set,
-                                             optimizer)
+            stop_training = self.train_epoch(data_loader, test_set, optimizer)
             
             if(plot and (epoch==0 or (epoch+1) % self.config["save_epoch"] == 0)):
                 ll_train = self.test(train_set,
@@ -725,15 +537,19 @@ class BrODE():
                                      figure_path)
                 self.setMode('train')
                 ll = -np.inf if len(self.loss_test)==0 else self.loss_test[-1]
-                print(f"Epoch {epoch+1}: Train Log Likelihood = {ll_train:.3f}, Test Log Likelihood = {ll:.3f}")
+                print(f"Epoch {epoch+1}: Train Log Likelihood = {ll_train:.3f}, Test Log Likelihood = {ll:.3f}, \t Total Time = {convertTime(time.time()-start)}")
+            
+            if((epoch+1) % self.config["n_update_noise"] == 0):
+                self.update_std_noise(train_set)
                 
             if(stop_training):
                 print(f"*********           Early Stop Triggered at epoch {epoch+1}.            *********")
                 break
         
-        print("***     Finished Training     ***")
+        print(f"*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
         plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1),f'{figure_path}/train_loss_brode.png')
-        plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)],f'{figure_path}/test_loss_brode.png')
+        if(self.config["test_iter"]>0):
+            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)],f'{figure_path}/test_loss_brode.png')
         return
     
     #ToDo 
@@ -807,7 +623,7 @@ class BrODE():
         return ll
     
     #ToDo 
-    def saveModel(self, file_path, name='decoder'):
+    def saveModel(self, file_path, name='brode'):
         """
         Save the decoder parameters to a .pt file.
         """
