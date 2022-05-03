@@ -13,17 +13,18 @@ def timeCorr(t1, t2):
     return spearmanr(t1,t2)
 
 def cellState(adata, method, key, gene_indices=None):
-    if(method=='scvelo'):
-        t = adata.layers[f"{key}_time"]
-        toff = adata.var[f"{key}_toff"].to_numpy()
-        cell_state = (t.reshape(-1,1) > toff)
+    if(gene_indices is None):
+        gene_indices = np.array(np.range(adata.n_vars))
+    if(method=='scVelo'):
+        t = adata.layers[f"{key}_t"][:,gene_indices]
+        toff = adata.var[f"{key}_t_"].to_numpy()[gene_indices]
+        cell_state = (t > toff)
     else:
         t = adata.obs[f"{key}_time"].to_numpy()
-        toff = adata.var[f"{key}_t_"].to_numpy()
+        toff = adata.var[f"{key}_toff"].to_numpy()
         ton = adata.var[f"{key}_ton"].to_numpy()
         cell_state = (t.reshape(-1,1) > toff) + (t.reshape(-1,1) < ton)*2
-    if(gene_indices is not None):
-        return cell_state[:, gene_indices]
+    
     return cell_state
 
 def get_pred_scv(adata, key='fit'):
@@ -100,14 +101,14 @@ def get_pred_vanilla_demo(adata, key, genes=None, N=100):
     
     return t_demo, Uhat_demo, Shat_demo
 
-def get_pred_velovae(adata, key, scv_key=None):
+def get_pred_velovae(adata, key, scv_key=None, full_vb=False):
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     sigma_u, sigma_s = adata.var[f"{key}_sigma_u"].to_numpy(), adata.var[f"{key}_sigma_s"].to_numpy()
     if( (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers)):
         rho = adata.layers[f"{key}_rho"]
-        alpha = adata.var[f"{key}_alpha"].to_numpy()
-        beta = adata.var[f"{key}_beta"].to_numpy()
-        gamma = adata.var[f"{key}_gamma"].to_numpy()
+        alpha = adata.var[f"{key}_alpha"].to_numpy() if not full_vb else np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy())
+        beta = adata.var[f"{key}_beta"].to_numpy() if not full_vb else np.exp(adata.var[f"{key}_logmu_beta"].to_numpy())
+        gamma = adata.var[f"{key}_gamma"].to_numpy() if not full_vb else np.exp(adata.var[f"{key}_logmu_gamma"].to_numpy())
         t = adata.obs[f"{key}_time"].to_numpy()
         scaling = adata.var[f"{key}_scaling"].to_numpy()
         
@@ -133,11 +134,11 @@ def get_pred_velovae(adata, key, scv_key=None):
         logp_test = np.nanmean(np.sum(logp_test[:,scv_mask],1))
     return Uhat, Shat, logp_train, logp_test
 
-def get_pred_velovae_demo(adata, key, genes=None):
+def get_pred_velovae_demo(adata, key, genes=None, full_vb=False):
     if( (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers)):
-        alpha = adata.var[f"{key}_alpha"].to_numpy()
-        beta = adata.var[f"{key}_beta"].to_numpy()
-        gamma = adata.var[f"{key}_gamma"].to_numpy()
+        alpha = adata.var[f"{key}_alpha"].to_numpy() if not full_vb else np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy())
+        beta = adata.var[f"{key}_beta"].to_numpy() if not full_vb else np.exp(adata.var[f"{key}_logmu_beta"].to_numpy())
+        gamma = adata.var[f"{key}_gamma"].to_numpy() if not full_vb else np.exp(adata.var[f"{key}_logmu_gamma"].to_numpy())
         t = adata.obs[f"{key}_time"].to_numpy()
         scaling = adata.var[f"{key}_scaling"].to_numpy()
         sigma_u, sigma_s = adata.var[f"{key}_sigma_u"].to_numpy(), adata.var[f"{key}_sigma_s"].to_numpy()
