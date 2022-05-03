@@ -91,7 +91,9 @@ def preprocess(adata,
                n_neighbors=30,
                umap_min_dist=0.5,
                resolution=1.0,
-               genes_retain=None):
+               genes_retain=None,
+               perform_clustering=False,
+               compute_umap=False):
     """
     Perform all kinds of preprocessing steps using scanpy
     By setting genes_retain to a specific list of gene names, preprocessing will pick these exact genes regardless of their counts and gene selection method.
@@ -127,7 +129,7 @@ def preprocess(adata,
     
     
     #3. Obtain cell clusters
-    if(not 'clusters' in adata.obs):
+    if(perform_clustering):
         scanpy.tl.leiden(adata, key_added='clusters', resolution=resolution)
     #4. Obtain Capture Time (If available)
     if(tkey is not None):
@@ -140,5 +142,7 @@ def preprocess(adata,
         adata.obs["tprior"] = tprior
     
     #5. Compute Umap coordinates for visulization
-    if(not 'X_umap' in adata.obsm):
+    if(compute_umap):
+        if("X_umap" in adata.obsm):
+            print("Warning: Overwriting existing UMAP coordinates.")
         scanpy.tl.umap(adata, min_dist=umap_min_dist)
