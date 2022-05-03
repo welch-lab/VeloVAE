@@ -748,4 +748,198 @@ class BranchingVAE():
         
         if(file_name is not None):
             adata.write_h5ad(f"{file_path}/{file_name}")
+
+##############################################################
+# Some basic building blocks of the neural network
+##############################################################
+class ForwardBlock(nn.Module):
+    """
+    A subnetwork as the building block of the entire NN in the VAE.
+    There are four layers in this block:
+    1. Linear layer
+    2. Batch normalization
+    3. Dropout
+    4. Nonlinear Unit
+    """
+    def __init__(self, Cin, Cout, activation='ReLU'):
+        super(ForwardBlock, self).__init__()
+        self.fc = nn.Linear(Cin, Cout)
+        self.bn = nn.BatchNorm1d(num_features=Cout)
+        self.act = nn.ReLU()
+        if(activation == 'LeakyReLU'):
+            self.act == nn.LeakyReLU()
+        elif(activation == 'ReLU'):
+            self.act = nn.ReLU()
+        elif(activation == 'ELU'):
+            self.act = nn.ELU()
+        elif(activation == 'tanh'):
+            self.act = nn.Tanh() 
+        else:
+            print('Warning: activation not supported! Pick the default setting (ReLU)')
+            self.act = nn.ReLU()
+        self.dpt = nn.Dropout(p=0.2)
+        self.block = nn.Sequential(self.fc, self.bn, self.act, self.dpt)
+
+    def forward(self, data_in):
+        return self.block(data_in)
+
+class ResBlock(nn.Module):
+    """
+    A subnetwork with skip connections
+    """
+    def __init__(self, Cin, Cmid, Cout, activation='ReLU'):
+        super(ResBlock, self).__init__()
+        self.fb1 = ForwardBlock(Cin, Cmid, activation=activation)
+        self.fb2 = ForwardBlock(Cmid, Cout, activation=activation)
+        self.downsample = Cin > Cout
+        self.sampling = nn.AvgPool1d(Cin//Cout) if Cin >= Cout else nn.Upsample(Cout)
     
+    def forward(self, data_in):
+        yres = self.fb2.forward(self.fb1.forward(data_in))
+        #y = torch.mean(data_in,1).unsqueeze(-1)
+        y = self.sampling(data_in.unsqueeze(1)).squeeze(1)
+        if(y.shape[1] <= yres.shape[1]):
+            d = yres.shape[1] - y.shape[1]
+            y = F.pad(y,(d//2,d-d//2))
+        else:
+            d = y.shape[1] - yres.shape[1]
+            y = y[:,d//2:y.shape[1]-(d-d//2)]
+        return yres+y
+
+class encoder_part(nn.Module):
+    def __init__(self, Cin, Cout, N1=500, N2=250, device=torch.device('cpu'), **kwargs):
+        super(encoder_part, self).__init__()
+        self.fc1 = nn.Linear(Cin, N1).to(device)
+        self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
+        self.dpt1 = nn.Dropout(p=0.2).to(device)
+        self.fc2 = nn.Linear(N1, N2).to(device)
+        self.bn2 = nn.BatchNorm1d(num_features=N2).to(device)
+        self.dpt2 = nn.Dropout(p=0.2).to(device)
+        
+        self.net = nn.Sequential(self.fc1, self.bn1, nn.LeakyReLU(), self.dpt1,
+                                 self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2,
+                                 )
+        
+        self.fc_mu, self.spt1 = nn.Linear(N2,Cout).to(device), nn.Softplus()
+        self.fc_std, self.spt2 = nn.Linear(N2,Cout).to(device), nn.Softplus()
+        
+        if('checkpoint' in kwargs):
+            self.load_state_dict(torch.load(kwargs['checkpoint'],map_location=device))
+        else:
+            self.init_weights()
+
+    def init_weights(self):
+        for m in self.net.modules():
+            if(isinstance(m, nn.Linear)):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0.0)
+            elif(isinstance(m, nn.BatchNorm1d)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+        for m in [self.fc_mu, self.fc_std]:
+            nn.init.xavier_uniform_(m.weight)
+            nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, data_in):
+        z = self.net(data_in)
+        mu_zx, std_zx = self.spt1(self.fc_mu(z)), self.spt2(self.fc_std(z))
+        return mu_zx, std_zx
+
+#############################################################
+# VAE: 
+#	Encoder learns the cell time and type
+#
+#	Decoder is an ODE. Instead of explicitly using a transition
+#	graph, the ODE takes a probabilistic view of the predecessor
+#   of each cell type.
+##############################################################
+class encoder_type(nn.Module):
+    def __init__(self, Cin, Cout, hidden_size=(500,250), device=torch.device('cpu')):
+        super(encoder_type, self).__init__()
+        self.fw = ResBlock(Cz, hidden_size[0], hidden_size[1]).to(device)
+        self.fc_yout = nn.Linear(hidden_size[1], Cout).to(device)
+        self.ky = torch.tensor([1e4]).double().to(device)
+        
+        self.init_weights()
+    
+    def init_weights(self):
+        for m in self.fw.modules():
+            if(isinstance(m, nn.Linear)):
+                nn.init.xavier_uniform_(m.weight,np.sqrt(2))
+                nn.init.constant_(m.bias, 0.0)
+            elif(isinstance(m, nn.BatchNorm1d)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        for m in [self.fc_yout]:
+                nn.init.xavier_uniform_(m.weight,np.sqrt(2))
+                nn.init.constant_(m.bias, 0.0)
+    
+    def forward(self, z, t, t_trans, temp):
+        logit_y = self.fc_yout(self.fw(z)) - self.ky*F.relu(t_trans - t)
+        y = F.gumbel_softmax(logit_y, tau=temp, hard=True) 
+        return logit_y, y
+        
+class encoder(nn.Module):
+    """
+    Encoder Network
+    Given the observation, it learns a latent representation z and cell time t.
+    """
+    def __init__(self, Cin, Ntype, Cz=None, hidden_size=[(500,250),(500,250),(500,250)], device=torch.device('cpu'), **kwargs):
+        super(encoder, self).__init__()
+        try:
+            hidden_t, hidden_z, hidden_y = hidden_size[0], hidden_size[1], hidden_size[2]
+        except IndexError:
+            try:
+                hidden_t, hidden_z = hidden_size[1], hidden_size[2]
+            except IndexError:
+                print(f'Expect hidden layer sizes of at least two networks, but got {len(hidden_size)} instead!')
+            
+        if(Cz is None):
+            Cz = Ntype
+        self.Cz = Cz
+        
+        #q(T | X)
+        self.encoder_t = encoder_part(Cin, 1, hidden_t[0], hidden_t[1], device)
+
+        #q(Z | X)
+        self.encoder_z = encoder_part(Cin, Cz, hidden_z[0], hidden_z[1], device)
+
+        #q(Y | Z,T,X)
+        fix_cell_type = kwargs.pop('fix_cell_type', True)
+        self.nn_y = None if fix_cell_type else encoder_type(Cz, Ntype, hidden_y, device)
+        
+        if('checkpoint' in kwargs):
+            self.load_state_dict(torch.load(kwargs['checkpoint'],map_location=device))
+        else:
+            self.init_weights()
+        
+
+    def init_weights(self):
+        #Initialize forward blocks
+        self.encoder_t.init_weights()
+        self.encoder_z.init_weights()
+        if(self.nn_y is not None):
+            self.nn_y.init_weights()
+    
+    def reparameterize(self, mu, std):
+        eps = torch.normal(mean=torch.zeros(mu.shape),std=torch.ones(mu.shape)).to(mu.device)
+        return std*eps+mu
+
+    def forward(self, data_in, scaling, t_trans, temp=1.0):
+        data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/scaling, data_in[:,data_in.shape[1]//2:]),1).double()
+        #q(T | X)
+        mu_tx, std_tx = self.encoder_t.forward(data_in_scale)
+
+        #q(Z | X)
+        mu_zx, std_zx = self.encoder_z.forward(data_in_scale)
+
+        #Sampling
+        t = self.reparameterize(mu_tx, std_tx)
+        z = self.reparameterize(mu_zx, std_zx)
+
+        #q(Y | Z,T,X)
+        if(self.nn_y is not None):
+            logit_y, y = self.nn_y.forward(z, t, t_trans, temp)
+            return mu_tx, std_tx, mu_zx, std_zx, logit_y, t, z, y
+        return mu_tx, std_tx, mu_zx, std_zx, None, t, z, None

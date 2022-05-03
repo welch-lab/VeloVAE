@@ -248,7 +248,164 @@ def odeBranchNumpy(t, graph, init_type, **kwargs):
     uhat, shat = odeBranch(t, graph, init_type, True, **kwargs)
     return np.sum(py*(uhat*scaling), 1), np.sum(py*shat, 1)
 
+def initAllPairsNumpy(alpha,
+                      beta,
+                      gamma,
+                      t_trans,
+                      ts,
+                      u0,
+                      s0,
+                      k=10):
+    """
+    Notice: t_trans and ts are all the absolute values, not relative values
+    """
+    Ntype = alpha.shape[0]
+    G = alpha.shape[1]
+    
+    #Compute different initial conditions
+    tau0 = F.softplus(torch.tensor(t_trans.reshape(-1,1,1) - ts), beta=k).numpy()
+    U0_hat, S0_hat = predSUNumpy(tau0, u0, s0, alpha, beta, gamma) #initial condition of the current type considering all possible parent types
+    
+    return np.clip(U0_hat, 0, None), np.clip(S0_hat, 0, None)
 
+def ode_br_weighted_numpy(t, y, w, get_init=False, k=10, **kwargs):
+    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
+    t_trans, ts = kwargs['t_trans'], kwargs['ts']
+    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
+    scaling=kwargs.pop("scaling", None)
+    
+    Ntype, G = alpha.shape
+    N = len(y)
+    
+    U0_hat, S0_hat = initAllPairsNumpy(alpha,
+                                       beta,
+                                       gamma,
+                                       t_trans,
+                                       ts,
+                                       u0,
+                                       s0,
+                                       k) #(type, parent type, gene)
+    Uhat, Shat = np.zeros((N,G)), np.zeros((N,G))
+    for i in range(Ntype):
+        parent = np.argmax(w[i])
+        tau = F.softplus( torch.tensor(t[y==i] - ts[i]), beta=k).numpy() #(cell, type, gene)
+        Uhat_type, Shat_type = predSUNumpy(tau,
+                                           U0_hat[i, parent],
+                                           S0_hat[i, parent], 
+                                           alpha[i],
+                                           beta[i],
+                                           gamma[i])
+        
+        Uhat[y==i] = Uhat_type
+        Shat[y==i] = Shat_type
+    if(scaling is not None):
+        Uhat = Uhat * scaling
+    if(get_init):
+        return Uhat, Shat, U0_hat, S0_hat
+    return Uhat, Shat
+
+
+
+
+def computeMixWeight(mu_t, sigma_t,
+                     cell_labels,
+                     alpha,
+                     beta,
+                     gamma,
+                     t_trans,
+                     t_end,
+                     ts,
+                     u0,
+                     s0,
+                     sigma_u,
+                     sigma_s,
+                     eps_t,
+                     k=1):
+    
+    U0_hat, S0_hat = initAllPairs(alpha,
+                                  beta,
+                                  gamma,
+                                  t_trans,
+                                  ts,
+                                  u0,
+                                  s0,
+                                  False)
+    
+    Ntype = alpha.shape[0]
+    var = torch.mean(sigma_u.pow(2)+sigma_s.pow(2))
+    
+    tscore = torch.empty(Ntype, Ntype).to(alpha.device)
+    
+    mu_t_type = [mu_t[cell_labels==i] for i in range(Ntype)]
+    std_t_type = [sigma_t[cell_labels==i] for i in range(Ntype)]
+    for i in range(Ntype):#child
+        for j in range(Ntype):#parent
+            mask1, mask2 = (mu_t_type[j]<t_trans[i]-3*eps_t).float(), (mu_t_type[j]>=t_trans[i]+3*eps_t).float()
+            tscore[i, j] = torch.mean( ((mu_t_type[j]-t_trans[i]).pow(2) + (std_t_type[j] - eps_t).pow(2))*(mask1+mask2*k) )
+    
+    xscore = torch.mean(((U0_hat-u0.unsqueeze(1))).pow(2)+((S0_hat-s0.unsqueeze(1))).pow(2),-1) + torch.eye(alpha.shape[0]).to(alpha.device)*var*0.1
+    
+    #tmask = t_trans.view(-1,1)<t_trans
+    #xscore[tmask] = var*1e3
+    mu_tscore, mu_xscore = tscore.mean(), xscore.mean()
+    logit_w = - tscore/mu_tscore - xscore/mu_xscore
+    
+    return logit_w, tscore, xscore
+
+def initAllPairs(alpha,
+                 beta,
+                 gamma,
+                 t_trans,
+                 ts,
+                 u0,
+                 s0,
+                 neg_slope=0.0):
+    """
+    Notice: t_trans and ts are all the absolute values, not relative values
+    """
+    Ntype = alpha.shape[0]
+    G = alpha.shape[1]
+    
+    #Compute different initial conditions
+    tau0 = F.leaky_relu(t_trans.view(-1,1,1) - ts, neg_slope)
+    U0_hat, S0_hat = predSU(tau0, u0, s0, alpha, beta, gamma) #initial condition of the current type considering all possible parent types
+    
+    return F.relu(U0_hat), F.relu(S0_hat)
+
+
+
+def ode_br_weighted(t, y_onehot, neg_slope=0, **kwargs):
+    """
+    Compute the ODE solution given every possible parent cell type
+    """
+    alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
+    t_trans, ts = kwargs['t_trans'], kwargs['ts']
+    u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
+    sigma_u = kwargs['sigma_u']
+    sigma_s = kwargs['sigma_s']
+    scaling=kwargs["scaling"]
+    
+    Ntype, G = alpha.shape
+    N = y_onehot.shape[0]
+    
+    U0_hat, S0_hat = initAllPairs(alpha,
+                                  beta,
+                                  gamma,
+                                  t_trans,
+                                  ts,
+                                  u0,
+                                  s0,
+                                  neg_slope) #(type, parent type, gene)
+    
+    tau = F.leaky_relu( t.view(N,1,1,1) - ts.view(Ntype,1,G), neg_slope) #(cell, type, parent type, gene)
+    Uhat, Shat = predSU(tau,
+                        U0_hat,
+                        S0_hat,
+                        alpha.view(Ntype, 1, G),
+                        beta.view(Ntype, 1, G),
+                        gamma.view(Ntype, 1, G))
+    
+    return ((Uhat*y_onehot.view(N,Ntype,1,1)).sum(1))*scaling, (Shat*y_onehot.view(N,Ntype,1,1)).sum(1)
 
 def getPredictionBranching(adata, key, graph, init_types):
     """
