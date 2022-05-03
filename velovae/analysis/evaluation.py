@@ -3,26 +3,35 @@ import pandas as pd
 from pandas import DataFrame, Index
 from ..model.model_util import makeDir
 from .evaluation_util import *
-from velovae.plotting import plot_phase_grid, plot_sig_grid, plot_cluster_grid, plot_time_grid
+from velovae.plotting import plot_cluster, plot_phase_grid, plot_sig_grid, plot_time_grid
 
 
 
 
 def getMetric(adata, method, key, scv_key=None, scv_mask=True):
     """
+    < General Description >
     Get specific metrics given a method.
-    key: key for extracting the ODE parameters learned by the model
-    scv_key (optional): key of the scvelo fitting, used for filtering the genes (only effective if scv_mask=True)
-    scv_mask: whether to filter out the genes not fitted by scvelo (used for fairness in the comparison of different methods)
+    
+    < Input Arguments >
+    1. adata
+       AnnData object
+    2. key
+       key in .var or .varm for extracting the ODE parameters learned by the model
+    3. scv_key:
+       (optional) key for scvelo fitting. Used for filtering the genes (only effective if scv_mask=True)
+    4. scv_mask: 
+       (optional) whether to filter out the genes not fitted by scvelo (used for fairness in the comparison with scVelo)
     """
-    stats = {}
+    
+    stats = {}  #contains the performance metrics
     if method=='scVelo':
         Uhat, Shat, logp_train = get_pred_scv(adata, key)
         logp_test = "N/A"
     elif method=='Vanilla VAE':
         Uhat, Shat, logp_train, logp_test = get_pred_vanilla(adata, key, scv_key)
-    elif method=='VeloVAE':
-        Uhat, Shat, logp_train, logp_test = get_pred_velovae(adata, key, scv_key)
+    elif method=='VeloVAE' or method=="FullVB":
+        Uhat, Shat, logp_train, logp_test = get_pred_velovae(adata, key, scv_key, method=="FullVB")
     elif(method=='BrODE'):
         Uhat, Shat, logp_train, logp_test = get_pred_brode(adata, key, scv_key)
 
@@ -35,7 +44,7 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
     
     if(scv_mask):
         try:
-            gene_mask = ~np.isnan(adata.var['fit_alpha'].to_numpy())
+            gene_mask = ~np.isnan(adata.var['fit_alpha'].to_numpy()) #For all genes not fitted, scVelo sets the ODE parameters to nan.
             stats['MSE Train'] = np.nanmean((U[train_idx][:,gene_mask]-Uhat[train_idx][:,gene_mask])**2+(S[train_idx][:,gene_mask]-Shat[train_idx][:,gene_mask])**2)
             stats['MAE Train'] = np.nanmean(np.abs(U[train_idx][:,gene_mask]-Uhat[train_idx][:,gene_mask])+np.abs(S[train_idx][:,gene_mask]-Shat[train_idx][:,gene_mask]))
             if(len(test_idx)>0):
@@ -89,14 +98,78 @@ def transition_prob(adata, embed_key, tkey, label_key, nbin=20, epsilon = 0.05, 
                                                         q)
     return p_trans, cell_types, t_trans
 
-def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], Nplot=500, frac=0.5, embed="umap", grid_size=(1,1), save_path="figures"):
+def post_analysis(adata, 
+                  test_id,
+                  methods, 
+                  keys, 
+                  genes=[], 
+                  plot_type=["signal"], 
+                  cluster_key="clusters",
+                  nplot=500, 
+                  frac=0.5, 
+                  embed="umap", 
+                  grid_size=(1,1),
+                  legend_ncol=None,
+                  save_path="figures"):
     """
-    Main function for post analysis.
-    adata: anndata object
-    methods: list of strings containing the methods to compare with
-    keys: key of each method (to extract parameters from anndata)
-    genes: genes to plot
-    plot_type: currently supports phase, signal (u/s vs. t), time and cell type
+    < Description >
+    Main function for post analysis. This function computes performance metrics and generates
+    plots based on user input.
+    
+    < Input Arguments >
+    1.  adata [AnnData]
+        AnnData object
+     
+    2.  test_id: [string]
+        Used for naming the figures. 
+        For example, it can be set as the name of the dataset.
+     
+    3.  methods [string list]
+        Contains the methods to compare with. 
+        Valid methods are "scVelo", "Vanilla VAE", "VeloVAE" and "BrODE".
+     
+    4.  keys [string list]
+        Used for extracting ODE parameters from .var or .varm from anndata
+        It should be of the same length as methods.
+     
+    5.  genes [string list] 
+        Genes to plot. Used when plot_type contains "phase" or "signal"
+     
+    6.  plot_type [string list]
+        Type of plots to generate.
+        Currently supports phase, signal (u/s/v vs. t), time and cell type
+    
+    7.  cluster_key [string]
+        Key in .obs containing the cell type labels
+     
+    8.  nplot (optional) [int]
+        Number of data points in the prediction (or for each cell type in VeloVAE and BrODE).
+        This is to save computation. For plotting the prediction, we don't need 
+        as many points as the original dataset contains.
+       
+    9.  frac (optional) [float in (0,1)]
+        Parameter for the loess plot. 
+        A higher value means larger time window and the resulting fitted line will
+        be smoother. 
+     
+    10.  embed (optional) [string]
+        2D embedding used for visualization of time and cell type.
+        The true key for the embedding is f"X_{embed}" in .obsm
+    
+    11. grid_size (optional) [int tuple (n_row, n_col)]
+        Grid size for plotting the genes.
+        n_row*n_col >= len(genes)
+    
+    12  legend_ncol (optional) [int]
+        Number of columns in the legend
+    
+    13. save_path (optional) [string]
+        Path to save the figures.
+    
+    < Output >
+    1.  stats_df [pandas.DataFrame]
+        Contains the performance metrics of all methods.
+    2.  Saves the figures to 'save_path'.
     """
     makeDir(save_path)
     U, S = adata.layers["Mu"], adata.layers["Ms"]
@@ -127,15 +200,15 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
         stats_i = getMetric(adata, method, keys[i], scv_key, (scv_key is not None) )
         stats[method] = stats_i
         if(method=='scVelo'):
-            t_i, Uhat_i, Shat_i = get_pred_scv_demo(adata, keys[i], genes, Nplot)
-            Yhat[method] = np.concatenate((np.zeros((Nplot)), np.ones((Nplot))))
+            t_i, Uhat_i, Shat_i = get_pred_scv_demo(adata, keys[i], genes, nplot)
+            Yhat[method] = np.concatenate((np.zeros((nplot)), np.ones((nplot))))
             V[method] = adata.layers["velocity"][:,gene_indices]
         elif(method=='Vanilla VAE'):
-            t_i, Uhat_i, Shat_i = get_pred_vanilla_demo(adata, keys[i], genes, Nplot)
+            t_i, Uhat_i, Shat_i = get_pred_vanilla_demo(adata, keys[i], genes, nplot)
             Yhat[method] = None
             V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
-        elif(method=='VeloVAE'):
-            Uhat_i, Shat_i = get_pred_velovae_demo(adata, keys[i], genes)
+        elif(method=='VeloVAE' or method=='FullVB'):
+            Uhat_i, Shat_i = get_pred_velovae_demo(adata, keys[i], genes, method=='FullVB')
             V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
             t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
             cell_labels_raw = adata.obs["clusters"].to_numpy()
@@ -146,6 +219,7 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
             Yhat[method] = cell_labels
         elif(method=='BrODE'):
             t_i, y_brode, Uhat_i, Shat_i = get_pred_brode_demo(adata, keys[i], genes)
+            V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
             Yhat[method] = y_brode
         That[method] = t_i
         t_brode = t_i
@@ -164,37 +238,17 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
     print(stats_df)
     
     print("---   Plotting  Results   ---")
-    
-    if("type" in plot_type or "all" in plot_type):
-        p_given = np.zeros((len(cell_labels),Ntype))
-        for i in range(Ntype):
-            p_given[cell_labels==i, i] = 1
-        Y = {"True": p_given}
-        
-        for i, method in enumerate(methods):
-            if(f"{keys[i]}_ptype" in adata.obsm):
-                Y[method] = adata.obsm[f"{keys[i]}_ptype"]
-            else:
-                Y[method] = p_given
-            
-        
-        plot_cluster_grid(X_embed, 
-                          Y,
-                          cell_types_raw, 
-                          False, 
-                          f"{save_path}/cluster_{test_id}.png")
+    if('cluster' in plot_type or "all" in plot_type):
+        plot_cluster(adata.obsm[f"X_{embed}"], adata.obs[cluster_key].to_numpy(), figname=f"{save_path}/{test_id}_umap.png")
     
     if("time" in plot_type or "all" in plot_type):
         T = {}
-        std_t = {}
         capture_time = adata.obs["tprior"].to_numpy() if "tprior" in adata.obs else None
         for i, method in enumerate(methods):
             if(method=='scVelo'):
                 T[method] = adata.obs["latent_time"].to_numpy()
-                std_t[method] = np.zeros((adata.n_obs))
             else:
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
-                std_t[method] = adata.obs[f"{keys[i]}_std_t"].to_numpy()
         plot_time_grid(T,
                        X_embed,
                        capture_time,
@@ -209,12 +263,12 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
         Labels_phase = {}
         Legends_phase = {}
         for i, method in enumerate(methods):
-            if(method=='VeloVAE' or method=='scVelo'):
+            if(method=='Vanilla VAE' or method=='scVelo'):
                 Labels_phase[method] = cellState(adata, method, keys[i], gene_indices)
                 Legends_phase[method] = ['Induction', 'Repression', 'Off']
             else:
-                Labels_phase[method] = adata.obs[f"{keys[i]}_label"]
-                Legends_phase[method] = adata.var_names
+                Labels_phase[method] = adata.obs[cluster_key].to_numpy()
+                Legends_phase[method] = np.unique(Labels_phase[method])
         plot_phase_grid(grid_size[0], 
                         grid_size[1],
                         genes,
@@ -239,19 +293,15 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
                 methods_ = np.concatenate((methods,['scVelo Global']))
                 T[method] = adata.layers[f"{keys[i]}_t"][:,gene_indices]
                 T['scVelo Global'] = adata.obs["latent_time"].to_numpy()*20
-                Labels_sig[method] = np.array([label_dic[x] for x in adata.obs["clusters"].to_numpy()])
+                Labels_sig[method] = np.array([label_dic[x] for x in adata.obs[cluster_key].to_numpy()])
                 Labels_sig['scVelo Global'] = Labels_sig[method]
                 Legends_sig['scVelo Global'] = cell_types_raw
-            elif(method=='Vanilla VAE' or method=='VeloVAE'):
-                T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
-                Labels_sig[method] = np.array([label_dic[x] for x in adata.obs["clusters"].to_numpy()])
-            elif(method=='BrODE'):
-                T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
-                Labels_sig[method] = adata.obs[f"{keys[i]}_label"].to_numpy()
             else:
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
-                Labels_sig[method] = adata.obs[f"{keys[i]}_label"].to_numpy()
-
+                Labels_sig[method] = np.array([label_dic[x] for x in adata.obs[cluster_key].to_numpy()])
+            
+        if(legend_ncol is None):
+            legend_ncol = grid_size[1]*len(methods)
         plot_sig_grid(grid_size[0], 
                       grid_size[1], 
                       genes,
@@ -266,6 +316,7 @@ def postAnalysis(adata, methods, keys, test_id, genes=[], plot_type=["signal"], 
                       V,
                       Yhat,
                       frac=frac,
+                      legend_ncol=legend_ncol,
                       down_sample=max(1,adata.n_obs//5000),
                       path=save_path, 
                       figname=test_id)
