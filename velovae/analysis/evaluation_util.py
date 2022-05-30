@@ -219,7 +219,7 @@ def get_pred_brode_demo(adata, key, genes=None, N=100):
     y_demo = np.zeros((N*n_type)).astype(int)
     for i in range(n_type):
         y_demo[i*N:(i+1)*N] = i
-        t_demo[i*N:(i+1)*N] = np.linspace(t_trans[i], t[y==i].max(), N)
+        t_demo[i*N:(i+1)*N] = np.linspace(t_trans[i], np.quantile(t[y==i],0.95), N)
     if(genes is None):
         alpha = adata.varm[f"{key}_alpha"].T
         beta = adata.varm[f"{key}_beta"].T

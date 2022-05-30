@@ -84,8 +84,14 @@ def preprocess(adata,
                min_genes_expressed=20,
                min_shared_count=10,
                min_shared_cells=10,
-               max_genes=None,
-               max_cells=None,
+               min_counts_s=None,
+               min_cells_s=None,
+               max_counts_s=None,
+               max_cells_s=None,
+               min_counts_u=None,
+               min_cells_u=None,
+               max_counts_u=None,
+               max_cells_u=None,
                max_proportion_per_cell=0.05,
                npc=30,
                n_neighbors=30,
@@ -105,13 +111,23 @@ def preprocess(adata,
     if(genes_retain is None):
         if(selection_method=="balanced"):
             print("Balanced gene selection.")
-            filter_and_normalize(adata, min_shared_counts=min_shared_count, min_shared_cells = min_shared_cells,  n_top_genes=Ngene*3)
+            filter_and_normalize(adata, min_shared_counts=min_shared_count, min_shared_cells = min_shared_cells,  min_counts_u = min_counts_u, n_top_genes=Ngene*3)
             #filter_genes(adata, min_shared_counts=min_shared_count, min_shared_cells = min_shared_cells)
             #normalize_per_cell(adata, max_proportion_per_cell=max_proportion_per_cell)
             balanced_gene_selection(adata, Ngene, cluster_key)
             #log1p(adata)
         else:
-            filter_and_normalize(adata, min_shared_counts=min_shared_count, min_shared_cells = min_shared_cells,  n_top_genes=Ngene)
+            filter_genes(adata, 
+                         min_counts=min_counts_s, 
+                         min_cells=min_cells_s, 
+                         max_counts=max_counts_s, 
+                         max_cells=max_cells_s, 
+                         min_counts_u=min_counts_u, 
+                         min_cells_u=min_cells_u, 
+                         max_counts_u=max_counts_u, 
+                         max_cells_u=max_cells_u)
+            filter_and_normalize(adata, min_shared_counts=min_shared_count, min_shared_cells = min_shared_cells,  min_counts_u = min_counts_u,  n_top_genes=Ngene)
+            
     else:
         gene_index = np.ones(adata.n_vars, dtype=bool)
         for i in range(len(genes_retain)):

@@ -19,6 +19,6 @@ from .plotting import (plot_sig,
                        plot_trajectory_3d,
                        plot_umap_transition,
                        plot_transition_graph,
-                       plot_transcription_grid)
+                       plot_rate_grid)
 from .preprocessing import preprocess
                       

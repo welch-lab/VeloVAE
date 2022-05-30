@@ -12,57 +12,31 @@ from loess import loess_1d
 #######################################################################################
 #Default colors and markers for plotting
 #######################################################################################
-"""
-colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown', 'lime', 'grey', \
-   'olive', 'cyan', 'pink', 'gold', 'steelblue', 'salmon', 'teal', \
-   'magenta', 'rosybrown', 'darkorange', 'yellow', 'greenyellow', 'darkseagreen', 'yellowgreen', 'palegreen', \
-   'hotpink', 'navajowhite', 'aqua', 'navy', 'saddlebrown', 'black', 'maroon']
-"""
 TAB10 = list(plt.get_cmap("tab10").colors)
 TAB20 = list(plt.get_cmap("tab20").colors)
 TAB20B = list(plt.get_cmap("tab20b").colors)
 TAB20C = list(plt.get_cmap("tab20c").colors)
-
-
-#colormaps = [clr.LinearSegmentedColormap.from_list('my '+colors[i%len(colors)], ['white',colors[i%len(colors)]], 1024) for i in range(len(colors))]
+RAINBOW = [plt.cm.rainbow(i) for i in range(256)]
 
 markers = ["o","x","s","v","+","d","1","*","^","p","h","8","1","2","|"]
-
 
 def get_colors(n, color_map=None):
     if(color_map is None): #default color based on 
         if(n<=10):
-            return TAB10
+            return TAB10[:n]
         elif(n<=20):
-            return TAB20
+            return TAB20[:n]
+        elif(n<=40):
+            TAB40 = TAB20B+TAB20C
+            return TAB40[:n]
         else:
-            return TAB20B+TAB20C
+            print("Warning: Number of colors exceeds the maximum (40)! Use a continuous colormap (256) instead.")
+            return RAINBOW[:n]
     else:
         color_map_obj = list(plt.get_cmap(color_map).colors)
         k = len(color_map_obj)//n
         colors = [color_map_obj(i) for i in range(0,len(color_map_obj),k)] if k>0 else [color_map_obj(i) for i in range(len(color_map_obj))]
     return colors
-
-def pickcell(u,s,cell_labels):
-    """
-    Picks some cells from each cell type. Used in plotting the phase trajectory.
-    """
-    cell_type = np.unique(cell_labels)
-    quantiles = [0.0, 0.05, 0.25, 0.5, 0.75, 0.95, 1.0]
-    track_idx = []
-    for i in range(len(cell_type)):
-        for j in range(len(quantiles)-1):
-            thred1 = np.quantile(s, quantiles[j])
-            thred2 = np.quantile(s, quantiles[j+1])
-            ans = np.where((s>=thred1)&(s<thred2)&(cell_labels==cell_type[i]))[0]
-            if(len(ans)>0):
-                track_idx.append(ans[0])
-            thred1 = np.quantile(u, quantiles[j])
-            thred2 = np.quantile(u, quantiles[j+1])
-            ans = np.where((s>=thred1)&(s<thred2)&(cell_labels==cell_type[i]))[0]
-            if(len(ans)>0):
-                track_idx.append(ans[0])
-    return np.array(track_idx)
 
 ############################################################
 # Functions used in debugging.
@@ -76,7 +50,10 @@ def plot_sig_(t,
             title='Gene', 
             figname="figures/sig.png", 
             **kwargs):
-    
+    """
+    < Description >
+    Generate a 2x1 u/s-t plot for a single gene.
+    """
     fig, ax = plt.subplots(2,1,figsize=(15,12))
     D = kwargs['sparsify'] if('sparsify' in kwargs) else 1
     cell_types = np.unique(cell_labels)
@@ -134,7 +111,31 @@ def plot_sig(t,
             figname="figures/sig.png", 
             **kwargs):
     """
-    Plots u/s vs. time (Single Plot)
+    < Description >
+    Generate a 2x2 u/s-t plot for a single gene.
+    This function plots the same quantities as plot_sig_. 
+    The difference is that it has two additional subplots plotting just the original
+    data vs. time. This is for clear visualization because the prediction of 
+    VeloVAE is usually a point cloud and overlaps with data points.
+    
+    < Input Arguments >
+    1.      t [float array]
+            Cell time
+        
+    2-3.    u,s [float array]
+            original unspliced/spliced counts of a single gene
+        
+    4-5.    upred, spred [float array]
+            predicted unspliced/spliced counts of a single gene
+        
+    6.      cell_labels [string array]
+            (Optional) cell type annotation
+    
+    7.      title [string]
+            title of the figure
+    
+    8.      figname [string]
+            Figure name to save (including path).
     """
     D = kwargs['sparsify'] if('sparsify' in kwargs) else 1
     tscv = kwargs['tscv'] if 'tscv' in kwargs else t
@@ -228,6 +229,13 @@ def plot_phase(u, s,
               labels=None, # array/list of integer
               types=None,  # array/list of string
               figname="figures/phase.png"):
+    """
+    < Description >
+    Plot the phase portrait of a gene.
+    
+    < Input Arguments >
+    1-2.    u,s [float array (N)]
+    """
     fig, ax = plt.subplots(figsize=(6,6))
     if(labels is None or types is None):
         ax.scatter(s,u,c="b",alpha=0.5)
@@ -335,17 +343,17 @@ def plot_test_acc(acc, epoch, savefig=False, path='figures', figname="gene"):
             print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, axis_off=True, figname="figures/heatmap.png"):
+def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasma', axis_off=True, figname="figures/heatmap.png"):
     """
     < Description >
     General function for plotting heatmap on a 2D embedding.
     """
     fig, ax = plt.subplots()
-    ax.scatter(X_embed[:,0], X_embed[:,1], c=vals, cmap='plasma', edgecolors='none')
+    ax.scatter(X_embed[:,0], X_embed[:,1], s=5.0, c=vals, cmap=cmap, edgecolors='none')
     vmin = np.quantile(vals, 0.01)
     vmax = np.quantile(vals, 0.99)
     norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
-    sm = matplotlib.cm.ScalarMappable(norm=norm, cmap='plasma')
+    sm = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
     cbar = plt.colorbar(sm)
     cbar.ax.get_yaxis().labelpad = 15
     cbar.ax.set_ylabel(colorbar_name, rotation=270,fontsize=15)
@@ -379,25 +387,28 @@ def histeq(x, perc=0.95, Nbin=101):
     x_out = np.zeros((len(x)))
     for i in range(Nbin):
         mask = (x>=bins[i]) & (x<bins[i+1])
-        x_out[mask] = (cdf[i] + (x[mask]-bins[i])*pdf_x[i])*x.max()
+        x_out[mask] = (cdf[i] + (x[mask]-bins[i])*pdf_x[i])*np.abs(x.max())
     return x_out
 
 def plot_time(t_latent, X_embed, figname="figures/time.png"):
     _plot_heatmap(t_latent, X_embed, "Latent Time", None, axis_off=True, figname=figname)
 
-def plot_time_mean(t_latent, X_embed, figname="figures/time.png"):
-    _plot_heatmap(t_latent, X_embed, "Latent Time", ['early', 'late'], axis_off=True, figname=figname)
+def plot_time_mean(t_latent, X_embed, cmap='viridis', figname="figures/time.png"):
+    _plot_heatmap(t_latent, X_embed, "Latent Time", ['early', 'late'], cmap=cmap, axis_off=True, figname=figname)
 
-def plot_time_var(std_t, X_embed, figname="figures/time.png"):
-    diff_entropy = np.log(std_t)+0.5*(1+np.log(2*np.pi))
-    diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
-    _plot_heatmap(diff_entropy, X_embed, "Time Variance", ['low', 'high'], axis_off=True, figname=figname)
+def plot_time_var(std_t, X_embed, t=None, hist_eq=True, cmap='viridis', figname="figures/time_var.png"):
+    t_norm = np.ones((std_t.shape)) if t is None else np.abs(t) + 1e-10
+    diff_entropy = np.log(std_t/t_norm)+0.5*(1+np.log(2*np.pi))
+    if(hist_eq):
+        diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
+    _plot_heatmap(diff_entropy, X_embed, "Time Variance", ['low', 'high'], cmap=cmap, axis_off=True, figname=figname)
 
-def plot_state_var(std_z, z, X_embed, figname="figures/state_var.png"):
-    z_norm = np.linalg.norm(z, axis=1).reshape(-1,1) + 1e-8
+def plot_state_var(std_z, X_embed, z=None, hist_eq=True, cmap='viridis', figname="figures/state_var.png"):
+    z_norm = np.ones((std_z.shape)) if z is None else np.linalg.norm(z, axis=1).reshape(-1,1) + 1e-10
     diff_entropy = np.sum(np.log(std_z/z_norm), 1)+0.5*std_z.shape[1]*(1+np.log(2*np.pi))
-    diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
-    _plot_heatmap(diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], axis_off=True, figname=figname)
+    if(hist_eq):
+        diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
+    _plot_heatmap(diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True, figname=figname)
 #########################################################################
 # Post Analysis
 #########################################################################
@@ -477,9 +488,10 @@ def plot_phase_grid(Nr,
         fig_phase, ax_phase = plt.subplots(Nr, M*Nc, figsize=(W*M*Nc+1.0,H*Nr))
         if(Nr==1 and M*Nc==1): #Single Gene, Single Method
             labels = Labels[methods[0]] if Labels[methods[0]].ndim==1 else Labels[methods[0]][:,l]
-            plot_phase_axis(ax_phase, U[:,l], S[:,l], '.', alpha, D, labels, Legends[methods[0]], f"{gene_list[l]} ({methods[0]})", color_map=color_map)
+            title = f"{gene_list[l]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l]} (methods[0])"
+            plot_phase_axis(ax_phase, U[:,l], S[:,l], '.', alpha, D, labels, Legends[methods[0]], title, color_map=color_map)
             try:
-                plot_phase_axis(ax_phase, Uhat[methods[0]][:,l], Shat[methods[0]][:,l], '.', 1.0, 1, Labels_demo[methods[0]], Legends[methods[0]], f"{gene_list[l]} ({methods[0]})", show_legend=True, color_map=color_map)
+                plot_phase_axis(ax_phase, Uhat[methods[0]][:,l], Shat[methods[0]][:,l], '.', 1.0, 1, Labels_demo[methods[0]], Legends[methods[0]], title, show_legend=True, color_map=color_map)
             except (KeyError, TypeError):
                 print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                 pass
@@ -488,9 +500,10 @@ def plot_phase_grid(Nr,
             for j in range(min(Nc, len(gene_list)-l*Nc)): #gene
                 for k, method in enumerate(methods):  #method
                     labels = Labels[method] if Labels[method].ndim==1 else Labels[method][:,l*Nc+j]
-                    plot_phase_axis(ax_phase[M*j+k], U[:,l*Nc+j], S[:,l*Nc+j], '.', alpha, D, labels, Legends[method], f"{gene_list[l*Nc+j]} ({method})", color_map=color_map)
+                    title = f"{gene_list[l*Nc+j]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l*Nc+j]} (method)"
+                    plot_phase_axis(ax_phase[M*j+k], U[:,l*Nc+j], S[:,l*Nc+j], '.', alpha, D, labels, Legends[method], title, color_map=color_map)
                     try:
-                        plot_phase_axis(ax_phase[M*j+k], Uhat[method][:,l*Nc+j], Shat[method][:,l*Nc+j], '.', 1.0, 1, Labels_demo[method], Legends[method], f"{gene_list[l*Nc+j]} ({method})", show_legend=True, color_map=color_map)
+                        plot_phase_axis(ax_phase[M*j+k], Uhat[method][:,l*Nc+j], Shat[method][:,l*Nc+j], '.', 1.0, 1, Labels_demo[method], Legends[method], title, show_legend=True, color_map=color_map)
                     except (KeyError, TypeError):
                         print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                         pass
@@ -498,9 +511,10 @@ def plot_phase_grid(Nr,
         elif(M*Nc==1): #Multiple Gene, Single Method
             for i in range(min(Nr, len(gene_list)-l*Nr)):
                 labels = Labels[methods[0]] if Labels[methods[0]].ndim==1 else Labels[methods[0]][:,l*Nr+i]
-                plot_phase_axis(ax_phase[i], U[:,l*Nr+i], S[:,l*Nr+i], '.',  alpha, D, labels, Legends[methods[0]], f"{gene_list[l*Nr+i]} ({methods[0]})", color_map=color_map)
+                title = f"{gene_list[l*Nr+i]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l*Nr+i]} (methods[0])"
+                plot_phase_axis(ax_phase[i], U[:,l*Nr+i], S[:,l*Nr+i], '.',  alpha, D, labels, Legends[methods[0]], title, color_map=color_map)
                 try:
-                    plot_phase_axis(ax_phase[i], Uhat[methods[0]][:,l*Nr+i], Shat[methods[0]][:,l*Nr+i], '.', 1.0, 1, Labels_demo[methods[0]], Legends[methods[0]], f"{gene_list[l*Nr+i]} ({methods[0]})", show_legend=True, color_map=color_map)
+                    plot_phase_axis(ax_phase[i], Uhat[methods[0]][:,l*Nr+i], Shat[methods[0]][:,l*Nr+i], '.', 1.0, 1, Labels_demo[methods[0]], Legends[methods[0]], title, show_legend=True, color_map=color_map)
                 except (KeyError, TypeError):
                     print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                     pass
@@ -514,9 +528,10 @@ def plot_phase_grid(Nr,
                     u, s = U[:,idx], S[:,idx]
                     for k, method in enumerate(methods): 
                         labels = Labels[method] if Labels[method].ndim==1 else Labels[method][:,idx]
-                        plot_phase_axis(ax_phase[i,M*j+k], U[:,idx], S[:,idx], '.', alpha, D, labels, Legends[method], f"{gene_list[idx]} ({method})", color_map=color_map)
+                        title = f"{gene_list[idx]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[idx]} (method)"
+                        plot_phase_axis(ax_phase[i,M*j+k], U[:,idx], S[:,idx], '.', alpha, D, labels, Legends[method], title, color_map=color_map)
                         try:
-                            plot_phase_axis(ax_phase[i,M*j+k], Uhat[method][:,idx], Shat[method][:,idx], '.', 1.0, 1, Labels_demo[method], Legends[method], f"{gene_list[idx]} ({method})", show_legend=True, color_map=color_map)
+                            plot_phase_axis(ax_phase[i,M*j+k], Uhat[method][:,idx], Shat[method][:,idx], '.', 1.0, 1, Labels_demo[method], Legends[method], title, show_legend=True, color_map=color_map)
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
@@ -633,7 +648,7 @@ def plot_vel_axis(ax,
                   title=None):
     
     if(labels is None or legends is None):
-        dt_sample = (t.max()-t.min())/50
+        dt_sample = (t.max()-t.min())/30
         torder = np.argsort(t)
         indices = sample_quiver_plot(t[torder], dt_sample)
         ax.quiver(t[torder][indices], 
@@ -655,7 +670,7 @@ def plot_vel_axis(ax,
                 #t_lb, t_ub = np.quantile(t_type, 0.02), np.quantile(t_type, 0.98)
                 #mask2 = (t_type<t_ub) & (t_type>=t_lb)
                 #t_type = t_type[mask2]
-                dt_sample = (t_type.max()-t_type.min())/20
+                dt_sample = (t_type.max()-t_type.min())/30
                 torder = np.argsort(t_type)
                 indices = sample_quiver_plot(t_type[torder], dt_sample)
                 v_type = v[mask][torder][indices]
@@ -734,17 +749,18 @@ def plot_sig_grid(Nr,
                 idx = l*Nr+i
                 t = T[methods[0]][:,idx] if T[methods[0]].ndim==2 else T[methods[0]]
                 that = That[methods[0]][:,idx] if That[methods[0]].ndim==2 else That[methods[0]]
-                line_u = plot_sig_axis(ax_sig[3*i], t, U[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, down_sample, True, color_map=color_map, title=f"{gene_list[idx]} ({methods[0]})")
+                title = f"{gene_list[idx]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[idx]} ({methods[0]})"
+                line_u = plot_sig_axis(ax_sig[3*i], t, U[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, down_sample, True, color_map=color_map, title=title)
                 line_s = plot_sig_axis(ax_sig[3*i+1], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, down_sample, color_map=color_map)
                 if(len(line_u)>0):
                     lines = line_u
                 try:
                     if methods[0]=='VeloVAE':
-                        K = max(len(that)//5000, 1)
+                        K = min(10, max(len(that)//5000, 1))
                         if(plot_loess):
                             plot_sig_loess_axis(ax_sig[3*i], that[::K], Uhat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
                             plot_sig_loess_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
-                        plot_vel_axis(ax_sig[3*i+2], t[::K], S[:,idx][::K], V[methods[0]][:,idx][::K], Labels[methods[0]][::K], Legends[methods[0]], color_map=color_map)
+                        plot_vel_axis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]], color_map=color_map)
                     else:
                         plot_sig_pred_axis(ax_sig[3*i], that, Uhat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
                         plot_sig_pred_axis(ax_sig[3*i+1], that, Shat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
@@ -752,31 +768,26 @@ def plot_sig_grid(Nr,
                 except (KeyError, TypeError):
                     print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                     return
-                ax_sig[3*i].set_xlim(t.min(), np.quantile(t,0.99))
-                ax_sig[3*i+1].set_xlim(t.min(), np.quantile(t,0.99))
+                ax_sig[3*i].set_xlim(t.min(), np.quantile(t,0.999))
+                ax_sig[3*i+1].set_xlim(t.min(), np.quantile(t,0.999))
+                ax_sig[3*i+2].set_xlim(t.min(), np.quantile(t,0.999))
+                
+                ax_sig[3*i].set_ylabel("U", fontsize=30, rotation=0)
+                ax_sig[3*i].yaxis.set_label_coords(-0.03, 0.5)
+                
+                ax_sig[3*i+1].set_ylabel("S", fontsize=30, rotation=0)
+                ax_sig[3*i+1].yaxis.set_label_coords(-0.03, 0.5)
+                
+                ax_sig[3*i+2].set_ylabel("S", fontsize=30, rotation=0)
+                ax_sig[3*i+2].yaxis.set_label_coords(-0.03, 0.5)
+                
                 ax_sig[3*i].set_xticks([])
                 ax_sig[3*i+1].set_xticks([])
+                ax_sig[3*i+2].set_xticks([])
+                ax_sig[3*i].set_yticks([])
+                ax_sig[3*i+1].set_yticks([])
+                ax_sig[3*i+2].set_yticks([])
                 
-                #tmin, tmax = ax_sig[3*i].get_xlim()
-                #umin, umax = ax_sig[3*i].get_ylim()
-                #ax_sig[3*i].text(tmin - 0.09*(tmax-tmin), (umax+umin)*0.5, "U", fontsize=36)
-                ax_sig[3*i].set_ylabel("U", fontsize=30, rotation=0)
-                ax_sig[3*i].yaxis.set_label_coords(-0.02, 0.5)
-                
-                #tmin, tmax = ax_sig[3*i+1].get_xlim()
-                #smin, smax = ax_sig[3*i+1].get_ylim()
-                #ax_sig[3*i+1].text(tmin - 0.09*(tmax-tmin), (smax+smin)*0.5,"S", fontsize=36)
-                ax_sig[3*i+1].set_ylabel("S", fontsize=30, rotation=0)
-                ax_sig[3*i+1].yaxis.set_label_coords(-0.02, 0.5)
-                
-                #tmin, tmax = ax_sig[3*i+2].get_xlim()
-                #smin, smax = ax_sig[3*i+2].get_ylim()
-                #ax_sig[3*i+2].text(tmin - 0.09*(tmax-tmin), (smax+smin)*0.5,"V", fontsize=36)
-                ax_sig[3*i+2].set_ylabel("S", fontsize=30, rotation=0)
-                ax_sig[3*i+2].yaxis.set_label_coords(-0.02, 0.5)
-                
-            #n_label = len(Legends[methods[0]])
-            #lgd = fig_sig.legend(lines, Legends[methods[0]], fontsize=8*Nc*M, markerscale=Nc*M, ncol=max(2*M*Nc, 4), bbox_to_anchor=(0.0, 1.0, 1.0, 0.01*(n_label//max(M*Nc, 4)+1)), loc='center')
         else:
             legends = []
             for i in range(Nr):
@@ -792,8 +803,8 @@ def plot_sig_grid(Nr,
                         else:
                             t = T[method]
                             that = That[method]
-                        
-                        line_u = plot_sig_axis(ax_sig[3*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, down_sample, True, color_map=color_map, title=f"{gene_list[idx]} ({method})")
+                        title = f"{gene_list[idx]} (VeloVAE)" if method=="FullVB" else f"{gene_list[idx]} ({method})"
+                        line_u = plot_sig_axis(ax_sig[3*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, down_sample, True, color_map=color_map, title=title)
                         line_s = plot_sig_axis(ax_sig[3*i+1, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', alpha, down_sample, color_map=color_map)
                         if(len(line_u)>0):
                             lines = line_u
@@ -801,11 +812,11 @@ def plot_sig_grid(Nr,
                             legends = Legends[method]
                         try:
                             if method=='VeloVAE' or method=='FullVB':
-                                K = max(len(that)//5000, 1)
+                                K = min(10, max(len(that)//5000, 1))
                                 if(plot_loess):
                                     plot_sig_loess_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
                                     plot_sig_loess_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
-                                plot_vel_axis(ax_sig[3*i+2, M*j+k], t[::K], S[:,idx][::K], V[method][:,idx][::K], Labels[method][::K], Legends[method], color_map=color_map)
+                                plot_vel_axis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method], color_map=color_map)
                             else:
                                 plot_sig_pred_axis(ax_sig[3*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
                                 plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
@@ -814,10 +825,10 @@ def plot_sig_grid(Nr,
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
                         
-                        ax_sig[3*i,  M*j+k].set_xlim(t.min(), np.quantile(t,0.99))
-                        ax_sig[3*i+1,  M*j+k].set_xlim(t.min(), np.quantile(t,0.99))
-                        ax_sig[3*i+2,  M*j+k].set_xlim(t.min(), np.quantile(t,0.99))
-                        
+                        ax_sig[3*i,  M*j+k].set_xlim(t.min(), np.quantile(t,0.999))
+                        ax_sig[3*i+1,  M*j+k].set_xlim(t.min(), np.quantile(t,0.999))
+                        ax_sig[3*i+2,  M*j+k].set_xlim(t.min(), np.quantile(t,0.999))
+
                         ax_sig[3*i,  M*j+k].set_xticks([])
                         ax_sig[3*i+1,  M*j+k].set_xticks([])
                         ax_sig[3*i+2,  M*j+k].set_xticks([])
@@ -829,19 +840,19 @@ def plot_sig_grid(Nr,
                         umin, umax = ax_sig[3*i,  M*j+k].get_ylim()
                         #ax_sig[3*i,  M*j+k].text(tmin - 0.09*(tmax-tmin), (umax+umin)*0.5, "U", fontsize=30)
                         ax_sig[3*i,  M*j+k].set_ylabel("U", fontsize=30, rotation=0)
-                        ax_sig[3*i,  M*j+k].yaxis.set_label_coords(-0.02, 0.5)
+                        ax_sig[3*i,  M*j+k].yaxis.set_label_coords(-0.03, 0.5)
                         
                         tmin, tmax = ax_sig[3*i+1,  M*j+k].get_xlim()
                         smin, smax = ax_sig[3*i+1,  M*j+k].get_ylim()
                         #ax_sig[3*i+1, M*j+k].text(tmin - 0.09*(tmax-tmin), (smax+smin)*0.5,"S", fontsize=30)
                         ax_sig[3*i+1,  M*j+k].set_ylabel("S", fontsize=30, rotation=0)
-                        ax_sig[3*i+1,  M*j+k].yaxis.set_label_coords(-0.02, 0.5)
+                        ax_sig[3*i+1,  M*j+k].yaxis.set_label_coords(-0.03, 0.5)
                         
                         tmin, tmax = ax_sig[3*i+2,  M*j+k].get_xlim()
                         smin, smax = ax_sig[3*i+2,  M*j+k].get_ylim()
                         #ax_sig[3*i+2, M*j+k].text(tmin - 0.09*(tmax-tmin), (smax+smin)*0.5,"S", fontsize=30)
                         ax_sig[3*i+2,  M*j+k].set_ylabel("S", fontsize=30, rotation=0)
-                        ax_sig[3*i+2,  M*j+k].yaxis.set_label_coords(-0.02, 0.5)
+                        ax_sig[3*i+2,  M*j+k].yaxis.set_label_coords(-0.03, 0.5)
                     
                         ax_sig[3*i,  M*j+k].set_xlabel("Time", fontsize=30)
                         ax_sig[3*i+1,  M*j+k].set_xlabel("Time", fontsize=30)
@@ -853,15 +864,12 @@ def plot_sig_grid(Nr,
         n_label = len(Legends[methods[0]])
         
         fig_sig.tight_layout()
-        #if(Nc*M<4):
-        l_indent = 1 - 0.05/Nr
+        
+        l_indent = 1 - 0.02/Nr
         if(legend_fontsize is None):
-            legend_fontsize = int(36*Nr)
+            legend_fontsize = min(int(30*Nr), 300*Nr/len(Legends[methods[0]]))
         lgd = fig_sig.legend(handles, labels, fontsize=legend_fontsize, markerscale=5.0, bbox_to_anchor=(-0.03/Nc,l_indent), loc='upper right')
-        #else:
-        #    if(legend_fontsize is None):
-        #        legend_fontsize = 0.5*Nc*M*W
-        #    lgd = fig_sig.legend(handles, labels, fontsize=legend_fontsize, markerscale=5, ncol=legend_ncol, bbox_to_anchor=(0, 1.0+0.01*(n_label//legend_ncol+1), 1.0, 0), loc='center', mode="expand")
+        
         fig_sig.subplots_adjust(hspace=0.3, wspace=0.12)
         try:
             fig_sig.savefig(f'{path}/sig_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), dpi=100, bbox_inches='tight') 
@@ -898,11 +906,13 @@ def plot_time_grid(T,
             t = t/t.max()
             if(M>1):
                 ax[0, i].scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=t[::down_sample], cmap='plasma', edgecolors='none')
-                ax[0, i].set_title(f'{method}',fontsize=24)
+                title = "VeloVAE" if method=="FullVB" else method
+                ax[0, i].set_title(title,fontsize=24)
                 ax[0, i].axis('off')
             else:
                 ax[0].scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=t[::down_sample], cmap='plasma', edgecolors='none')
-                ax[0].set_title(f'{method}',fontsize=24)
+                title = "VeloVAE" if method=="FullVB" else method
+                ax[0].set_title(title,fontsize=24)
                 ax[0].axis('off')
 
             #Plot the Time Variance in a Colormap
@@ -934,18 +944,20 @@ def plot_time_grid(T,
             t = t/t.max()
             if(M>1):
                 ax[i].scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=t[::down_sample], cmap='plasma', edgecolors='none')
-                ax[i].set_title(f'{method}',fontsize=24)
+                title = "VeloVAE" if method=="FullVB" else method
+                ax[i].set_title(title,fontsize=24)
                 ax[i].axis('off')
             else:
                 ax.scatter(X_emb[::down_sample,0], X_emb[::down_sample,1], s=2.0, c=t[::down_sample], cmap='plasma', edgecolors='none')
-                ax.set_title(f'{method}',fontsize=24)
+                title = "VeloVAE" if method=="FullVB" else method
+                ax.set_title(title,fontsize=24)
                 ax.axis('off')
     norm0 = matplotlib.colors.Normalize(vmin=0, vmax=1)
     sm0 = matplotlib.cm.ScalarMappable(norm=norm0, cmap='plasma')
     cbar0 = fig_time.colorbar(sm0,ax=ax, location="right") if M>1 else fig_time.colorbar(sm0,ax=ax)
     cbar0.ax.get_yaxis().labelpad = 20
     cbar0.ax.set_ylabel('Latent Time',rotation=270,fontsize=24)
-    #plt.tight_layout()
+    
     try:
         fig_time.savefig(figname)
         print(f'Saved to {figname}.png')
@@ -958,6 +970,7 @@ def _adj_mtx_to_map(w):
     w[i,j] = 1 if j is the parent of i
     """
     G = {}
+    roots = []
     for i in range(w.shape[1]):
         G[i] = []
         for j in range(w.shape[0]):
@@ -965,30 +978,58 @@ def _adj_mtx_to_map(w):
                 G[i].append(j)
     return G
 
-def _plot_branch(ax, t, x, graph, label_dic_rev, color_map=None):
+
+def get_depth(graph):
+    depth = np.zeros((len(graph.keys())))
+    roots = []
+    for u in graph:
+        if u in graph[u]:
+            roots.append(u)
+    for root in roots:
+        queue = [root]
+        depth[root] = 0
+        while(len(queue) > 0):
+            v = queue.pop(0)
+            for u in graph[v]:
+                if(u==root):
+                    continue
+                queue.append(u)
+                depth[u] = depth[v] + 1
+    return depth
+
+
+def _plot_branch(ax, t, x, graph, label_dic_rev, plot_depth=True, color_map=None):
     colors = get_colors(len(t), color_map)
-    for i in range(len(t)):
-        ax.scatter(t[i:i+1], x[i:i+1], s=100, color=colors[i], label=label_dic_rev[i])
-    for parent in graph:
-        for child in graph[parent]:
-            ax.plot([t[child], t[parent]], [x[child], x[parent]], "k-", alpha=0.25, linewidth=3)
+    if(plot_depth):
+        depth = get_depth(graph)
+        for i in range(len(t)):
+            ax.scatter(depth[i:i+1], x[i:i+1], s=80, color=colors[i], label=label_dic_rev[i])
+        for parent in graph:
+            for child in graph[parent]:
+                ax.plot([depth[child], depth[parent]], [x[child], x[parent]], "k-", alpha=0.2, linewidth=3)
+    else:
+        for i in range(len(t)):
+            ax.scatter(t[i:i+1], x[i:i+1], s=80, color=colors[i], label=label_dic_rev[i])
+        for parent in graph:
+            for child in graph[parent]:
+                ax.plot([t[child], t[parent]], [x[child], x[parent]], "k-", alpha=0.2, linewidth=3)
     return ax
 
-def plot_transcription_grid(adata, 
-                            key, 
-                            gene_list,
-                            Nr,
-                            Nc,
-                            W=4,
-                            H=3,
-                            legend_ncol=8,
-                            color_map=None,
-                            path="figures",
-                            figname="genes"):
+def plot_rate_grid(adata, 
+                   key, 
+                   gene_list,
+                   Nr,
+                   Nc,
+                   W=4,
+                   H=3,
+                   legend_ncol=8,
+                   plot_depth=True,
+                   color_map=None,
+                   path="figures",
+                   figname="genes"):
     Nfig = len(gene_list) // (Nr*Nc)
     if(Nfig * Nr * Nc < len(gene_list)):
         Nfig += 1
-    
     graph = _adj_mtx_to_map(adata.uns['brode_w'])
     label_dic = adata.uns['brode_label_dic']
     label_dic_rev = {}
@@ -1007,10 +1048,9 @@ def plot_transcription_grid(adata,
                 gamma = adata.varm[f"{key}_gamma"][gidx]
                 t_trans = adata.uns[f"{key}_t_trans"]
                     
-                fig, ax = plt.subplots(1,3, figsize=(15,3))
-                ax[3*i] = _plot_branch(ax[3*i], t_trans, alpha, graph, label_dic_rev, color_map=color_map)
-                ax[3*i+1] = _plot_branch(ax[3*i+1], t_trans, beta, graph, label_dic_rev, color_map=color_map)
-                ax[3*i+2] = _plot_branch(ax[3*i+2], t_trans, gamma, graph, label_dic_rev, color_map=color_map)
+                ax[3*i] = _plot_branch(ax[3*i], t_trans, alpha, graph, label_dic_rev, plot_depth, color_map=color_map)
+                ax[3*i+1] = _plot_branch(ax[3*i+1], t_trans, beta, graph, label_dic_rev, plot_depth, color_map=color_map)
+                ax[3*i+2] = _plot_branch(ax[3*i+2], t_trans, gamma, graph, label_dic_rev, plot_depth, color_map=color_map)
                 
                 
                 ax[3*i].set_ylabel(r"$\alpha$", fontsize=20, rotation=0)
@@ -1019,8 +1059,12 @@ def plot_transcription_grid(adata,
                 for k in range(3):
                     ax[3*i+k].set_xticks([])
                     ax[3*i+k].set_yticks([])
-                    ax[3*i+k].set_xlabel("time", fontsize=20)
+                    if(plot_depth):
+                        ax[3*i+k].set_xlabel("depth", fontsize=20)
+                    else:
+                        ax[3*i+k].set_xlabel("time", fontsize=20)
                     ax[3*i+k].yaxis.set_label_coords(-0.03,0.5)
+                    ax[3*i+k].set_title(gene_list[idx], fontsize=30)
             handles, labels = ax[0].get_legend_handles_labels()
         else:
             for i in range(Nr):
@@ -1051,8 +1095,11 @@ def plot_transcription_grid(adata,
                         ax[i,3*j+k].set_title(gene_list[idx], fontsize=30)
             handles, labels = ax[0,0].get_legend_handles_labels()
         plt.tight_layout()
-        n_cluster = len(label_dic.keys())
-        lgd = fig.legend(handles, labels, fontsize=W*Nc*2, markerscale=2, ncol=legend_ncol, bbox_to_anchor=(0,1+0.01*(n_cluster//legend_ncol+1),1,0), loc='center', mode="expand")
+        #n_cluster = len(label_dic.keys())
+        
+        l_indent = 1 - 0.02/Nr
+        
+        lgd = fig.legend(handles, labels, fontsize=min(Nr*10, Nr*120/len(graph.keys())), markerscale=1, bbox_to_anchor=(-0.03/Nc,l_indent), loc='upper right')
         
         try:
             fig.savefig(f'{path}/brode_rates_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), dpi=100, bbox_inches='tight') 
@@ -1253,9 +1300,126 @@ def plot_cell_trajectory(X_embed,
         print("Saving failed. File path doesn't exist!")
     return
 
+def plot_velocity_3d(X_embed,
+                     t,
+                     cell_labels,
+                     plot_arrow=True,
+                     n_grid=50,
+                     k=30,
+                     k_grid=8,
+                     scale=1.5,
+                     angle=(15,45),
+                     eps_t=None,
+                     color_map=None,
+                     path='figures', 
+                     figname='cells'):
+    fig = plt.figure(figsize=(30,15))
+    ax = fig.add_subplot(projection='3d')
+    ax.view_init(angle[0], angle[1])
+    
+    t_clip = np.clip(t,np.quantile(t,0.01),np.quantile(t,0.99))
+    cell_types = np.unique(cell_labels)
+    colors = vv.plotting.get_colors(len(cell_types), color_map)
+    for i, type_ in enumerate(cell_types):
+        cell_mask = cell_labels==type_
+        d = max(1, np.sum(cell_mask)//3000)
+        ax.scatter(X_embed[:,0][cell_mask][::d], X_embed[:,1][cell_mask][::d], X_embed[:,2][cell_mask][::d], s=5.0, color=colors[i], label=type_, alpha=0.5, edgecolor='none')
+    
+    if(plot_arrow):
+        #Used for filtering target grid points
+        knn_model = pynndescent.NNDescent(X_embed, n_neighbors=k+20)
+        ind, dist = knn_model.neighbor_graph
+        dist_thred = dist.mean() * scale #filter grid points distant from data cloud
+        
+        x = np.linspace(X_embed[:,0].min(), X_embed[:,0].max(), n_grid)
+        y = np.linspace(X_embed[:,1].min(), X_embed[:,1].max(), n_grid)
+        z = np.linspace(X_embed[:,2].min(), X_embed[:,2].max(), n_grid)
+
+        xgrid, ygrid, zgrid = np.meshgrid(x,y,z)
+        xgrid, ygrid, zgrid = xgrid.flatten(), ygrid.flatten(), zgrid.flatten()
+        Xgrid = np.stack([xgrid,ygrid,zgrid]).T
+        
+        neighbors_grid, dist_grid = knn_model.query(Xgrid, k=k)
+        mask = np.quantile( dist_grid, 0.5, 1)<=dist_thred
+        
+        #transition probability on UMAP
+        def transition_prob(dist, sigma):
+            P = np.exp(-(np.clip(dist/sigma,-5,None))**2)
+            psum = P.sum(1).reshape(-1,1)
+            psum[psum==0] = 1.0
+            P = P/psum
+            return P
+        
+        P = transition_prob(dist_grid, dist_thred)
+        tgrid = np.sum(np.stack([t[neighbors_grid[i]] for i in range(len(xgrid))])*P, 1)
+        tgrid = tgrid[mask]
+        
+        #Compute velocity based on grid time
+        knn_grid = pynndescent.NNDescent(Xgrid[mask], n_neighbors=k_grid, metric="l2") #filter out distant grid points
+        neighbor_grid, dist_grid = knn_grid.neighbor_graph
+        
+        if(eps_t is None):
+            eps_t = (t_clip.max()-t_clip.min())/len(t)*10
+        delta_t = tgrid[neighbor_grid] - tgrid.reshape(-1,1) - eps_t
+        
+        sigma_t = (t_clip.max()-t_clip.min())/n_grid
+        
+        #Filter out backflow and distant points in 2D space
+        dist_thred_ = (dist_grid.mean(1)+dist_grid.std(1)).reshape(-1,1) #filter grid points distant from data cloud
+        P = (np.exp((np.clip(delta_t/sigma_t,-5,5))**2))*((delta_t>=0) &  (dist_grid<=dist_thred_))
+        psum = P.sum(1).reshape(-1,1)
+        psum[psum==0] = 1.0
+        P = P/psum
+        
+        delta_x = (xgrid[mask][neighbor_grid] - xgrid[mask].reshape(-1,1))
+        delta_y = (ygrid[mask][neighbor_grid] - ygrid[mask].reshape(-1,1))
+        delta_z = (zgrid[mask][neighbor_grid] - zgrid[mask].reshape(-1,1))
+        norm = np.sqrt(delta_x**2+delta_y**2+delta_z**2)
+        norm[norm==0] = 1.0
+        vx_grid_filter = ((delta_x/norm)*P).sum(1)
+        vy_grid_filter = ((delta_y/norm)*P).sum(1)
+        vz_grid_filter = ((delta_z/norm)*P).sum(1)
+        #KNN Smoothing
+        vx_grid_filter = vx_grid_filter[neighbor_grid].mean(1)
+        vy_grid_filter = vy_grid_filter[neighbor_grid].mean(1)
+        vz_grid_filter = vz_grid_filter[neighbor_grid].mean(1)
+        
+        vx_grid = np.zeros((n_grid*n_grid*n_grid))
+        vy_grid = np.zeros((n_grid*n_grid*n_grid))
+        vz_grid = np.zeros((n_grid*n_grid*n_grid))
+        vx_grid[mask] = vx_grid_filter
+        vy_grid[mask] = vy_grid_filter
+        vz_grid[mask] = vz_grid_filter
+        
+        ax.quiver(xgrid.reshape(n_grid, n_grid, n_grid),
+                  ygrid.reshape(n_grid, n_grid, n_grid),
+                  zgrid.reshape(n_grid, n_grid, n_grid),
+                  vx_grid.reshape(n_grid, n_grid, n_grid),
+                  vy_grid.reshape(n_grid, n_grid, n_grid),
+                  vz_grid.reshape(n_grid, n_grid, n_grid),
+                  color='k',
+                  length=2*np.median(X_embed.max(1)-X_embed.min(1))/n_grid, 
+                  normalize=True)
+    
+    #ax.quiver(xgrid[mask], ygrid[mask], (vx_grid_filter.flatten()), (vy_grid_filter.flatten()), angles='xy')
+    ax.set_xlabel('Embedding 1', fontsize=16)
+    ax.set_ylabel('Embedding 2', fontsize=16)
+    ax.set_zlabel('Embedding 3', fontsize=16)
+    
+    lgd = ax.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
+    plt.tight_layout()
+    
+    try:
+        fig.savefig(f"{path}/vel3d_{figname}_3D.png", bbox_extra_artists=(lgd,), bbox_inches='tight')
+    except FileNotFoundError:
+        print("Saving failed. File path doesn't exist!")
+    
+    return
+
 def plot_trajectory_3d(X_embed,
                        t,
                        cell_labels,
+                       plot_arrow=True,
                        n_grid=50,
                        n_time=20,
                        k=30,
@@ -1272,80 +1436,6 @@ def plot_trajectory_3d(X_embed,
     w = range_z/(t_clip.max()-t_clip.min())
     x_3d = np.concatenate((X_embed, (t_clip - t_clip.min()).reshape(-1,1)*w),1)
     
-    #Used for filtering target grid points
-    knn_model_2d = pynndescent.NNDescent(X_embed, n_neighbors=k)
-    
-    #Compute the time on a grid
-    knn_model = pynndescent.NNDescent(x_3d, n_neighbors=k+20)
-    ind, dist = knn_model.neighbor_graph
-    dist_thred = dist.mean() * scale
-    
-    x = np.linspace(x_3d[:,0].min(), x_3d[:,0].max(), n_grid)
-    y = np.linspace(x_3d[:,1].min(), x_3d[:,1].max(), n_grid)
-    z = np.linspace(x_3d[:,2].min(), x_3d[:,2].max(), n_time)
-    #z = np.quantile(x_3d[:,2],[(i+0.5)/n_time for i in range(n_time)])
-    
-    xgrid, ygrid, zgrid = np.meshgrid(x,y,z)
-    xgrid, ygrid, zgrid = xgrid.flatten(), ygrid.flatten(), zgrid.flatten()
-    Xgrid = np.stack([xgrid,ygrid,zgrid]).T
-    
-    neighbors_grid, dist_grid = knn_model.query(Xgrid, k=k)
-    mask = np.quantile( dist_grid, 0.5, 1)<=dist_thred
-    
-    #transition probability on UMAP
-    def transition_prob(dist, sigma):
-        P = np.exp(-(np.clip(dist/sigma,-5,None))**2)
-        psum = P.sum(1).reshape(-1,1)
-        psum[psum==0] = 1.0
-        P = P/psum
-        return P
-    
-    P = transition_prob(dist_grid, dist_thred)
-    tgrid = np.sum(np.stack([t[neighbors_grid[i]] for i in range(len(xgrid))])*P, 1)
-    tgrid = tgrid[mask]
-    
-    #Compute velocity based on grid time
-    knn_grid = pynndescent.NNDescent(Xgrid[mask], n_neighbors=k_grid, metric="l2") #filter out distant grid points
-    neighbor_grid, dist_grid = knn_grid.neighbor_graph
-    
-    if(eps_t is None):
-        eps_t = (t_clip.max()-t_clip.min())/len(t)*10
-    delta_t = tgrid[neighbor_grid] - tgrid.reshape(-1,1) - eps_t
-    
-    sigma_t = (t_clip.max()-t_clip.min())/n_grid
-    ind_grid_2d, dist_grid_2d = knn_model_2d.query(Xgrid[mask], k=k_grid)
-    dist_thred_2d = (dist_grid_2d.mean(1)+dist_grid_2d.std(1)).reshape(-1,1)
-    #Filter out backflow and distant points in 2D space
-    P = (np.exp((np.clip(delta_t/sigma_t,-5,5))**2))*((delta_t>=0) &  (dist_grid_2d<=dist_thred_2d))
-    psum = P.sum(1).reshape(-1,1)
-    psum[psum==0] = 1.0
-    P = P/psum
-    
-    delta_x = (xgrid[mask][neighbor_grid] - xgrid[mask].reshape(-1,1))
-    delta_y = (ygrid[mask][neighbor_grid] - ygrid[mask].reshape(-1,1))
-    delta_z = (zgrid[mask][neighbor_grid] - zgrid[mask].reshape(-1,1))
-    norm = np.sqrt(delta_x**2+delta_y**2+delta_z**2)
-    norm[norm==0] = 1.0
-    vx_grid_filter = ((delta_x/norm)*P).sum(1)
-    vy_grid_filter = ((delta_y/norm)*P).sum(1)
-    vz_grid_filter = ((delta_z/norm)*P).sum(1)
-    #KNN Smoothing
-    vx_grid_filter = vx_grid_filter[neighbor_grid].mean(1)
-    vy_grid_filter = vy_grid_filter[neighbor_grid].mean(1)
-    vz_grid_filter = vz_grid_filter[neighbor_grid].mean(1)
-    
-    vx_grid = np.zeros((n_grid*n_grid*n_time))
-    vy_grid = np.zeros((n_grid*n_grid*n_time))
-    vz_grid = np.zeros((n_grid*n_grid*n_time))
-    vx_grid[mask] = vx_grid_filter
-    vy_grid[mask] = vy_grid_filter
-    vz_grid[mask] = vz_grid_filter
-    
-    mask_z = (vz_grid>0).reshape(n_grid, n_grid, n_time)
-    nz = mask_z.sum(2)
-    vx_2d = vx_grid.reshape(n_grid, n_grid, n_time).sum(2) / nz
-    vy_2d = vy_grid.reshape(n_grid, n_grid, n_time).sum(2) / nz
-    
     fig = plt.figure(figsize=(30,15))
     ax = fig.add_subplot(projection='3d')
     ax.view_init(angle[0], angle[1])
@@ -1355,17 +1445,87 @@ def plot_trajectory_3d(X_embed,
     for i, type_ in enumerate(cell_types):
         cell_mask = cell_labels==type_
         d = max(1, np.sum(cell_mask)//3000)
-        ax.scatter(x_3d[:,0][cell_mask][::d], x_3d[:,1][cell_mask][::d], x_3d[:,2][cell_mask][::d], s=5.0, c=colors[i], label=type_, alpha=0.5, edgecolor='none')
+        ax.scatter(x_3d[:,0][cell_mask][::d], x_3d[:,1][cell_mask][::d], x_3d[:,2][cell_mask][::d], s=5.0, color=colors[i], label=type_, alpha=0.5, edgecolor='none')
     
-    ax.quiver(xgrid.reshape(n_grid, n_grid, n_time),
-              ygrid.reshape(n_grid, n_grid, n_time),
-              zgrid.reshape(n_grid, n_grid, n_time),
-              vx_grid.reshape(n_grid, n_grid, n_time),
-              vy_grid.reshape(n_grid, n_grid, n_time),
-              vz_grid.reshape(n_grid, n_grid, n_time),
-              color='k',
-              length=(15/n_grid + 15/n_time), 
-              normalize=True)
+    if(plot_arrow):
+        #Used for filtering target grid points
+        knn_model_2d = pynndescent.NNDescent(X_embed, n_neighbors=k)
+        
+        #Compute the time on a grid
+        knn_model = pynndescent.NNDescent(x_3d, n_neighbors=k+20)
+        ind, dist = knn_model.neighbor_graph
+        dist_thred = dist.mean() * scale
+        
+        x = np.linspace(x_3d[:,0].min(), x_3d[:,0].max(), n_grid)
+        y = np.linspace(x_3d[:,1].min(), x_3d[:,1].max(), n_grid)
+        z = np.linspace(x_3d[:,2].min(), x_3d[:,2].max(), n_time)
+        #z = np.quantile(x_3d[:,2],[(i+0.5)/n_time for i in range(n_time)])
+        
+        xgrid, ygrid, zgrid = np.meshgrid(x,y,z)
+        xgrid, ygrid, zgrid = xgrid.flatten(), ygrid.flatten(), zgrid.flatten()
+        Xgrid = np.stack([xgrid,ygrid,zgrid]).T
+        
+        neighbors_grid, dist_grid = knn_model.query(Xgrid, k=k)
+        mask = np.quantile( dist_grid, 0.5, 1)<=dist_thred
+        
+        #transition probability on UMAP
+        def transition_prob(dist, sigma):
+            P = np.exp(-(np.clip(dist/sigma,-5,None))**2)
+            psum = P.sum(1).reshape(-1,1)
+            psum[psum==0] = 1.0
+            P = P/psum
+            return P
+        
+        P = transition_prob(dist_grid, dist_thred)
+        tgrid = np.sum(np.stack([t[neighbors_grid[i]] for i in range(len(xgrid))])*P, 1)
+        tgrid = tgrid[mask]
+        
+        #Compute velocity based on grid time
+        knn_grid = pynndescent.NNDescent(Xgrid[mask], n_neighbors=k_grid, metric="l2") #filter out distant grid points
+        neighbor_grid, dist_grid = knn_grid.neighbor_graph
+        
+        if(eps_t is None):
+            eps_t = (t_clip.max()-t_clip.min())/len(t)*10
+        delta_t = tgrid[neighbor_grid] - tgrid.reshape(-1,1) - eps_t
+        
+        sigma_t = (t_clip.max()-t_clip.min())/n_grid
+        ind_grid_2d, dist_grid_2d = knn_model_2d.query(Xgrid[mask], k=k_grid)
+        dist_thred_2d = (dist_grid_2d.mean(1)+dist_grid_2d.std(1)).reshape(-1,1)
+        #Filter out backflow and distant points in 2D space
+        P = (np.exp((np.clip(delta_t/sigma_t,-5,5))**2))*((delta_t>=0) &  (dist_grid_2d<=dist_thred_2d))
+        psum = P.sum(1).reshape(-1,1)
+        psum[psum==0] = 1.0
+        P = P/psum
+        
+        delta_x = (xgrid[mask][neighbor_grid] - xgrid[mask].reshape(-1,1))
+        delta_y = (ygrid[mask][neighbor_grid] - ygrid[mask].reshape(-1,1))
+        delta_z = (zgrid[mask][neighbor_grid] - zgrid[mask].reshape(-1,1))
+        norm = np.sqrt(delta_x**2+delta_y**2+delta_z**2)
+        norm[norm==0] = 1.0
+        vx_grid_filter = ((delta_x/norm)*P).sum(1)
+        vy_grid_filter = ((delta_y/norm)*P).sum(1)
+        vz_grid_filter = ((delta_z/norm)*P).sum(1)
+        #KNN Smoothing
+        vx_grid_filter = vx_grid_filter[neighbor_grid].mean(1)
+        vy_grid_filter = vy_grid_filter[neighbor_grid].mean(1)
+        vz_grid_filter = vz_grid_filter[neighbor_grid].mean(1)
+        
+        vx_grid = np.zeros((n_grid*n_grid*n_time))
+        vy_grid = np.zeros((n_grid*n_grid*n_time))
+        vz_grid = np.zeros((n_grid*n_grid*n_time))
+        vx_grid[mask] = vx_grid_filter
+        vy_grid[mask] = vy_grid_filter
+        vz_grid[mask] = vz_grid_filter
+        
+        ax.quiver(xgrid.reshape(n_grid, n_grid, n_time),
+                  ygrid.reshape(n_grid, n_grid, n_time),
+                  zgrid.reshape(n_grid, n_grid, n_time),
+                  vx_grid.reshape(n_grid, n_grid, n_time),
+                  vy_grid.reshape(n_grid, n_grid, n_time),
+                  vz_grid.reshape(n_grid, n_grid, n_time),
+                  color='k',
+                  length=(15/n_grid + 15/n_time), 
+                  normalize=True)
     
     #ax.quiver(xgrid[mask], ygrid[mask], (vx_grid_filter.flatten()), (vy_grid_filter.flatten()), angles='xy')
     ax.set_xlabel('UMAP 1', fontsize=16)
@@ -1425,7 +1585,7 @@ def plot_umap_transition(graph,
         print("Saving failed. File path doesn't exist!")
     plt.close(fig)
 
-def plot_transition_graph(adata, key="brode", figsize=(8,6), color_map=None, figname="transition.png"):
+def plot_transition_graph(adata, key="brode", figsize=(8,10), color_map=None, figname="transition"):
     fig, ax = plt.subplots(figsize=figsize)
     adj_mtx = adata.uns[f"{key}_w"]
     n_type = adj_mtx.shape[0]
@@ -1438,7 +1598,6 @@ def plot_transition_graph(adata, key="brode", figsize=(8,6), color_map=None, fig
     for i in range(n_type):
         if(adj_mtx[i,i]==1):
             edges.remove((i,i))
-            break
     node_name = [label_dic_rev[i] for i in range(len(label_dic_rev.keys()))]
     
     g = ig.Graph(directed=True,edges=edges)
@@ -1447,12 +1606,12 @@ def plot_transition_graph(adata, key="brode", figsize=(8,6), color_map=None, fig
     colors = get_colors(n_type, color_map)
     layout = g.layout_reingold_tilford()
     ig.plot(g, 
-        layout=layout,
-        vertex_color=colors,
-        vertex_size=20,
-        edge_width=2,
-        target=ax)
-    
+            layout=layout,
+            vertex_color=colors,
+            vertex_size=20,
+            edge_width=2,
+            target=ax)
+        
     ax.axis("off")
     try:
         fig.savefig(f'{figname}.png')

@@ -22,6 +22,10 @@ def getMetric(adata, method, key, scv_key=None, scv_mask=True):
        (optional) key for scvelo fitting. Used for filtering the genes (only effective if scv_mask=True)
     4. scv_mask: 
        (optional) whether to filter out the genes not fitted by scvelo (used for fairness in the comparison with scVelo)
+    
+    < Output >
+    1.  stats [pandas.DataFrame]
+        Stores the performance metrics. Rows are metric names and columns are method names.
     """
     
     stats = {}  #contains the performance metrics
@@ -102,6 +106,7 @@ def post_analysis(adata,
                   test_id,
                   methods, 
                   keys, 
+                  compute_metrics=False,
                   genes=[], 
                   plot_type=["signal"], 
                   cluster_key="clusters",
@@ -131,40 +136,43 @@ def post_analysis(adata,
     4.  keys [string list]
         Used for extracting ODE parameters from .var or .varm from anndata
         It should be of the same length as methods.
+    
+    5.  compute_metrics [bool]
+        (Optional) Whether to compute the performance metrics for the methods
      
-    5.  genes [string list] 
-        Genes to plot. Used when plot_type contains "phase" or "signal"
+    6.  genes [string list] 
+        (Optional) Genes to plot. Used when plot_type contains "phase" or "signal"
      
-    6.  plot_type [string list]
-        Type of plots to generate.
+    7.  plot_type [string list]
+        (Optional) Type of plots to generate.
         Currently supports phase, signal (u/s/v vs. t), time and cell type
     
-    7.  cluster_key [string]
-        Key in .obs containing the cell type labels
+    8.  cluster_key [string]
+        (Optional) Key in .obs containing the cell type labels
      
-    8.  nplot (optional) [int]
-        Number of data points in the prediction (or for each cell type in VeloVAE and BrODE).
+    9.  nplot [int]
+        (Optional) Number of data points in the prediction (or for each cell type in VeloVAE and BrODE).
         This is to save computation. For plotting the prediction, we don't need 
         as many points as the original dataset contains.
        
-    9.  frac (optional) [float in (0,1)]
-        Parameter for the loess plot. 
+    10.  frac [float in (0,1)]
+        (Optional) Parameter for the loess plot. 
         A higher value means larger time window and the resulting fitted line will
         be smoother. 
      
-    10.  embed (optional) [string]
-        2D embedding used for visualization of time and cell type.
+    11.  embed [string]
+        (Optional) 2D embedding used for visualization of time and cell type.
         The true key for the embedding is f"X_{embed}" in .obsm
     
-    11. grid_size (optional) [int tuple (n_row, n_col)]
-        Grid size for plotting the genes.
+    12. grid_size [int tuple (n_row, n_col)]
+        (Optional) Grid size for plotting the genes.
         n_row*n_col >= len(genes)
     
-    12  legend_ncol (optional) [int]
-        Number of columns in the legend
+    13  legend_ncol [int]
+        (Optional) Number of columns in the legend
     
-    13. save_path (optional) [string]
-        Path to save the figures.
+    14. save_path [string]
+        (Optional) Path to save the figures.
     
     < Output >
     1.  stats_df [pandas.DataFrame]
@@ -226,16 +234,17 @@ def post_analysis(adata,
         Uhat[method] = Uhat_i
         Shat[method] = Shat_i
     
-    print("---     Post Analysis     ---")
-    print(f"Dataset Size: {adata.n_obs} cells, {adata.n_vars} genes")
-    for method in stats:
-        metrics = list(stats[method].keys())
-        break
-    stats_df = DataFrame({}, index=Index(metrics))
-    for i, method in enumerate(methods):
-        stats_df.insert(i, method, [stats[method][x] for x in metrics])
-    pd.set_option("precision", 4)
-    print(stats_df)
+    if(compute_metrics):
+        print("---     Post Analysis     ---")
+        print(f"Dataset Size: {adata.n_obs} cells, {adata.n_vars} genes")
+        for method in stats:
+            metrics = list(stats[method].keys())
+            break
+        stats_df = DataFrame({}, index=Index(metrics))
+        for i, method in enumerate(methods):
+            stats_df.insert(i, method, [stats[method][x] for x in metrics])
+        pd.set_option("precision", 4)
+        print(stats_df)
     
     print("---   Plotting  Results   ---")
     if('cluster' in plot_type or "all" in plot_type):
@@ -253,7 +262,7 @@ def post_analysis(adata,
                        X_embed,
                        capture_time,
                        None,
-                       down_sample = max(1,adata.n_obs//5000),
+                       down_sample = min(10, max(1,adata.n_obs//5000)),
                        figname=f"{save_path}/time_{test_id}.png")
     
     if(len(genes)==0):
@@ -317,8 +326,9 @@ def post_analysis(adata,
                       Yhat,
                       frac=frac,
                       legend_ncol=legend_ncol,
-                      down_sample=max(1,adata.n_obs//5000),
+                      down_sample=min(10, max(1,adata.n_obs//5000)),
                       path=save_path, 
                       figname=test_id)
-    
-    return stats_df
+    if(compute_metrics):
+        return stats_df
+    return
