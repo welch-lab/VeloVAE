@@ -376,11 +376,23 @@ def predSteady(tau_s, alpha, beta, gamma):
 def odeNumpy(t,alpha,beta,gamma,to,ts,scaling=None, k=10.0):
     """
     (Numpy Version)
-    ODE Solution
+    ODE solution with fixed rates
     
-    t: [B x 1] cell time
-    alpha, beta, gamma: [G] generation, splicing and degradation rates
-    to, ts: [G] switch-on and -off time
+    < Input Arguments >
+    1.      t [2D array (N,1)]
+            cell time
+    
+    2-4.    alpha, beta, gamma [1D array (G)] 
+            generation, splicing and degradation rates
+            
+    5-6.    to, ts [1D array (G)] 
+            switch-on and -off time
+    
+    7.      scaling [1D array (G)]
+            scaling factor
+    
+    8.      k [float]
+            Parameter for a smooth clip of tau.
     """
     eps = 1e-6
     unstability = (np.abs(beta - gamma) < eps)
@@ -416,9 +428,8 @@ def ode(t,alpha,beta,gamma,to,ts,neg_slope=0.0):
     (PyTorch Version)
     ODE Solution
     
-    t: [B x 1] cell time
-    alpha, beta, gamma: [G] generation, splicing and degradation rates
-    to, ts: [G] switch-on and -off time
+    Parameters are the same as the numpy version, with arrays replaced with 
+    tensors. Additionally, neg_slope is used for time clipping.
     """
     eps = 1e-6
     unstability = (torch.abs(beta - gamma) < eps).long()
@@ -543,9 +554,18 @@ def reinitTypeParams(U, S, t, ts, cell_labels, cell_types, init_types):
 
 def ode_br(t, y, par, neg_slope=0.0, **kwargs):
     """
-    t: [B x 1]
-    y: [B]
-    par: [Ntype]
+    (PyTorch Version)
+    Branching ODE solution.
+    
+    < Input Arguments >
+    1.  t: [2D float tensor (N,1)]
+        Cell time
+    
+    2.  y: [1D int tensor (N)]
+        Cell type, encoded in integer
+    
+    3.  par: [1D int tensor (Ntype)]
+        Parent cell type in the transition graph
     """
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
     t_trans = kwargs['t_trans']
@@ -573,6 +593,10 @@ def ode_br(t, y, par, neg_slope=0.0, **kwargs):
     return uhat * scaling, shat
 
 def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
+    """
+    (Numpy Version)
+    Branching ODE solution.
+    """
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
     t_trans = kwargs['t_trans']
     u0,s0 = kwargs['u0'], kwargs['s0'] #[N type x G]
@@ -854,7 +878,7 @@ def optimal_transport_duality_gap_ts(C, G, lambda1, lambda2, epsilon, batch_size
 ############################################################
 #  KNN-Related Functions
 ############################################################
-def knnX0(U, S, t, z, t_query, z_query, dt, k):
+def knnX0_alt(U, S, t, z, t_query, z_query, dt, k):
     N, Nq = len(t), len(t_query)
     u0 = np.zeros((Nq, U.shape[1]))
     s0 = np.zeros((Nq, S.shape[1]))
@@ -916,7 +940,29 @@ def knnX0(U, S, t, z, t_query, z_query, dt, k):
     #s0 = np.convolve(s0[order_idx], np.ones((k))*(1/k), mode='same')
     return u0,s0,t0
 
-def knnX0_alt(U, S, t, z, t_query, z_query, dt, k):
+def knnX0(U, S, t, z, t_query, z_query, dt, k):
+    """
+    < Description >
+    Given cell time and state, find KNN for each cell in a time window ahead of
+    it. The KNNs are used to compute the initial condition for the ODE of
+    the cell.
+    
+    < Input >
+    1-2.    U,S [2D array (N,G)]
+            Unspliced and Spliced count matrix
+    
+    3-4.    t,z [1D array (N)]
+            Latent cell time and state used to build KNN
+    
+    5-6.    t_query [1D array (N)]
+            Query cell time and state
+    
+    7.      dt [float tuple]
+            Time window coefficient
+    
+    8.      k [int]
+            Number of neighbors
+    """
     N, Nq = len(t), len(t_query)
     u0 = np.zeros((Nq, U.shape[1]))
     s0 = np.zeros((Nq, S.shape[1]))
@@ -958,6 +1004,12 @@ def knnx0_bin(U,
               pruning_degree_multiplier=1.5, 
               diversify_prob=1.0, 
               max_bin_size=10000):
+    """
+    < Description >
+    Same functionality as knnx0, but with a different algorithm. Instead of computing
+    a KNN graph for each cell, we divide the time line into several bins and compute
+    a KNN for each bin. The parent of each cell is chosen from its previous bin. 
+    """
     tmin = min(t.min(), t_query.min())
     N, Nq = len(t), len(t_query)
     u0 = np.zeros((Nq, U.shape[1]))
@@ -1021,7 +1073,9 @@ def knn_transition_prob(t,
                         k,
                         soft_assign=True):
     """
-    cell_labels: integer-encoded cell cluster annotation
+    < Description >
+    Compute the frequency of cell type transition based on windowed KNN.
+    Used in transition graph construction.
     """
     N, Nq = len(t), len(t_query)
     P = np.zeros((n_type, n_type))

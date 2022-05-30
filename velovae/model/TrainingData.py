@@ -9,9 +9,24 @@ class SCData(Dataset):
     """
     def __init__(self, D, labels, u0=None, s0=None, t0=None, weight=None):
         """
-        D: [N x G] cell by gene data matrix
-        labels: [N x 1] cell type information
-        weight: (optional) [N x 1] training weight of each sample
+        < Description >
+        Class constructor
+        
+        < Input Arguments >
+        1.      D [float array (N,G)] 
+                cell by gene data matrix
+        
+        2.      labels [string array (N,1)]
+                cell type information
+        
+        3-4.    u0, s0 [float array (N,G)]
+                cell-specific initial condition
+        
+        5.      t0 [float array (N,1)]
+                cell-specific initial time
+        
+        6.      weight [float array (N,1)]
+                (Optional) Training weight of each sample.
         """
         self.N, self.G = D.shape[0], D.shape[1]//2
         self.data = D
@@ -30,11 +45,33 @@ class SCData(Dataset):
         return self.data[idx], self.labels[idx], self.weight[idx], idx
 
 class SCTimedData(Dataset):
+    """
+    This class is almost the same as SCData. The only difference is the addition
+    of cell time. This is used for training the branching ODE.
+    """
     def __init__(self, D, labels, t, u0=None, s0=None, t0=None, weight=None):
         """
-        D: [N x G] cell by gene data matrix
-        labels: [N x 1] cell type information
-        weight: (optional) [N x 1] training weight of each sample
+        < Description >
+        Class constructor
+        
+        < Input Arguments >
+        1.      D [float array (N,G)] 
+                cell by gene data matrix
+        
+        2.      labels [string array (N,1)]
+                cell type information
+        
+        3.      t [float array (N,1)]
+                cell time
+        
+        4-5.    u0, s0 [float array (N,G)]
+                cell-specific initial condition
+        
+        6.      t0 [float array (N,1)]
+                cell-specific initial time
+        
+        7.      weight [float array (N,1)]
+                (Optional) Training weight of each sample.
         """
         self.N, self.G = D.shape[0], D.shape[1]//2
         self.data = D

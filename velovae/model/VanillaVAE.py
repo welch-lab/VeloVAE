@@ -39,6 +39,7 @@ def kl_uniform(mu_t, std_t, t_start, t_end, **kwargs):
 
 def kl_gaussian(mu1, std1, mu2, std2, **kwargs):
     """
+    < Description >
     Compute the KL divergence between two Gaussian distributions with diagonal covariance
     """
     return torch.mean(torch.sum(torch.log(std2/std1)+std1.pow(2)/(2*std2.pow(2))-0.5+(mu1-mu2).pow(2)/(2*std2.pow(2)),1))
@@ -51,13 +52,32 @@ def kl_gaussian(mu1, std1, mu2, std2, **kwargs):
 # Vanilla VAE
 ##############################################################
 class encoder(nn.Module):
+    """
+    Encoder of the vanilla VAE
+    """
     def __init__(self, Cin, N1=500, N2=250, device=torch.device('cpu'), checkpoint=None):
         """
-        Cin: Input Data Dimension
-        N1: Width of the First Hidden Layer
-        N2: Width of the Second Hidden Layer
-        device: (Optional) Model Device. [Default: cpu]
-        checkpoint: (Optional) Pretrained Model. [Default: None]
+        < Description >
+        Constructor of the class
+        
+        < Input Arguments >
+        1.  Cin [int]
+            (Optional) Input feature dimension. Usually just 2 x gene count
+        
+        2.  N1 [int]
+            (Optional) Width of the first hidden layer
+        
+        3.  N2 [int]
+            (Optional) Width of the second hidden layer
+        
+        4.  device [torch.device]
+            (Optional) Either cpu or gpu device
+        
+        5.  checkpoint [string]
+            Existing .pt file containing trained parameters
+        
+        < Output >
+        None. Construct an instance of the class.
         """
         super(encoder, self).__init__()
         self.fc1 = nn.Linear(Cin, N1).to(device)
@@ -79,6 +99,10 @@ class encoder(nn.Module):
             self.init_weights()
 
     def init_weights(self):
+        """
+        < Description >
+        Initialize neural network weights.
+        """
         for m in self.net.modules():
             if(isinstance(m, nn.Linear)):
                 nn.init.xavier_uniform_(m.weight)
@@ -91,6 +115,21 @@ class encoder(nn.Module):
             nn.init.constant_(m.bias, 0.0)
 
     def forward(self, data_in):
+        """
+        < Description >
+        Forward propagation.
+        
+        < Input Arguments>
+        1.  data_in [float/double tensor]
+            Input data of size (N, D) = (Batch Size, Input Data Dimension)
+        
+        < Output >
+        1.  mu_tx [float/double tensor]
+            Posterior mean of time, with a size of (N, 1)
+            
+        2.  std_tx [float/double tensor]
+            Posterior standard deviation of time, with a size of (N, 1)
+        """
         z = self.net(data_in)
         mu_zx, std_zx = self.spt1(self.fc_mu(z)), self.spt2(self.fc_std(z))
         return mu_zx, std_zx
@@ -105,12 +144,35 @@ class decoder(nn.Module):
                  init_method="steady", 
                  init_key=None):
         """
-        adata: AnnData Object
-        tmax: Maximum Cell Time (used in time initialization)
-        p: Top Percentile Threshold to Pick Steady-State Cells
-        device: (Optional) Model Device [Default: cpu]
-        tkey: (Optional) Key in adata.obs that containes some prior time estimation
-        checkpoint: (Optional) File path to a pretrained model
+        < Description >
+        Constructor of the class
+        
+        < Input Arguments >
+        1.  adata [AnnData]
+            Input AnnData object
+        
+        2.  tmax [float]
+            Time range (hyperparameter)
+            
+        3.  train_idx [int array]
+            The indices of all training samples. We pick 70% of the data as
+            training samples by default.
+        
+        4.  p [int in (0,100)]
+            (Optional) Percentile threshold of u and s for picking steady-state cells.
+            Used in initialization.
+        
+        5. device [torch device]
+            Either cpu or gpu
+        
+        6. init_method [string]
+            (Optional) Initialization method. 
+                        
+        7. init_key [string]
+            (Optional) column in the AnnData object containing the capture time
+        
+        < Output >
+        None. Construct an instance of the class.
         """
         super(decoder,self).__init__()
         U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
@@ -179,13 +241,35 @@ class decoder(nn.Module):
         self.sigma_s.requires_grad = False
     
     def forward(self, t, neg_slope=0.0):
+        """
+        < Description >
+        Forward pass of the decoder. This is equivalent to evaluating the ODE
+        solution in our application.
+        
+        < Input Arguments >
+        1.  t [tensor]
+            cell time of size (N, 1) = (batch size, 1)
+        
+        2.  neg_slope [negative float]
+            (Optional) Negative slope of the leaky ReLU used in time computation.
+            The original purpose was to provide some gradient to the backward
+            pass so that samples violating the time relation also contribute to
+            the training. Later we found it not helpful to the performance.
+            The users should consider leaving it to the default.
+        
+        < Output >
+        1-2. Predicted u and s values [tensor (N,G)]
+        """
         Uhat, Shat = ode(t, torch.exp(self.alpha), torch.exp(self.beta), torch.exp(self.gamma), torch.exp(self.ton), torch.exp(self.toff), neg_slope=neg_slope)
         Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
     
     def predSU(self, t, gidx=None):
         """
-        Unscaled version, used for plotting
+        < Description >
+        ODE evaluation.
+        This is the same as forward except that we can optionally compute u and s
+        for a subset of genes. Used in plotting.
         """
         scaling = torch.exp(self.scaling)
         if(gidx is not None):
@@ -206,12 +290,38 @@ class VanillaVAE():
                  time_distribution="gaussian",
                  checkpoints=None):
         """
-        adata: AnnData Object
-        tmax: (float/int) Time Range 
-        device: (Optional) Model Device [Default: cpu]
-        hidden_size: (Optional) Width of the first and second hidden layer [Default:(500, 250)]
-        tprior: (Optional) Key in adata.obs that contains the prior time estimation
-        checkpoints: (Optional) File path to the pretrained encoder and decoder models
+        < Description >
+        Constructor of the class
+        
+        < Input Arguments >
+        1.  adata [AnnData Object]
+            
+        2.  tmax [float/int] 
+            Time Range 
+        
+        3.  device [string]
+            (Optional) cpu or gpu
+        
+        4.  hidden_size [tuple of 2 int]
+            (Optional) Width of the first and second hidden layer [Default:(500, 250)]
+        
+        5.  init_type [string]
+            (Optional) The stem cell type. Used to estimated the initial conditions.
+            This is not commonly used in practice and please consider leaving it to default.
+        
+        6.  init_key [string]
+            (Optional) column in the AnnData object containing the capture time
+        
+        7.  tprior [string]
+            (Optional) key in adata.obs that stores the capture time.
+            Used for informative time prior
+        
+        8. time_distribution [string]
+            (Optional) Should be either "gaussian" or "uniform.
+        
+        9. checkpoints [list of 2 strings]
+            (Optional) Contains the path to saved encoder and decoder models.
+            Should be a .pt file.
         """
         #Extract Input Data
         try:
@@ -279,7 +389,26 @@ class VanillaVAE():
         self.counter = 0 #Count the number of iterations
         self.n_drop = 0 #Count the number of consecutive epochs with negative/low ELBO gain
         
-    def getPrior(self, adata, time_distribution, tmax, tprior):
+    def getPrior(self, adata, time_distribution, tmax, tprior=None):
+        """
+        < Description >
+        Compute the parameters of time prior distribution
+        
+        < Input Argument >
+        1.  adata [AnnData]
+        
+        2.  time_distribution [string]
+            "gaussian" or uniform
+        
+        3.  tmax [float]
+            maximum time
+        
+        4.  tprior [string]
+            (Optional) key in adata.obs storing the capture time
+        
+        < Output >
+        None. Initializes class variable p_t
+        """
         if(time_distribution=="gaussian"):
             print("Gaussian Prior.")
             self.kl_time = kl_gaussian
@@ -299,8 +428,6 @@ class VanillaVAE():
                 std_t[t==t_cap[-1]] = (t_cap[-1] - t_cap[-2])*(0.5+0.5*self.config["time_overlap"])
                 
                 self.p_t = torch.stack( [torch.tensor(t).view(-1,1),torch.tensor(std_t).view(-1,1)] ).float().to(self.device)
-                #n_capture = len(np.unique(t))
-                #self.p_t = torch.stack( [torch.tensor(t).view(-1,1),torch.ones(adata.n_obs,1)*tmax/n_capture] ).float().to(self.device)
         else:
             print("Tailed Uniform Prior.")
             self.kl_time = kl_uniform
@@ -325,6 +452,10 @@ class VanillaVAE():
                 self.p_t = torch.stack( [torch.tensor(t).unsqueeze(-1),torch.tensor(t_end).unsqueeze(-1)] ).float().to(self.device)
     
     def setDevice(self, device, device_number=None):
+        """
+        < Description >
+        Set the device of the model.
+        """
         if('cuda' in device):
             if(torch.cuda.is_available()):
                 self.device = torch.device(device)
@@ -335,10 +466,18 @@ class VanillaVAE():
             self.device = torch.device('cpu')
     
     def reparameterize(self, mu, std):
+        """
+        < Description >
+        Apply the reparameterization trick for Gaussian random variables.
+        """
         eps = torch.normal(mean=torch.zeros(mu.shape),std=torch.ones(mu.shape)).to(self.device)
         return std*eps+mu
     
     def reparameterize_uniform(self, mu, std):
+        """
+        < Description >
+        Apply the reparameterization trick for uniform random variables.
+        """
         eps = torch.rand(mu.shape).to(self.device)
         return np.sqrt(12)*std*eps + (mu - np.sqrt(3)*std)
     
@@ -358,6 +497,10 @@ class VanillaVAE():
         return mu_t, std_t, uhat, shat
         
     def setMode(self,mode):
+        """
+        < Description >
+        Set the model to either training or evaluation mode.
+        """
         if(mode=='train'):
             self.encoder.train()
             self.decoder.train()
@@ -365,19 +508,41 @@ class VanillaVAE():
             self.encoder.eval()
             self.decoder.eval()
         else:
-            print("Warning: mode not recognized. Must be 'train' or  'test'! ")
+            print("Warning: mode not recognized. Must be 'train' or 'test'! ")
     
     ############################################################
     #Training Objective
     ############################################################
     def VAERisk(self, q_tx, p_t, u, s, uhat, shat, sigma_u, sigma_s, weight=None, b=1.0):
         """
+        < Description >
         This is the negative ELBO.
-        t0, dt: [B x 1] encoder output, conditional uniform distribution parameters
-        tmax: parameter of the prior uniform distribution
-        u , s : [B x G] input data
-        uhat, shat: [B x G] prediction by the ODE model
-        sigma_u, sigma_s : parameter of the Gaussian distribution
+        
+        < Input Arguments >
+        1.  q_tx [a tuple of tensors (mean, standard deviation)]
+            Parameters of time posterior. Mean and std are both (N, 1) tensors.
+        
+        2.  p_t [a tuple of tensors (mean, standard deviation)]
+            Parameters of time prior.
+        
+        5.  u , s [tensor (B,G)]
+            Input data
+        
+        6.  uhat, shat [tensor (B,G)]
+            Prediction by VeloVAE
+        
+        7.  sigma_u, sigma_s [tensor (G)]
+            Standard deviation of the Gaussian noise
+        
+        8.  weight [tensor (N,1)]
+            (Optional) Sample weight. 
+            This feature is not stable. Please consider setting it to None.
+        
+        9.  b [float]
+            KL divergence weight
+        
+        < Output >
+        1.  Negative ELBO [tensor scalar]
         """
         
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
@@ -394,16 +559,34 @@ class VanillaVAE():
     def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
         """
         < Description >
-        Training in each epoch. Validation will be performed is the number of
-        iterations is a multiple of config['test_iter']
+        Training in each epoch.
+        Early stopping if enforced by default. 
         
-        < Input Argument >
+        < Input Arguments >
         1.  train_loader [torch.utils.data.DataLoader]
-            Data loader of the input data
+            Data loader of the input data.
         
         2.  test_set [torch.utils.data.Dataset]
-        2.  optimizer, optimizer2(optional): from torch.optim
-        K: alternatingly update optimizer and optimizer2
+            Validation dataset
+        
+        3.  optimizer  [optimizer from torch.optim]
+        
+        4.  optimizer2 [optimizer from torch.optim]
+            (Optional) A second optimizer.
+            This is used when we optimize NN and ODE simultaneously in one epoch.
+            By default, VeloVAE performs alternating optimization in each epoch.
+            The argument will be set to proper value automatically.
+        
+        5.  K [int]
+            Alternating update period.
+            For every K updates of optimizer, there's one update for optimizer2.
+            If set to 0, optimizer2 will be ignored and only optimizer will be
+            updated. Users can set it to 0 if they want to update sorely NN in one 
+            epoch and ODE in the next epoch. 
+        
+        < Output >
+        1.  stop_training [bool]
+            Whether to stop training based on the early stopping criterium.
         """
         B = len(train_loader)
         self.setMode('train')
@@ -456,7 +639,11 @@ class VanillaVAE():
         return stop_training
     
     def loadConfig(self, config):
-        #We don't have to specify all the hyperparameters. Just pass the ones we want to modify.
+        """
+        
+        Update hyper-parameters
+        We don't have to specify all the hyperparameters. Just pass the ones we want to modify.
+        """
         for key in config:
             if(key in self.config):
                 self.config[key] = config[key]
@@ -470,6 +657,10 @@ class VanillaVAE():
             self.decoder.sigma_s.requires_grad = True
     
     def splitTrainTest(self, N):
+        """
+        < Description >
+        Randomly select indices as training samples.
+        """
         rand_perm = np.random.permutation(N)
         n_train = int(N*self.config["train_test_split"])
         self.train_idx = rand_perm[:n_train]
@@ -482,9 +673,41 @@ class VanillaVAE():
               config={}, 
               plot=False, 
               gene_plot=[], 
+              cluster_key="clusters",
               figure_path="figures", 
               embed="umap"):
+        """
+        < Description >
+        The high-level API for training.
         
+        < Input Arguments >
+        1.  adata [AnnData]
+            AnnData Object
+        
+        2.  config [dictionary]
+            (Optional) Contains all hyper-parameters.
+        
+        3.  plot [bool]
+            (Optional) Whether to plot some sample genes during training.
+            Used for debugging.
+        
+        4.  gene_plot [list of strings]
+            (Optional) List of gene names to plot. 
+            Used only if plot==True
+        
+        5.  cluster_key [string]
+            (Optional) Key in adata.obs storing the cell type annotation.
+         
+        6.  figure_path [string]
+            (Optional) Path to the folder for saving plots.
+        
+        7.  embed [string]
+            (Optional) Low dimensional embedding in adata.obsm.
+            The actual key storing the embedding should be f'X_{embed}'
+        
+        < Output >
+        None
+        """
         self.loadConfig(config)
         
         print("------------------------- Train a Vanilla VAE -------------------------")
@@ -496,7 +719,7 @@ class VanillaVAE():
         except KeyError:
             print("Embedding not found! Please run the corresponding preprocessing step!")
         
-        cell_labels_raw = adata.obs["clusters"].to_numpy() if "clusters" in adata.obs else np.array(['Unknown' for i in range(adata.n_obs)])
+        cell_labels_raw = adata.obs[cluster_key].to_numpy() if cluster_key in adata.obs else np.array(['Unknown' for i in range(adata.n_obs)])
         
         print("*********        Creating Training/Validation Datasets        *********")
         train_set = SCData(X[self.train_idx], cell_labels_raw[self.train_idx], self.decoder.Rscore[self.train_idx]) if self.config['weight_sample'] else SCData(X[self.train_idx], cell_labels_raw[self.train_idx])
@@ -576,6 +799,30 @@ class VanillaVAE():
         return
     
     def predAll(self, data, mode='test', output=["uhat", "shat", "t"], gene_idx=None):
+        """
+        < Description >
+        Generate all predictions.
+        
+        < Input Arguments >
+        1.  data [array (N, 2G)] : 
+            Input mRNA count
+        
+        2.  mode [string]
+            train or test or both
+            
+        3.  output [list of string]
+            (Optional) variables to compute
+        
+        4.  gene_idx [int array/list]
+            (Optional) gene index, used for reducing unnecessary memory usage
+        
+        < Output >
+        1.  out [tuple of array]
+            Depends on the input argument output.
+            Can return predicted u,s and time
+        
+        2. ELBO [float]
+        """
         N, G = data.shape[0], data.shape[1]//2
         if("uhat" in output):
             Uhat = None if gene_idx is None else np.zeros((N,len(gene_idx)))
@@ -657,7 +904,34 @@ class VanillaVAE():
              path='figures', 
              **kwargs):
         """
-        data: ncell x ngene tensor
+        < Description >
+        Evaluate the model upon training/test dataset.
+        
+        < Input Arguments >
+        1.  test_set [torch.utils.data.Dataset]
+            Training or validation dataset
+        
+        2.  Xembed [array]
+            Low-dimensional embedding for plotting
+        
+        3.  testid [string/int]
+            (Optional) Used to name the figures.
+        
+        4.  gind [int array]
+            (Optional) Index of genes in adata.var_names.
+            Used for plotting.
+        
+        5.  gene_plot [string array]
+            (Optional) Gene names.
+        
+        6.  plot [bool]
+            (Optional) Whether to generate plots.
+        
+        7.  path [string]
+            (Optional) Saving path.
+        
+        < Output >
+        1.  elbo [float]
         """
         self.setMode('eval')
         data = test_set.data
@@ -699,8 +973,8 @@ class VanillaVAE():
         
     def saveModel(self, file_path, enc_name='encoder_vanilla', dec_name='decoder_vanilla'):
         """
+        < Description >
         Save the encoder parameters to a .pt file.
-        Save the decoder parameters to the anndata object.
         """
         os.makedirs(file_path, exist_ok=True)
         torch.save(self.encoder.state_dict(), f"{file_path}/{enc_name}.pt")
@@ -708,6 +982,7 @@ class VanillaVAE():
         
     def saveAnnData(self, adata, key, file_path, file_name=None):
         """
+        < Description >
         Save the ODE parameters and cell time to the anndata object and write it to disk.
         """
         os.makedirs(file_path, exist_ok=True)

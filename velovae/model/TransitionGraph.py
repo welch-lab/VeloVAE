@@ -338,7 +338,7 @@ class TransGraph():
         self.n_lineage = len(np.unique(self.partition))
         print("Number of partitions: ",len(lineages))
     
-    def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01,0.03), k=15, soft_assign=True):
+    def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01,0.03), k=5, soft_assign=True):
         """
         Compute a type-to-type transition based a cell-to-cell transition matrix
         """

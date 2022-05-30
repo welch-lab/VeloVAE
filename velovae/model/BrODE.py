@@ -35,6 +35,55 @@ class decoder(nn.Module):
                  p=98,
                  checkpoint = None,
                  graph_param = None):
+        """
+        < Description >
+        Constructor of the class
+        
+        < Input Arguments >
+        1.  adata [AnnData]
+            Input AnnData object
+        
+        2.  cluster_key [string]
+            Key in adata.obs storing the cell type annotation.
+        
+        3.  tkey [string]
+            Key in adata.obs storing the latent cell time
+        
+        4.  embed_key [string]
+            Key in adata.obsm storing the latent cell state
+        
+        5.  train_idx [int array]
+            The indices of all training samples. We pick 70% of the data as
+            training samples by default.
+        
+        6.  param_key [string]
+            Used to extract sigma_u, sigma_s and scaling from adata.var
+        
+        7.  device [torch device]
+            Either cpu or gpu
+        
+        8.  p [int in (0,100)]
+            Percentile to pick steady-state cells.
+
+        9.  checkpoint [string]
+            (Optional) Path to a file containing a pretrained model. If given, initialization
+            will be skipped and arguments relating to initialization will be ignored.
+        
+        10. graph_param [dictionary]
+            Hyper-parameters for the transition graph computation.
+            Keys should contain:
+            (1) partition_k: num_neighbors in graph partition (a KNN graph is computed by scanpy)
+            (2) partition_res: resolution of Louvain clustering in graph partition
+            (3) n_par: number of parents to keep in graph pruning
+            (4) dt: tuple (r1,r2), proportion of time range to consider as the parent time window
+                Let t_range be the time range. Then for any cell with time t, only cells in the
+                time window (t-r2*t_range, t-r1*t_range)
+            (5) k: KNN in parent counting.
+                This is different from partition_k. When we pick the time window, KNN
+                is computed to choose the most likely parents from the cells in the window.
+        < Output >
+        None. Construct an instance of the class.
+        """
         super(decoder,self).__init__()
         
         U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
@@ -51,7 +100,9 @@ class decoder(nn.Module):
         self.Ntype = len(cell_types_int)
         
         #Transition Graph
-        tgraph = TransGraph(adata, tkey, embed_key, cluster_key, train_idx)
+        partition_k = graph_param['partition_k'] if 'partition_k' in graph_param else 5
+        partition_res = graph_param['partition_res'] if 'partition_res' in graph_param else 0.005
+        tgraph = TransGraph(adata, tkey, embed_key, cluster_key, train_idx, k=partition_k, res=partition_res)
         if(graph_param is None):
             w = tgraph.compute_transition_deterministic(adata)
         else:
@@ -115,8 +166,12 @@ class decoder(nn.Module):
     
     def forward(self, t, y, neg_slope=0.0):
         """
-        t: [B x 1]
-        y: [B]
+        < Description >
+        Evaluate the model in training.
+        
+        < Input Arguments >
+        1.  t [float tensor (N,1)]
+        2.  y [int tensor]
         """
         return ode_br(t, 
                       y,
@@ -276,14 +331,14 @@ class BrODE():
         #Training Configuration
         self.config = {
             #Training Parameters
-            "n_epochs":1000, 
+            "n_epochs":500, 
             "learning_rate":2e-4, 
             "neg_slope":0.0,
             "test_iter":None, 
             "save_epoch":100, 
             "n_update_noise":25,
             "batch_size":128, 
-            "early_stop":8,
+            "early_stop":5,
             "early_stop_thred":adata.n_vars*1e-3,
             "train_test_split":0.7,
             "train_scaling":False, 
