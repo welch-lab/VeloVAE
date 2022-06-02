@@ -12,19 +12,33 @@ def getMAE(U,S,Uhat,Shat):
 def timeCorr(t1, t2):
     return spearmanr(t1,t2)
 
-def cellState(adata, method, key, gene_indices=None):
+def cell_state(adata, method, key, gene_indices=None):
     if(gene_indices is None):
         gene_indices = np.array(np.range(adata.n_vars))
     if(method=='scVelo'):
         t = adata.layers[f"{key}_t"][:,gene_indices]
         toff = adata.var[f"{key}_t_"].to_numpy()[gene_indices]
         cell_state = (t > toff)
-    else:
+    elif(method=='Vanilla VAE'):
         t = adata.obs[f"{key}_time"].to_numpy()
         toff = adata.var[f"{key}_toff"].to_numpy()
         ton = adata.var[f"{key}_ton"].to_numpy()
+        toff = toff[gene_indices]
+        ton = ton[gene_indices]
         cell_state = (t.reshape(-1,1) > toff) + (t.reshape(-1,1) < ton)*2
-    
+    else:
+        rho = adata.layers[f"{key}_rho"][:,gene_indices]
+        t = adata.obs[f"{key}_time"].to_numpy()
+        mask_induction = rho > 0.01
+        
+        mask_repression = np.empty(mask_induction.shape, dtype=bool)
+        mask_off = np.empty(mask_induction.shape, dtype=bool)
+        for i in range(len(gene_indices)):
+            ton = np.quantile(t[mask_induction[:,i]], 1e-3)
+            mask_repression[:,i] = (rho[:,i] <= 0.1) & (t>=ton)
+            mask_off[:,i] = (rho[:,i] <= 0.1) & (t<ton)
+        
+        cell_state = mask_repression * 1 + mask_off * 2
     return cell_state
 
 def get_pred_scv(adata, key='fit'):
