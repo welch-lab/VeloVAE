@@ -793,9 +793,9 @@ class VanillaVAE():
                 
                 
         print(f"*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
-        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1),f'{figure_path}/train_loss_vanilla.png')
+        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_vanilla.png')
         if(self.config["test_iter"]>0):
-            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)],f'{figure_path}/test_loss_vanilla.png')
+            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_vanilla.png')
         return
     
     def predAll(self, data, mode='test', output=["uhat", "shat", "t"], gene_idx=None):
@@ -944,29 +944,27 @@ class VanillaVAE():
             ton, toff = np.exp(self.decoder.ton.detach().cpu().numpy()), np.exp(self.decoder.toff.detach().cpu().numpy())
             state = np.ones(toff.shape)*(t.reshape(-1,1)>toff)+np.ones(ton.shape)*2*(t.reshape(-1,1)<ton)
             #Plot Time
-            plot_time(t, Xembed, f"{path}/time-{testid}-vanilla.png")
+            plot_time(t, Xembed, save=f"{path}/time-{testid}-vanilla.png")
             
             #Plot u/s-t and phase portrait for each gene
             for i in range(len(gind)):
                 idx = gind[i]
-                #track_idx = plotVAE.pickcell(U[:,i],S[:,i],cell_labels) if cell_labels is not None else None
-                track_idx = None
-                """
+                
                 plot_phase(data[:,idx], data[:,idx+G],  
-                          Uhat[:,idx], Shat[:,idx], 
-                          gene_plot[i], 
-                          track_idx, 
-                          state[:,idx], 
-                          ['Induction', 'Repression', 'Off'],
-                          f"{path}/phase-{gene_plot[i]}-{testid}-vanilla.png")
-                """
+                           Uhat[:,i], Shat[:,i], 
+                           gene_plot[i], 
+                           None, 
+                           state[:,idx], 
+                           ['Induction', 'Repression', 'Off'],
+                           save=f"{path}/phase-{gene_plot[i]}-{testid}-vanilla.png")
+                
                 plot_sig(t.squeeze(), 
-                        data[:,idx], data[:,idx+G],  
-                        Uhat[:,i], Shat[:,i], 
-                        test_set.labels,
-                        gene_plot[i], 
-                        f"{path}/sig-{gene_plot[i]}-{testid}-vanilla.png",
-                        sparsify=self.config["sparsify"])
+                         data[:,idx], data[:,idx+G],  
+                         Uhat[:,i], Shat[:,i], 
+                         test_set.labels,
+                         gene_plot[i], 
+                         save=f"{path}/sig-{gene_plot[i]}-{testid}-vanilla.png",
+                         sparsify=self.config["sparsify"])
         
         return elbo
         

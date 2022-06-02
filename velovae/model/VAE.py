@@ -980,7 +980,7 @@ class VAE(VanillaVAE):
         self.decoder.init_weights()
         #Plot the initial conditions
         if(plot):
-            plot_time(self.t0.squeeze(), Xembed, f"{figure_path}/t0.png")
+            plot_time(self.t0.squeeze(), Xembed, save=f"{figure_path}/t0.png")
             for i in range(len(gind)):
                 idx = gind[i]
                 t0_plot = t0[self.train_idx].squeeze()
@@ -990,7 +990,7 @@ class VAE(VanillaVAE):
                          u0_plot, s0_plot, 
                          cell_labels=cell_labels_raw[self.train_idx],
                          title=gene_plot[i], 
-                         figname=f"{figure_path}/{gene_plot[i]}-x0.png")
+                         save=f"{figure_path}/{gene_plot[i]}-x0.png")
         self.n_drop = 0
         param_post = list(self.decoder.net_rho2.parameters())+list(self.decoder.fc_out2.parameters())
         optimizer_post = torch.optim.Adam(param_post, lr=self.config["learning_rate_post"], weight_decay=self.config["lambda_rho"])
@@ -1029,9 +1029,9 @@ class VAE(VanillaVAE):
                 break
         
         print(f"*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
-        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), f'{figure_path}/train_loss_velovae.png')
+        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_velovae.png')
         if(self.config["test_iter"]>0):
-            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)],f'{figure_path}/test_loss_velovae.png')
+            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_velovae.png')
         return
     
     def predAll(self, data, cell_labels, mode='test', output=["uhat", "shat", "t", "z"], gene_idx=None):
@@ -1230,7 +1230,7 @@ class VAE(VanillaVAE):
 
         if(plot):
             #Plot Time
-            plot_time(t, Xembed, f"{path}/time-{testid}-velovae.png")
+            plot_time(t, Xembed, save=f"{path}/time-{testid}-velovae.png")
             
             #Plot u/s-t and phase portrait for each gene
             for i in range(len(gind)):
@@ -1241,7 +1241,7 @@ class VAE(VanillaVAE):
                          Uhat[:,i], Shat[:,i], 
                          np.array([self.label_dic_rev[x] for x in dataset.labels]),
                          gene_plot[i], 
-                         f"{path}/sig-{gene_plot[i]}-{testid}.png",
+                         save=f"{path}/sig-{gene_plot[i]}-{testid}.png",
                          sparsify=self.config['sparsify'])
         
         return elbo
