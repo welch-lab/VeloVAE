@@ -38,6 +38,13 @@ def get_colors(n, color_map=None):
         colors = [color_map_obj(i) for i in range(0,len(color_map_obj),k)] if k>0 else [color_map_obj(i) for i in range(len(color_map_obj))]
     return colors
 
+def save_fig(fig, save, bbox_extra_artists=None):
+    if(save is not None):
+        try:
+            fig.savefig(save,bbox_extra_artists=bbox_extra_artists, bbox_inches='tight')
+        except FileNotFoundError:
+            print("Saving failed. File path doesn't exist!")
+        plt.close(fig)
 ############################################################
 # Functions used in debugging.
 ############################################################
@@ -48,7 +55,7 @@ def plot_sig_(t,
             upred=None, spred=None, 
             type_specific=False,
             title='Gene', 
-            figname="figures/sig.png", 
+            save=None, 
             **kwargs):
     """
     < Description >
@@ -96,20 +103,18 @@ def plot_sig_(t,
     
     lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, bbox_to_anchor=(1.0,1.0), loc='upper left')
     fig.suptitle(title)
-    try:
-        fig.savefig(figname,bbox_extra_artists=(lgd,), bbox_inches='tight')
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save, (lgd,))
+    
     return
 
 def plot_sig(t, 
-            u, s, 
-            upred, spred, 
-            cell_labels=None,
-            title="Gene", 
-            figname="figures/sig.png", 
-            **kwargs):
+             u, s, 
+             upred, spred, 
+             cell_labels=None,
+             title="Gene", 
+             save=None, 
+             **kwargs):
     """
     < Description >
     Generate a 2x2 u/s-t plot for a single gene.
@@ -134,7 +139,7 @@ def plot_sig(t,
     7.      title [string]
             title of the figure
     
-    8.      figname [string]
+    8.      save [string]
             Figure name to save (including path).
     """
     D = kwargs['sparsify'] if('sparsify' in kwargs) else 1
@@ -215,11 +220,9 @@ def plot_sig(t,
     
     lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, ncol=4, bbox_to_anchor=(0.0, 1.0, 1.0, 0.25), loc='center')
     fig.suptitle(title)
-    try:
-        fig.savefig(figname,bbox_extra_artists=(lgd,), bbox_inches='tight')
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save, (lgd,))
+    return
     
 
 def plot_phase(u, s, 
@@ -228,13 +231,32 @@ def plot_phase(u, s,
               track_idx=None, 
               labels=None, # array/list of integer
               types=None,  # array/list of string
-              figname="figures/phase.png"):
+              save=None):
     """
     < Description >
     Plot the phase portrait of a gene.
     
     < Input Arguments >
     1-2.    u,s [float array (N)]
+    
+    3-4.    upred, spred [float array (N)]
+            predicted u,s values
+        
+    5.      title [string]
+            graph title
+            
+    6.      track_idx [int array]
+            (Optional) Indices of cells with lines connecting input data and 
+            prediction
+    
+    7.      labels [array]
+            (Optional) cell type annotation
+    
+    8.      types [array]
+            (Optional) unique cell types
+    
+    9.      save [string]
+            (Optional) name of the saved figure
     """
     fig, ax = plt.subplots(figsize=(6,6))
     if(labels is None or types is None):
@@ -242,7 +264,7 @@ def plot_phase(u, s,
     else:
         colors = get_colors(len(types), None)
         for i, type_ in enumerate(types):
-            ax.scatter(s[labels==i],u[labels==i],c=colors[i%len(colors)],alpha=0.3,label=type_)
+            ax.scatter(s[labels==i],u[labels==i],color=colors[i%len(colors)],alpha=0.3,label=type_)
     ax.plot(spred,upred,'k.',label="ode")
     #Plot the correspondence
     if(track_idx is None):
@@ -259,19 +281,30 @@ def plot_phase(u, s,
         ax.plot(s_comb[i:i+2], u_comb[i:i+2], 'k-', linewidth=0.8)
     ax.set_xlabel("S", fontsize=18)
     ax.set_ylabel("U", fontsize=18)
-    ax.set_title(title)
-    ax.legend()
-    #plt.show()
     
-    try:
-        fig.savefig(figname)
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    handles, labels = ax.get_legend_handles_labels()
+    lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, ncol=4, bbox_to_anchor=(0.0, 1.0, 1.0, 0.25), loc='center')
+    fig.suptitle(title)
+    
+    save_fig(fig, save, (lgd,))
 
-def plot_cluster(X_embed, cell_labels, color_map=None, figname='figures/cluster.png'):
+def plot_cluster(X_embed, cell_labels, color_map=None, save=None):
     """
+    < Description >
     Plot the predicted cell types from the encoder
+    
+    < Input Arguments >
+    1.  X_embed [array (N,2)]
+        2D embedding for visualization
+    
+    2.  cell_labels [array (N)]
+        cell type annotation
+    
+    3.  color_map [string]
+        (Optional) User-defined colormap for cell clusters
+    
+    4.  save [string]
+        (Optional) name of the saved figure
     """
     
     cell_types = np.unique(cell_labels) if cell_labels is not None else np.unique(pred_labels)
@@ -292,58 +325,54 @@ def plot_cluster(X_embed, cell_labels, color_map=None, figname='figures/cluster.
     ax.set_xlabel('Umap 1') 
     ax.set_ylabel('Umap 2') 
     
-    try:
-        fig.savefig(figname)
-        print(f'Saved to {figname}')
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    save_fig(fig, save)
 
 
-def plot_train_loss(loss, iters, figname="figures/train_loss.png"):
+def plot_train_loss(loss, iters, save=None):
+    """
+    < Description >
+    Line plot of the training loss.
+    """
     fig, ax = plt.subplots()
     ax.plot(iters, loss, '.-')
     ax.set_title("Training Loss")
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Loss")
-    #plt.show()
-    try:
-        fig.savefig(figname)
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save)
 
-def plot_test_loss(loss, iters, figname="figures/test_loss.png"):
+def plot_test_loss(loss, iters, save=None):
+    """
+    < Description >
+    Line plot of the validation loss.
+    """
     fig, ax = plt.subplots()
     ax.plot(iters, loss, '.-')
     ax.set_title("Testing Loss")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
-    #plt.show()
-    try:
-        fig.savefig(figname)
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save)
 
-def plot_test_acc(acc, epoch, savefig=False, path='figures', figname="gene"):
+def plot_test_acc(acc, epoch, save=None):
+    """
+    < Description >
+    Line plot of the prediction accuracy.
+    Deprecated.
+    """
     fig, ax = plt.subplots()
     ax.plot(epoch, acc, '.-')
     ax.set_title("Test Accuracy")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
-    #plt.show()
-    if(savefig):
-        try:
-            if(path is None):
-                fig.savefig(f"figures/test_acc_{figname}.png")
-            else:
-                fig.savefig(f"{path}/test_acc_{figname}.png")
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save)
 
-def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasma', axis_off=True, figname="figures/heatmap.png"):
+
+#########################################################################
+# Post Analysis
+#########################################################################
+def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasma', axis_off=True, save="figures/heatmap.png"):
     """
     < Description >
     General function for plotting heatmap on a 2D embedding.
@@ -364,11 +393,8 @@ def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasm
         cbar.ax.set_yticklabels(colorbar_ticklabels,fontsize=12)
     if(axis_off):
         ax.axis("off")
-    try:
-        fig.savefig(figname)
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save)
 
 def histeq(x, perc=0.95, Nbin=101):
     """
@@ -390,28 +416,59 @@ def histeq(x, perc=0.95, Nbin=101):
         x_out[mask] = (cdf[i] + (x[mask]-bins[i])*pdf_x[i])*np.abs(x.max())
     return x_out
 
-def plot_time(t_latent, X_embed, figname="figures/time.png"):
-    _plot_heatmap(t_latent, X_embed, "Latent Time", None, axis_off=True, figname=figname)
+def plot_heatmap(vals, 
+                 X_embed, 
+                 colorbar_name="Latent Time", 
+                 colorbar_ticks=None, 
+                 save=None):
+    """
+    < Description >
+    Wrapper function that plots cell time as a heatmap.
+    """
+    _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticks, axis_off=True, save=save)
 
-def plot_time_mean(t_latent, X_embed, cmap='viridis', figname="figures/time.png"):
-    _plot_heatmap(t_latent, X_embed, "Latent Time", ['early', 'late'], cmap=cmap, axis_off=True, figname=figname)
+def plot_time(t_latent, 
+              X_embed, 
+              cmap='plasma', 
+              save=None):
+    """
+    < Description >
+    Wrapper function that plots mean cell time as a heatmap.
+    """
+    _plot_heatmap(t_latent, X_embed, "Latent Time", ['early', 'late'], cmap=cmap, axis_off=True, save=save)
 
-def plot_time_var(std_t, X_embed, t=None, hist_eq=True, cmap='viridis', figname="figures/time_var.png"):
+def plot_time_var(std_t, 
+                  X_embed, 
+                  t=None, 
+                  hist_eq=True, 
+                  cmap='viridis', 
+                  save=None):
+    """
+    < Description >
+    Wrapper function that plots cell time variance as a heatmap.
+    """
     t_norm = np.ones((std_t.shape)) if t is None else np.abs(t) + 1e-10
     diff_entropy = np.log(std_t/t_norm)+0.5*(1+np.log(2*np.pi))
     if(hist_eq):
         diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
-    _plot_heatmap(diff_entropy, X_embed, "Time Variance", ['low', 'high'], cmap=cmap, axis_off=True, figname=figname)
+    _plot_heatmap(diff_entropy, X_embed, "Time Variance", ['low', 'high'], cmap=cmap, axis_off=True, save=save)
 
-def plot_state_var(std_z, X_embed, z=None, hist_eq=True, cmap='viridis', figname="figures/state_var.png"):
+def plot_state_var(std_z, 
+                   X_embed, 
+                   z=None, 
+                   hist_eq=True, 
+                   cmap='viridis', 
+                   save=None):
+    """
+    < Description >
+    Wrapper function that plots cell state variance (in the form of entropy) as a heatmap.
+    """
     z_norm = np.ones((std_z.shape)) if z is None else np.linalg.norm(z, axis=1).reshape(-1,1) + 1e-10
     diff_entropy = np.sum(np.log(std_z/z_norm), 1)+0.5*std_z.shape[1]*(1+np.log(2*np.pi))
     if(hist_eq):
         diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
-    _plot_heatmap(diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True, figname=figname)
-#########################################################################
-# Post Analysis
-#########################################################################
+    _plot_heatmap(diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True, save=save)
+
 def plot_phase_axis(ax,
                     u,
                     s,
@@ -422,7 +479,11 @@ def plot_phase_axis(ax,
                     legends=None,
                     title=None,
                     show_legend=False,
+                    label_fontsize=30,
                     color_map=None):
+    """
+    Helper function that plots the phase portrait on each subplot.
+    """
     try:
         if(labels is None):
             ax.plot(s[::D],u[::D], marker, color='k')
@@ -442,11 +503,14 @@ def plot_phase_axis(ax,
                         ax.plot(s[mask][::D],u[mask][::D],marker,color=colors[l%len(colors)],alpha=a,label=legends[l])
                     else:
                         ax.plot(s[mask][::D],u[mask][::D],marker,color=colors[l%len(colors)],alpha=a)
+                elif(show_legend):
+                    ax.plot([np.nan],[np.nan],marker,color=colors[l%len(colors)],alpha=a,label=legends[l])
+        
     except TypeError:
         return ax
     
     if(title is not None):
-        ax.set_title(title, fontsize=12)
+        ax.set_title(title, fontsize=30)
     
     return ax
     
@@ -461,20 +525,75 @@ def plot_phase_grid(Nr,
                     Shat={}, 
                     Labels_demo={},
                     W=6,
-                    H=4,
+                    H=5,
                     alpha=0.2,
-                    sparsify=1,
+                    downsample=1,
+                    legend_fontsize=None,
                     color_map=None,
                     path='figures', 
-                    figname="genes",
+                    figname=None,
                     **kwargs):
     """
+    < Description >
     Plot the phase portrait of a list of genes in an [Nr x Nc] grid.
     Cells are colored according to their dynamical state or cell type.
-    U, S: [N_cell x N_gene]
-    Uhat, Shat: Dictionary with arrays of size [N_cell x N_gene] as values
+    
+    < Input Arguments >
+    1-2.    Nr, Nc [int]
+            Number of rows and columns of the grid plot.
+            If Nr*Nc < number of genes, the last few genes will be ignored.
+            If Nr*Nc > number of genes, the last few subplots will be blank.
+    
+    3.      gene_list [string list]
+            Genes to plot
+    
+    5-6.    U, S: [float array (N_cell, N_gene)]
+            Count matrices
+    
+    7.      Labels [dictionary]
+            Keys are method names and values are (N) cell annotations
+            For the regular ODE, this can be induction/repression annotation.
+            Otherwise, it's usually just the cell type annotation.
+    
+    8.      Legends [dictionary]
+            Keys are method names and values are the legend names to show.
+            If the labels are phase labels, then the legends are usually 
+            ['off', induction', 'repression'].
+            If the labels are cell type annotations, the legends will be the unique 
+            cell type names. 
+    
+    9-10.   Uhat, Shat [dictionary]
+            (Optional) Keys are method names and values are arrays of size (N_pred, N_gene).
+            Notice that N_pred is not necessarily the number of cells.
+            This could happen if we want to save computational cost and evaluate
+            the ODE just at a user-defined number of time points.
+    
+    11.     Labels_demo [dictionary]
+            (Optional) Keys are method names and values are arrays of size (N_pred).
+            This is the annotation for the predictions. 
+    
+    12-13.  W,H [float]
+            (Optional) Width and height of each subplot.
+    
+    14.     alpha [float in (0,1]]
+            (Optional) Transparency of the data points.
+    
+    15.     downsample [int]
+            (Optional) Down-sampling factor to display the data points.
+    
+    16.     legend_fontsize [float]
+            (Optional) As the name suggests.
+    
+    17.     color_map [string]
+            (Optional) User-defined colormap for cell labels
+            
+    18.     path [string]
+            (Optional) Path to the saved figure
+    
+    19.     figname [string]
+            (Optional) Name of the saved figure, without .png at the end
     """
-    D = sparsify
+    D = downsample
     methods = list(Uhat.keys())
     
     M = max(1, len(methods))
@@ -484,41 +603,92 @@ def plot_phase_grid(Nr,
     if(Nfig*Nr*Nc < Nfig):
         Nfig += 1
     
+    label_fontsize = W*H
     for l in range(Nfig):
         fig_phase, ax_phase = plt.subplots(Nr, M*Nc, figsize=(W*M*Nc+1.0,H*Nr))
         if(Nr==1 and M*Nc==1): #Single Gene, Single Method
             labels = Labels[methods[0]] if Labels[methods[0]].ndim==1 else Labels[methods[0]][:,l]
-            title = f"{gene_list[l]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l]} (methods[0])"
-            plot_phase_axis(ax_phase, U[:,l], S[:,l], '.', alpha, D, labels, Legends[methods[0]], title, color_map=color_map)
+            title = f"{gene_list[l]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l]} ({methods[0]})"
+            plot_phase_axis(ax_phase, 
+                            U[:,l], 
+                            S[:,l], 
+                            '.', 
+                            alpha, 
+                            D, 
+                            labels, 
+                            Legends[methods[0]], 
+                            title, 
+                            color_map=color_map)
             try:
-                plot_phase_axis(ax_phase, Uhat[methods[0]][:,l], Shat[methods[0]][:,l], '.', 1.0, 1, Labels_demo[methods[0]], Legends[methods[0]], title, show_legend=True, color_map=color_map)
+                plot_phase_axis(ax_phase, 
+                                Uhat[methods[0]][:,l], 
+                                Shat[methods[0]][:,l], 
+                                '.', 
+                                1.0, 
+                                1, 
+                                Labels_demo[methods[0]], 
+                                Legends[methods[0]], 
+                                title, 
+                                show_legend=True, 
+                                color_map=color_map)
             except (KeyError, TypeError):
                 print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                 pass
-            lgd = ax_phase.legend(fontsize=10, markerscale=3.0, bbox_to_anchor=(-0.15,1.0), loc='upper right')
+            ax_phase.set_xlabel("S", fontsize=label_fontsize)
+            ax_phase.set_ylabel("U", fontsize=label_fontsize)
         elif(Nr==1): #Single Gene, Multiple Method
             for j in range(min(Nc, len(gene_list)-l*Nc)): #gene
                 for k, method in enumerate(methods):  #method
                     labels = Labels[method] if Labels[method].ndim==1 else Labels[method][:,l*Nc+j]
-                    title = f"{gene_list[l*Nc+j]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l*Nc+j]} (method)"
-                    plot_phase_axis(ax_phase[M*j+k], U[:,l*Nc+j], S[:,l*Nc+j], '.', alpha, D, labels, Legends[method], title, color_map=color_map)
+                    title = f"{gene_list[l*Nc+j]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l*Nc+j]} ({method})"
+                    plot_phase_axis(ax_phase[M*j+k], 
+                                    U[:,l*Nc+j], 
+                                    S[:,l*Nc+j], 
+                                    '.', 
+                                    alpha, 
+                                    D, 
+                                    labels, 
+                                    Legends[method], 
+                                    title, 
+                                    color_map=color_map)
                     try:
-                        plot_phase_axis(ax_phase[M*j+k], Uhat[method][:,l*Nc+j], Shat[method][:,l*Nc+j], '.', 1.0, 1, Labels_demo[method], Legends[method], title, show_legend=True, color_map=color_map)
+                        plot_phase_axis(ax_phase[M*j+k], 
+                                        Uhat[method][:,l*Nc+j], 
+                                        Shat[method][:,l*Nc+j], 
+                                        '.', 
+                                        1.0, 
+                                        1, 
+                                        Labels_demo[method], 
+                                        Legends[method], 
+                                        title, 
+                                        show_legend=True, 
+                                        color_map=color_map)
                     except (KeyError, TypeError):
                         print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                         pass
-            lgd = ax_phase[0].legend(fontsize=10, markerscale=3.0, bbox_to_anchor=(-0.15,1.0), loc='upper right')
+                    ax_phase[M*j+k].set_xlabel("S", fontsize=label_fontsize)
+                    ax_phase[M*j+k].set_ylabel("U", fontsize=label_fontsize)
         elif(M*Nc==1): #Multiple Gene, Single Method
             for i in range(min(Nr, len(gene_list)-l*Nr)):
                 labels = Labels[methods[0]] if Labels[methods[0]].ndim==1 else Labels[methods[0]][:,l*Nr+i]
-                title = f"{gene_list[l*Nr+i]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l*Nr+i]} (methods[0])"
-                plot_phase_axis(ax_phase[i], U[:,l*Nr+i], S[:,l*Nr+i], '.',  alpha, D, labels, Legends[methods[0]], title, color_map=color_map)
+                title = f"{gene_list[l*Nr+i]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l*Nr+i]} ({methods[0]})"
+                plot_phase_axis(ax_phase[i], 
+                                U[:,l*Nr+i], 
+                                S[:,l*Nr+i], 
+                                '.',  
+                                alpha, 
+                                D, 
+                                labels, 
+                                Legends[methods[0]], 
+                                title, 
+                                color_map=color_map)
                 try:
                     plot_phase_axis(ax_phase[i], Uhat[methods[0]][:,l*Nr+i], Shat[methods[0]][:,l*Nr+i], '.', 1.0, 1, Labels_demo[methods[0]], Legends[methods[0]], title, show_legend=True, color_map=color_map)
                 except (KeyError, TypeError):
                     print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                     pass
-            lgd = ax_phase[0].legend(fontsize=10, markerscale=3.0, bbox_to_anchor=(-0.15,1.0), loc='upper right')
+                ax_phase[i].set_xlabel("S", fontsize=label_fontsize)
+                ax_phase[i].set_ylabel("U", fontsize=label_fontsize)
         else:
             for i in range(Nr):
                 for j in range(Nc): #i, j: row and column gene index
@@ -528,21 +698,51 @@ def plot_phase_grid(Nr,
                     u, s = U[:,idx], S[:,idx]
                     for k, method in enumerate(methods): 
                         labels = Labels[method] if Labels[method].ndim==1 else Labels[method][:,idx]
-                        title = f"{gene_list[idx]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[idx]} (method)"
-                        plot_phase_axis(ax_phase[i,M*j+k], U[:,idx], S[:,idx], '.', alpha, D, labels, Legends[method], title, color_map=color_map)
+                        title = f"{gene_list[idx]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[idx]} ({method})"
+                        plot_phase_axis(ax_phase[i,M*j+k], 
+                                        U[:,idx], 
+                                        S[:,idx], 
+                                        '.', 
+                                        alpha, 
+                                        D, 
+                                        labels, 
+                                        Legends[method], 
+                                        title, 
+                                        color_map=color_map)
                         try:
-                            plot_phase_axis(ax_phase[i,M*j+k], Uhat[method][:,idx], Shat[method][:,idx], '.', 1.0, 1, Labels_demo[method], Legends[method], title, show_legend=True, color_map=color_map)
+                            plot_phase_axis(ax_phase[i,M*j+k], 
+                                            Uhat[method][:,idx], 
+                                            Shat[method][:,idx], 
+                                            '.', 
+                                            1.0, 
+                                            1, 
+                                            Labels_demo[method], 
+                                            Legends[method], 
+                                            title, 
+                                            show_legend=True, 
+                                            color_map=color_map)
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
-            lgd = ax_phase[0,0].legend(fontsize=10, markerscale=3.0, bbox_to_anchor=(-0.15,1.0), loc='upper right')
+                        ax_phase[i,M*j+k].set_xlabel("S", fontsize=label_fontsize)
+                        ax_phase[i,M*j+k].set_ylabel("U", fontsize=label_fontsize)
+
+        if(ax_phase.ndim==1):
+            handles, labels = ax_phase[0].get_legend_handles_labels()
+        else:
+            handles, labels = ax_phase[0,0].get_legend_handles_labels()
+        n_label = len(Legends[methods[0]])
         
-        fig_phase.subplots_adjust(hspace = 0.3, wspace=0.3)
-        try:
-            fig_phase.savefig(f'{path}/phase_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), bbox_inches='tight')
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
-        plt.close(fig_phase)
+        l_indent = 1 - 0.02/Nr
+        if(legend_fontsize is None):
+            legend_fontsize = min(int(8*Nr), 300*Nr/len(Legends[methods[0]]))
+        lgd = fig_phase.legend(handles, labels, fontsize=legend_fontsize, markerscale=5.0, bbox_to_anchor=(-0.03/Nc,l_indent), loc='upper right')
+        
+        fig_phase.subplots_adjust(hspace=0.3, wspace=0.12)
+        fig_phase.tight_layout()
+        
+        save = None if figname is None else f'{path}/{figname}_phase_{l+1}.png'
+        save_fig(fig_phase, save, (lgd,))
 
 def plot_sig_axis(ax,
                   t,
@@ -555,6 +755,10 @@ def plot_sig_axis(ax,
                   show_legend=False,
                   color_map=None,
                   title=None):
+    """
+    Scatter x-t plot in each subplot.
+    x is usually the input data.
+    """
     lines = []
     if(labels is None or legends is None):
         lines.append( ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)[0] )
@@ -583,6 +787,10 @@ def plot_sig_pred_axis(ax,
                        D=1,
                        show_legend=False,
                        title=None):
+    """
+    Scatter x-t plot in each subplot.
+    x is usually the prediction.
+    """
     if(labels is None or legends is None):
         ax.plot(t[::D], x[::D], marker, linewidth=5, color='k', alpha=a)
     else:
@@ -607,6 +815,10 @@ def plot_sig_loess_axis(ax,
                         D=1,
                         show_legend=False,
                         title=None,):
+    """
+    LOESS line plot.
+    x is usually prediction.
+    """
     xt = np.stack([t,x])
     Ngrid = max(len(t)//200, 50)
     for i in range(len(legends)):
@@ -646,7 +858,9 @@ def plot_vel_axis(ax,
                   show_legend=False,
                   color_map=None,
                   title=None):
-    
+    """
+    Sample a subset of cells and plot the velocity arrows in a x-t plot.
+    """
     if(labels is None or legends is None):
         dt_sample = (t.max()-t.min())/30
         torder = np.argsort(t)
@@ -718,19 +932,89 @@ def plot_sig_grid(Nr,
                   frac=0.5,
                   alpha=1.0,
                   down_sample=1,
-                  legend_ncol=4,
                   legend_fontsize=None,
                   plot_loess=False,
                   color_map=None, 
                   path='figures', 
-                  figname="grid"):
+                  figname=None):
     """
+    < Description >
     Plot u/s of a list of genes vs. time in an [Nr x Nc] grid.
     Cells are colored according to their dynamical state or cell type.
-    T: [N_method x N_cell]
-    U, S: [N_cell x N_gene]
-    Uhat, Shat: Dictionary with method names as keys and values of size [N_method x N_cell x N_gene]
-    Labels: Dictionary with array of labels as values
+    
+    < Input Arguments >
+    1-2.    Nr, Nc [int]
+            Number of rows and columns of the grid plot.
+    
+    3.      gene_list [string list/array]
+            Genes to plot. If the length exceeds Nr*Nc, multiple figures will
+            be generated. If length is less than Nr*Nc, some subplots will be
+            blank.
+    
+    4       T [dictionary]
+            Keys are methods (string) and values are time arrays.
+            For scVelo, the value is an (N,G) array instead of an (N) array because of local fitting.
+            
+    5-6.    U, S [float array (N_cell, N_gene)]
+            Count data
+    
+    7.      Labels [dictionary]
+            Keys are methods and values are arrays of cell annotation.
+            Usually the values are cell type annotations.
+    
+    8.      Legends [dictionary]
+            Keys are methods and values are legend names.
+            Usually the legend names are unique values of cell annotation.
+            In our application, these are unique cell types. 
+    
+    9.      That [dictionary]
+            (Optional) Keys are methods and values are (N_eval) of cell time.
+            Time used in evaluation. N_eval is generally unequal to number of cells
+            in the original data and the time points don't necessarily match the original
+            cell because we often need fewer time points to evaluate a parametric model. 
+            For scVelo, the value is an (N_eval,G) array instead of an (N_eval) array 
+            because of local fitting.
+    
+    10-11.  Uhat, Shat [dictionary]
+            (Optional) Dictionary with method names as keys and arrays of predicted u/s as values.
+            The array size 
+            
+    12.     V [dictionary]
+            (Optional) Keys are methods and values are (N,G) arrays of velocity.
+    
+    13.     Labels_demo [dictionary]
+            (Optional) Keys are methods and values are cell type annotations of the prediction.
+    
+    14-15.  W,H [float]
+            (Optional) Width and height of each gene subplot.
+    
+    16.     frac [float in (0,1)]
+            (Optional) Hyper-parameter for the LOESS plot.
+            This is the window length of the local regression.
+    
+    17.     alpha [float in (0,1)]
+            (Optional) Transparency of the data points.
+    
+    18.     down_sample [int]
+            (Optional) Down-sampling factor to reduce the overlapping of data points.
+    
+    19.     legend_fontsize [float]
+            (Optional) 
+    
+    20.     plot_loess [bool]
+            (Optional) Whether to generate LOESS plots
+    
+    21.     color_map [string]
+            (Optional) User-defined colormap for different cell types.
+    
+    22.     path [string]
+            Saving path
+    
+    23.     figname [string]
+            (Optional) Name if the figure.
+            Because there can be multiple figures generated in this function.
+            We will append a number to figname when saving the figures.
+            Figures will not be saved if set to None.
     """
     methods = list(Uhat.keys())
     M = max(1, len(methods))
@@ -871,12 +1155,9 @@ def plot_sig_grid(Nr,
         lgd = fig_sig.legend(handles, labels, fontsize=legend_fontsize, markerscale=5.0, bbox_to_anchor=(-0.03/Nc,l_indent), loc='upper right')
         
         fig_sig.subplots_adjust(hspace=0.3, wspace=0.12)
-        try:
-            fig_sig.savefig(f'{path}/sig_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), dpi=100, bbox_inches='tight') 
-            print(f'Saved to {path}/sig_{figname}_{l+1}.png')
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
-        plt.close(fig_sig)
+        
+        save = None if figname is None else f'{path}/{figname}_sig_{l+1}.png'
+        save_fig(fig_sig, save, (lgd,))
 
 def plot_time_grid(T,
                    X_emb,
@@ -884,12 +1165,34 @@ def plot_time_grid(T,
                    std_t=None,
                    down_sample=1,
                    q=0.99,
-                   figname="figures/time_grid.png"):
+                   save="figures/time_grid.png"):
     """
+    < Description >
     Plot the latent time of different methods.
-    T: dictionary
-    X_emb: [N_cell x 2]
-    to, ts: [N_gene]
+    
+    < Input Arguments >
+    1.  T [dictionary]
+        Keys are method names and values are (N) arrays containing time
+    
+    2.  X_emb [array (N,2)]
+        2D embedding for visualization
+    
+    3.  capture_time [array (N)]
+        (Optional) Capture time
+    
+    4.  std_t [dictionary]
+        (Optional) Keys are method names and values are (N) arrays 
+        containing standard deviations of cell time.
+        Not applicable to scVelo.
+    
+    5.  down_sample [int]
+        (Optional) Down-sampling factor to reduce data point overlapping.
+    
+    6.  q [float in (0,1)]
+        (Optional) Top quantile for clipping extreme values.
+    
+    7.  save [string]
+        (Optional) Save path and filename.
     """
     if(capture_time is not None):
         methods = ["Capture Time"] + list(T.keys())
@@ -956,14 +1259,9 @@ def plot_time_grid(T,
     sm0 = matplotlib.cm.ScalarMappable(norm=norm0, cmap='plasma')
     cbar0 = fig_time.colorbar(sm0,ax=ax, location="right") if M>1 else fig_time.colorbar(sm0,ax=ax)
     cbar0.ax.get_yaxis().labelpad = 20
-    cbar0.ax.set_ylabel('Latent Time',rotation=270,fontsize=24)
+    cbar0.ax.set_ylabel('Cell Time',rotation=270,fontsize=24)
     
-    try:
-        fig_time.savefig(figname)
-        print(f'Saved to {figname}.png')
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig_time)
+    save_fig(fig_time, save)
 
 def _adj_mtx_to_map(w):
     """
@@ -1101,16 +1399,12 @@ def plot_rate_grid(adata,
         
         lgd = fig.legend(handles, labels, fontsize=min(Nr*10, Nr*120/len(graph.keys())), markerscale=1, bbox_to_anchor=(-0.03/Nc,l_indent), loc='upper right')
         
-        try:
-            fig.savefig(f'{path}/brode_rates_{figname}_{l+1}.png',bbox_extra_artists=(lgd,), dpi=100, bbox_inches='tight') 
-            print(f'Saved to {path}/brode_rates_{figname}_{l+1}.png')
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
-        plt.close(fig)
+        save = None if figname is None else f'{path}/{figname}_brode_rates_{l+1}.png'
+        save_fig(fig, save, (lgd,))
     return
 
 
-def plot_velocity(X_embed, vx, vy, scale=1.0, figname='figures/vel.png'):
+def plot_velocity(X_embed, vx, vy, scale=1.0, save=None):
     umap1, umap2 = X_embed[:,0], X_embed[:,1]
     fig, ax = plt.subplots(figsize=(12,8))
     v = np.sqrt(vx**2+vy**2)
@@ -1118,11 +1412,8 @@ def plot_velocity(X_embed, vx, vy, scale=1.0, figname='figures/vel.png'):
     v = np.clip(v, vmin, vmax)
     ax.plot(umap1, umap2, '.', alpha=0.5)
     ax.quiver(umap1, umap2, vx, vy, v, angles='xy', scale=scale)
-    try:
-        fig.savefig(figname)
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save)
 
 
 def plot_velocity_stream(X_embed, 
@@ -1138,7 +1429,7 @@ def plot_velocity_stream(X_embed,
                          scale=1.5,
                          color_map=None,
                          figsize=(8,6), 
-                         figname='figures/velstream.png'):
+                         save='figures/velstream.png'):
     #Compute velocity on a grid
     knn_model = pynndescent.NNDescent(X_embed, n_neighbors=2*k)
     umap1, umap2 = X_embed[:,0], X_embed[:,1]
@@ -1198,11 +1489,8 @@ def plot_velocity_stream(X_embed,
     ax.set_title('Velocity Stream Plot')
     ax.set_xlabel('Umap 1')
     ax.set_ylabel('Umap 2')
-    try:
-        fig.savefig(figname)
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    #plt.close(fig)
+    
+    save_fig(fig, save)
 
 
 def plot_cell_trajectory(X_embed,
@@ -1214,8 +1502,12 @@ def plot_cell_trajectory(X_embed,
                          scale=1.5,
                          eps_t=None,
                          color_map=None,
-                         path='figures', 
-                         figname='cells'):
+                         save=None):
+    """
+    < Description >
+    Plot the velocity stream based on time.
+    This is not stable yet and we suggest not using it for now.
+    """
     #Compute the time on a grid
     knn_model = pynndescent.NNDescent(X_embed, n_neighbors=k+20)
     ind, dist = knn_model.neighbor_graph
@@ -1294,10 +1586,9 @@ def plot_cell_trajectory(X_embed,
     ax.set_xlabel('Umap 1')
     ax.set_ylabel('Umap 2')
     lgd = ax.legend(fontsize=12, ncol=4, markerscale=3.0, bbox_to_anchor=(0.0, 1.0, 1.0, 0.5), loc='center')
-    try:
-        fig.savefig(f"{path}/trajectory_{figname}.png", bbox_extra_artists=(lgd,), bbox_inches='tight')
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
+    
+    save_fig(fig, save, (lgd,))
+    
     return
 
 def plot_velocity_3d(X_embed,
@@ -1311,8 +1602,12 @@ def plot_velocity_3d(X_embed,
                      angle=(15,45),
                      eps_t=None,
                      color_map=None,
-                     path='figures', 
-                     figname='cells'):
+                     save=None):
+    """
+    < Description >
+    3D velocity quiver plot. Arrows follow the direction of time to nearby points.
+    This is not stable yet and we suggest not using it for now.
+    """
     fig = plt.figure(figsize=(30,15))
     ax = fig.add_subplot(projection='3d')
     ax.view_init(angle[0], angle[1])
@@ -1409,17 +1704,14 @@ def plot_velocity_3d(X_embed,
     lgd = ax.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
     plt.tight_layout()
     
-    try:
-        fig.savefig(f"{path}/vel3d_{figname}_3D.png", bbox_extra_artists=(lgd,), bbox_inches='tight')
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
+    save_fig(fig, save, (lgd,))
     
     return
 
 def plot_trajectory_3d(X_embed,
                        t,
                        cell_labels,
-                       plot_arrow=True,
+                       plot_arrow=False,
                        n_grid=50,
                        n_time=20,
                        k=30,
@@ -1428,9 +1720,12 @@ def plot_trajectory_3d(X_embed,
                        angle=(15,45),
                        eps_t=None,
                        color_map=None,
-                       path='figures', 
-                       figname='cells'):
-    
+                       save=None):
+    """
+    < Description >
+    3D quiver plot. x-y plane is a 2D embedding such as UMAP. z axis is the 
+    cell time. Arrows follow the direction of time to nearby points.
+    """
     t_clip = np.clip(t,np.quantile(t,0.01),np.quantile(t,0.99))
     range_z = np.max(X_embed.max(0) - X_embed.min(0))
     w = range_z/(t_clip.max()-t_clip.min())
@@ -1535,12 +1830,7 @@ def plot_trajectory_3d(X_embed,
     lgd = ax.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
     
     
-    
-    
-    try:
-        fig.savefig(f"{path}/trajectory_{figname}_3D.png", bbox_extra_artists=(lgd,), bbox_inches='tight')
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
+    save_fig(fig, save, (lgd,))
     
     return
 
@@ -1549,8 +1839,7 @@ def plot_umap_transition(graph,
                          cell_labels, 
                          label_dic_rev, 
                          color_map=None,
-                         path='figures', 
-                         figname='umaptrans'):
+                         save=None):
     """
     Plot the Umap coordinates and connect the cluster centers with a line.
     Transition probability is encoded in the opacity of the line
@@ -1579,13 +1868,15 @@ def plot_umap_transition(graph,
             ax.arrow(Xmean[i][0], Xmean[i][1], Xmean[j][0]-Xmean[i][0], Xmean[j][1]-Xmean[i][1],width=0.15,head_width=0.6,length_includes_head=True,color='k')
     ax.set_xlabel('Umap Dim 1')
     ax.set_ylabel('Umap Dim 2')
-    try:
-        fig.savefig(f'{path}/{figname}.png')
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save)
+    return
 
-def plot_transition_graph(adata, key="brode", figsize=(8,10), color_map=None, figname="transition"):
+def plot_transition_graph(adata, 
+                          key="brode", 
+                          figsize=(8,10), 
+                          color_map=None, 
+                          save=None):
     fig, ax = plt.subplots(figsize=figsize)
     adj_mtx = adata.uns[f"{key}_w"]
     n_type = adj_mtx.shape[0]
@@ -1613,23 +1904,17 @@ def plot_transition_graph(adata, key="brode", figsize=(8,10), color_map=None, fi
             target=ax)
         
     ax.axis("off")
-    try:
-        fig.savefig(f'{figname}.png')
-    except FileNotFoundError:
-        print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save)
     
     return
 
-def plotLatentEmbedding(X,  
-                        n_cluster, 
-                        labels, 
-                        label_dic_rev,
-                        color_map=None,
-                        savefig=True, 
-                        path="figures", 
-                        figname="gene"):
-    #Y = TSNE().fit_transform(X)
+def plot_latent_embedding(X,  
+                          n_cluster, 
+                          labels, 
+                          label_dic_rev,
+                          color_map=None,
+                          save=None):
     reducer = umap.UMAP(n_neighbors=15, min_dist=0.1)
     Y = reducer.fit_transform(X)
     fig, ax = plt.subplots()
@@ -1642,26 +1927,18 @@ def plotLatentEmbedding(X,
     ax.set_ylabel('Umap 2')
     
     lgd = ax.legend(fontsize=10, markerscale=3.0,  bbox_to_anchor=(-0.15,1.0), loc='upper right')
-    if(savefig):
-        try:
-            fig.savefig(f"{path}/latent_{figname}.png", bbox_extra_artists=(lgd,), bbox_inches='tight')
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
+    
+    save_fig(fig, save, (lgd,))
+    return
     
 
-def plotTs(ts,savefig=True, path="figures", figname="gene"):
+def plot_ts(ts, save=None):
     fig, ax = plt.subplots()
     ax.plot(ts, np.ones(ts.shape), 'k+')
     ub = np.quantile(ts,0.99)
     print(np.sum(ts>ub))
     ax.hist(ts,bins=np.linspace(0,ub,100),range=(ts.min(),ub))
     ax.set_title("Distribution of Switching Time")
-    plt.show()
-    if(savefig):
-        try:
-            fig.savefig(f"{path}/ts_{figname}.png")
-        except FileNotFoundError:
-            print("Saving failed. File path doesn't exist!")
-    plt.close(fig)
-
+    
+    save_fig(fig, save)
+    return
