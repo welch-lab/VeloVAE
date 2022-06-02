@@ -10,7 +10,7 @@ import time
 import matplotlib.pyplot as plt
 from cellrank.tl.kernels import PseudotimeKernel
 
-from velovae.plotting import plot_sig, plot_time, plot_train_loss, plot_test_loss
+from velovae.plotting import plot_sig, plot_train_loss, plot_test_loss
 
 from .model_util import  histEqual, convertTime, initParams, getTsGlobal, reinitTypeParams, predSU, getGeneIndex
 from .model_util import ode_br, optimal_transport_duality_gap, optimal_transport_duality_gap_ts, encode_type, str2int, int2str
@@ -599,9 +599,9 @@ class BrODE():
                 break
         
         print(f"*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
-        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1),f'{figure_path}/train_loss_brode.png')
+        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_brode.png')
         if(self.config["test_iter"]>0):
-            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)],f'{figure_path}/test_loss_brode.png')
+            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_brode.png')
         return
     
     #ToDo 
@@ -668,7 +668,7 @@ class BrODE():
                          Uhat[:,i], Shat[:,i], 
                          cell_labels_raw,
                          gene_plot[i],
-                         f"{path}/sig-{gene_plot[i]}-{testid}.png",
+                         save=f"{path}/sig-{gene_plot[i]}-{testid}.png",
                          sparsify=self.config["sparsify"],
                          t_trans=self.decoder.t_trans.detach().cpu().exp().numpy())
                 
