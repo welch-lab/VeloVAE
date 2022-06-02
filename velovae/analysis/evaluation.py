@@ -114,7 +114,6 @@ def post_analysis(adata,
                   frac=0.5, 
                   embed="umap", 
                   grid_size=(1,1),
-                  legend_ncol=None,
                   save_path="figures"):
     """
     < Description >
@@ -168,10 +167,7 @@ def post_analysis(adata,
         (Optional) Grid size for plotting the genes.
         n_row*n_col >= len(genes)
     
-    13  legend_ncol [int]
-        (Optional) Number of columns in the legend
-    
-    14. save_path [string]
+    13. save_path [string]
         (Optional) Path to save the figures.
     
     < Output >
@@ -205,8 +201,10 @@ def post_analysis(adata,
     scv_idx = np.where(np.array(methods)=='scVelo')[0]
     scv_key = keys[scv_idx[0]] if(len(scv_idx)>0) else None
     for i, method in enumerate(methods):
-        stats_i = getMetric(adata, method, keys[i], scv_key, (scv_key is not None) )
-        stats[method] = stats_i
+        if(compute_metrics):
+            stats_i = getMetric(adata, method, keys[i], scv_key, (scv_key is not None) )
+            stats[method] = stats_i
+        
         if(method=='scVelo'):
             t_i, Uhat_i, Shat_i = get_pred_scv_demo(adata, keys[i], genes, nplot)
             Yhat[method] = np.concatenate((np.zeros((nplot)), np.ones((nplot))))
@@ -248,7 +246,7 @@ def post_analysis(adata,
     
     print("---   Plotting  Results   ---")
     if('cluster' in plot_type or "all" in plot_type):
-        plot_cluster(adata.obsm[f"X_{embed}"], adata.obs[cluster_key].to_numpy(), figname=f"{save_path}/{test_id}_umap.png")
+        plot_cluster(adata.obsm[f"X_{embed}"], adata.obs[cluster_key].to_numpy(), save=f"{save_path}/{test_id}_umap.png")
     
     if("time" in plot_type or "all" in plot_type):
         T = {}
@@ -263,7 +261,7 @@ def post_analysis(adata,
                        capture_time,
                        None,
                        down_sample = min(10, max(1,adata.n_obs//5000)),
-                       figname=f"{save_path}/time_{test_id}.png")
+                       save=f"{save_path}/{test_id}_time.png")
     
     if(len(genes)==0):
         return
@@ -272,12 +270,9 @@ def post_analysis(adata,
         Labels_phase = {}
         Legends_phase = {}
         for i, method in enumerate(methods):
-            if(method=='Vanilla VAE' or method=='scVelo'):
-                Labels_phase[method] = cellState(adata, method, keys[i], gene_indices)
-                Legends_phase[method] = ['Induction', 'Repression', 'Off']
-            else:
-                Labels_phase[method] = adata.obs[cluster_key].to_numpy()
-                Legends_phase[method] = np.unique(Labels_phase[method])
+            Labels_phase[method] = cell_state(adata, method, keys[i], gene_indices)
+            Legends_phase[method] = ['Induction', 'Repression', 'Off']
+            
         plot_phase_grid(grid_size[0], 
                         grid_size[1],
                         genes,
@@ -309,8 +304,6 @@ def post_analysis(adata,
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs[cluster_key].to_numpy()])
             
-        if(legend_ncol is None):
-            legend_ncol = grid_size[1]*len(methods)
         plot_sig_grid(grid_size[0], 
                       grid_size[1], 
                       genes,
@@ -325,7 +318,6 @@ def post_analysis(adata,
                       V,
                       Yhat,
                       frac=frac,
-                      legend_ncol=legend_ncol,
                       down_sample=min(10, max(1,adata.n_obs//5000)),
                       path=save_path, 
                       figname=test_id)
