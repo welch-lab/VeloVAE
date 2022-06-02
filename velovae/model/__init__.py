@@ -26,5 +26,6 @@ __all__ = [
     "SCData",
     "SCTimedData",
     "TransGraph",
-    "edmond_chu_liu"
+    "edmond_chu_liu",
+    "sample_genes"
     ]
