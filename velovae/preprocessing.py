@@ -5,10 +5,13 @@ from .scvelo_preprocessing import *
 
 def count_peak_expression(adata, cluster_key = "clusters"):
     """
-    Count the number of genes with peak expression in each cell type
+    < Description >
+    Count the number of genes with peak expression in each cell type.
+    This is used when we want to pick the same number of genes for each cell type.
     """
     def encodeType(cell_types_raw):
         """
+        < Description >
         Use integer to encode the cell types
         Each cell type has one unique integer label.
         """
@@ -44,6 +47,10 @@ def count_peak_expression(adata, cluster_key = "clusters"):
     return out_peak_count,out_peak_expr,out_peak_gene
 
 def balanced_gene_selection(adata, n_gene, cluster_key):
+    """
+    < Description >
+    Select the same number of genes for each cell type. 
+    """
     if(n_gene>adata.n_vars):
         return 
     cell_labels = adata.obs[cluster_key].to_numpy()
@@ -92,7 +99,6 @@ def preprocess(adata,
                min_cells_u=None,
                max_counts_u=None,
                max_cells_u=None,
-               max_proportion_per_cell=0.05,
                npc=30,
                n_neighbors=30,
                umap_min_dist=0.5,
@@ -101,8 +107,51 @@ def preprocess(adata,
                perform_clustering=False,
                compute_umap=False):
     """
-    Perform all kinds of preprocessing steps using scanpy
-    By setting genes_retain to a specific list of gene names, preprocessing will pick these exact genes regardless of their counts and gene selection method.
+    < Description >
+    Run the entire preprocessing pipeline using scanpy
+    
+    < Input Arguments >
+    1.      adata [AnnData]
+    
+    2.      Ngene [int]
+            (Optional) Number of genes to keep
+    
+    3.      cluster_key [string]
+            (Optional) Key in adata.obs containing the cell type 
+    
+    4.      tkey [string]
+            (Optional) Key in adata.obs containing the capture time
+    
+    5.      selection_method [string]
+            (Optional) Should be either 'scv' or 'balanced'. 
+            If set to 'balanced', the function will call balanced_gene_selection.
+            Otherwise, it uses scanpy to pick highly variable genes.
+    
+    6-17.   min_count_per_cell...max_cells_u [int]      
+            (Optional) RNA count threshold
+    
+    18.     npc [int]
+            (Optional) Number of principal components in PCA dimension reduction
+    
+    19.     n_neighbors [int]
+            (Optional) Number of neighbors in KNN graph
+    
+    20.     umap_min_dist [float]
+            (Optional) UMAP hyperparameter. Usually is set to less than 1
+    
+    21.     resolution [float]
+            (Optional) Leiden clustering hyperparameter. 
+    
+    22.     genes_retain [string list]
+            (Optional) By setting genes_retain to a specific list of gene names, 
+            preprocessing will pick these exact genes regardless of 
+            their counts and gene selection method.
+    
+    23.     perform_clustering [bool]
+            (Optional) Whether to perform Leiden clustering
+    
+    24      compute_umap [bool]
+            (Optional) Whether to compute 2D UMAP
     """
     #Preprocessing
     #1. Cell, Gene filtering and data normalization
@@ -112,10 +161,7 @@ def preprocess(adata,
         if(selection_method=="balanced"):
             print("Balanced gene selection.")
             filter_and_normalize(adata, min_shared_counts=min_shared_count, min_shared_cells = min_shared_cells,  min_counts_u = min_counts_u, n_top_genes=Ngene*3)
-            #filter_genes(adata, min_shared_counts=min_shared_count, min_shared_cells = min_shared_cells)
-            #normalize_per_cell(adata, max_proportion_per_cell=max_proportion_per_cell)
             balanced_gene_selection(adata, Ngene, cluster_key)
-            #log1p(adata)
         else:
             filter_genes(adata, 
                          min_counts=min_counts_s, 
