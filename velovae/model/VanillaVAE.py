@@ -6,9 +6,9 @@ import os
 import time
 from velovae.plotting import plot_phase, plot_sig, plot_time, plot_train_loss, plot_test_loss
 
-from .model_util import histEqual, initParams, getTsGlobal, reinitParams, convertTime, ode, getGeneIndex
+from .model_util import hist_equal, init_params, get_ts_global, reinit_params, convert_time, ode, get_gene_index
 from .TrainingData import SCData
-from .velocity import rnaVelocityVanillaVAE
+from .velocity import rna_velocity_vanillavae
 
 
 ############################################################
@@ -181,7 +181,7 @@ class decoder(nn.Module):
         #Dynamical Model Parameters
         if(init_method == "random"):
             print("Random Initialization.")
-            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
+            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
             
             self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
             self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
@@ -193,7 +193,7 @@ class decoder(nn.Module):
             self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
         elif(init_method == "tprior"):
             print("Initialization using prior time.")
-            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
+            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
             t_prior = adata.obs[init_key].to_numpy()
             t_prior = t_prior[train_idx]
             std_t = (np.std(t_prior)+1e-3)*0.2
@@ -201,8 +201,8 @@ class decoder(nn.Module):
             self.t_init -= self.t_init.min()
             self.t_init = self.t_init
             self.t_init = self.t_init/self.t_init.max()*tmax
-            toff = getTsGlobal(self.t_init, U/scaling, S, 95)
-            alpha, beta, gamma, ton = reinitParams(U/scaling, S, self.t_init, toff)
+            toff = get_ts_global(self.t_init, U/scaling, S, 95)
+            alpha, beta, gamma, ton = reinit_params(U/scaling, S, self.t_init, toff)
             
             self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
             self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
@@ -214,7 +214,7 @@ class decoder(nn.Module):
             self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
         else:
             print("Initialization using the steady-state and dynamical models.")
-            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = initParams(X,p,fit_scaling=True)
+            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
             if(init_key is not None):
                 t_init = adata.obs['init_key'].to_numpy()
             else:
@@ -222,10 +222,10 @@ class decoder(nn.Module):
                 T_eq = np.zeros(T.shape)
                 Nbin = T.shape[0]//50+1
                 for i in range(T.shape[1]):
-                    T_eq[:, i] = histEqual(T[:, i], tmax, 0.9, Nbin)
+                    T_eq[:, i] = hist_equal(T[:, i], tmax, 0.9, Nbin)
                 self.t_init = np.quantile(T_eq,0.5,1)
-            toff = getTsGlobal(self.t_init, U/scaling, S, 95)
-            alpha, beta, gamma,ton = reinitParams(U/scaling, S, self.t_init, toff)
+            toff = get_ts_global(self.t_init, U/scaling, S, 95)
+            alpha, beta, gamma,ton = reinit_params(U/scaling, S, self.t_init, toff)
             
             self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
             self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
@@ -264,7 +264,7 @@ class decoder(nn.Module):
         Uhat = Uhat * torch.exp(self.scaling)
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
     
-    def predSU(self, t, gidx=None):
+    def pred_su(self, t, gidx=None):
         """
         < Description >
         ODE evaluation.
@@ -363,8 +363,8 @@ class VanillaVAE():
             "sparsify":1
         }
         
-        self.setDevice(device)
-        self.splitTrainTest(adata.n_obs)
+        self.set_device(device)
+        self.split_train_test(adata.n_obs)
         
         G = adata.n_vars
         #Create an encoder
@@ -382,14 +382,14 @@ class VanillaVAE():
         self.tmax=torch.tensor(tmax).to(self.device)
         self.time_distribution = time_distribution
         #Time prior
-        self.getPrior(adata, time_distribution, tmax, tprior)
+        self.get_prior(adata, time_distribution, tmax, tprior)
         
         #class attributes for training
         self.loss_train, self.loss_test = [], []
         self.counter = 0 #Count the number of iterations
         self.n_drop = 0 #Count the number of consecutive epochs with negative/low ELBO gain
         
-    def getPrior(self, adata, time_distribution, tmax, tprior=None):
+    def get_prior(self, adata, time_distribution, tmax, tprior=None):
         """
         < Description >
         Compute the parameters of time prior distribution
@@ -451,7 +451,7 @@ class VanillaVAE():
                 
                 self.p_t = torch.stack( [torch.tensor(t).unsqueeze(-1),torch.tensor(t_end).unsqueeze(-1)] ).float().to(self.device)
     
-    def setDevice(self, device, device_number=None):
+    def set_device(self, device, device_number=None):
         """
         < Description >
         Set the device of the model.
@@ -489,14 +489,14 @@ class VanillaVAE():
         uhat, shat = self.decoder.forward(t_global, neg_slope=self.config["neg_slope"]) #uhat is scaled
         return mu_t, std_t, t_global, uhat, shat
     
-    def evalModel(self, data_in):
+    def eval_model(self, data_in):
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t = self.encoder.forward(data_in_scale)
         
-        uhat, shat = self.decoder.predSU(mu_t) #uhat is scaled
+        uhat, shat = self.decoder.pred_su(mu_t) #uhat is scaled
         return mu_t, std_t, uhat, shat
         
-    def setMode(self,mode):
+    def set_mode(self,mode):
         """
         < Description >
         Set the model to either training or evaluation mode.
@@ -513,7 +513,7 @@ class VanillaVAE():
     ############################################################
     #Training Objective
     ############################################################
-    def VAERisk(self, q_tx, p_t, u, s, uhat, shat, sigma_u, sigma_s, weight=None, b=1.0):
+    def vae_risk(self, q_tx, p_t, u, s, uhat, shat, sigma_u, sigma_s, weight=None, b=1.0):
         """
         < Description >
         This is the negative ELBO.
@@ -589,7 +589,7 @@ class VanillaVAE():
             Whether to stop training based on the early stopping criterium.
         """
         B = len(train_loader)
-        self.setMode('train')
+        self.set_mode('train')
         stop_training = False
         
         for i, batch in enumerate(train_loader):
@@ -601,7 +601,7 @@ class VanillaVAE():
                     else:
                         self.n_drop = 0
                 self.loss_test.append(elbo_test)
-                self.setMode('train')
+                self.set_mode('train')
                 if(self.n_drop>=self.config["early_stop"] and self.config["early_stop"]>0):
                     stop_training=True
                     break
@@ -615,7 +615,7 @@ class VanillaVAE():
             s = xbatch[:,xbatch.shape[1]//2:]
             mu_tx, std_tx, t_global, uhat, shat = self.forward(xbatch)
             
-            loss = self.VAERisk((mu_tx,std_tx), 
+            loss = self.vae_risk((mu_tx,std_tx), 
                                 self.p_t[:,self.train_idx[idx],:], 
                                 u, s, 
                                 uhat, shat, 
@@ -638,7 +638,7 @@ class VanillaVAE():
             self.counter = self.counter + 1
         return stop_training
     
-    def loadConfig(self, config):
+    def load_config(self, config):
         """
         
         Update hyper-parameters
@@ -656,7 +656,7 @@ class VanillaVAE():
             self.decoder.sigma_u.requires_grad = True
             self.decoder.sigma_s.requires_grad = True
     
-    def splitTrainTest(self, N):
+    def split_train_test(self, N):
         """
         < Description >
         Randomly select indices as training samples.
@@ -708,7 +708,7 @@ class VanillaVAE():
         < Output >
         None
         """
-        self.loadConfig(config)
+        self.load_config(config)
         
         print("------------------------- Train a Vanilla VAE -------------------------")
         #Get data loader
@@ -732,7 +732,7 @@ class VanillaVAE():
             self.config["test_iter"] = len(self.train_idx)//self.config["batch_size"]*2
         print("*********                      Finished.                      *********")
         
-        gind, gene_plot = getGeneIndex(adata.var_names, gene_plot)
+        gind, gene_plot = get_gene_index(adata.var_names, gene_plot)
         
         os.makedirs(figure_path, exist_ok=True)
         
@@ -781,9 +781,9 @@ class VanillaVAE():
                                        gene_plot,
                                        True, 
                                        figure_path)
-                self.setMode('train')
+                self.set_mode('train')
                 elbo_test = self.loss_test[-1] if len(self.loss_test)>0 else -np.inf
-                print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f}, Test ELBO = {elbo_test:.3f}, \t Total Time = {convertTime(time.time()-start)}")
+                print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f}, Test ELBO = {elbo_test:.3f}, \t Total Time = {convert_time(time.time()-start)}")
                 
             
             
@@ -792,13 +792,13 @@ class VanillaVAE():
                 break
                 
                 
-        print(f"*********              Finished. Total Time = {convertTime(time.time()-start)}             *********")
+        print(f"*********              Finished. Total Time = {convert_time(time.time()-start)}             *********")
         plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_vanilla.png')
         if(self.config["test_iter"]>0):
             plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_vanilla.png')
         return
     
-    def predAll(self, data, mode='test', output=["uhat", "shat", "t"], gene_idx=None):
+    def pred_all(self, data, mode='test', output=["uhat", "shat", "t"], gene_idx=None):
         """
         < Description >
         Generate all predictions.
@@ -837,14 +837,14 @@ class VanillaVAE():
             Nb = N // B
             for i in range(Nb):
                 data_in = torch.tensor(data[i*B:(i+1)*B]).float().to(self.device)
-                mu_tx, std_tx, uhat, shat = self.evalModel(data_in)
+                mu_tx, std_tx, uhat, shat = self.eval_model(data_in)
                 if(mode=="test"):
                     p_t = self.p_t[:,self.test_idx[i*B:(i+1)*B],:]
                 elif(mode=="train"):
                     p_t = self.p_t[:,self.train_idx[i*B:(i+1)*B],:]
                 else:
                     p_t = self.p_t[:,i*B:(i+1)*B,:]
-                loss = self.VAERisk((mu_tx, std_tx), 
+                loss = self.vae_risk((mu_tx, std_tx), 
                                     p_t,
                                     data_in[:,:G], data_in[:,G:], 
                                     uhat, shat, 
@@ -861,14 +861,14 @@ class VanillaVAE():
                     std_t_out[i*B:(i+1)*B] = std_tx.cpu().squeeze().numpy()
             if(N > B*Nb):
                 data_in = torch.tensor(data[B*Nb:]).float().to(self.device)
-                mu_tx, std_tx, uhat, shat = self.evalModel(data_in)
+                mu_tx, std_tx, uhat, shat = self.eval_model(data_in)
                 if(mode=="test"):
                     p_t = self.p_t[:,self.test_idx[B*Nb:],:]
                 elif(mode=="train"):
                     p_t = self.p_t[:,self.train_idx[B*Nb:],:]
                 else:
                     p_t = self.p_t[:,B*Nb:,:]
-                loss = self.VAERisk((mu_tx, std_tx), 
+                loss = self.vae_risk((mu_tx, std_tx), 
                                     p_t,
                                     data_in[:,:G], data_in[:,G:], 
                                     uhat, shat, 
@@ -933,10 +933,10 @@ class VanillaVAE():
         < Output >
         1.  elbo [float]
         """
-        self.setMode('eval')
+        self.set_mode('eval')
         data = test_set.data
         mode = "test" if test_mode else "train"
-        out, elbo = self.predAll(data, mode, gene_idx=gind)
+        out, elbo = self.pred_all(data, mode, gene_idx=gind)
         Uhat, Shat, t, std_t = out[0], out[1], out[2], out[3]
         
         G = data.shape[1]//2
@@ -969,7 +969,7 @@ class VanillaVAE():
         return elbo
         
         
-    def saveModel(self, file_path, enc_name='encoder_vanilla', dec_name='decoder_vanilla'):
+    def save_model(self, file_path, enc_name='encoder_vanilla', dec_name='decoder_vanilla'):
         """
         < Description >
         Save the encoder parameters to a .pt file.
@@ -978,14 +978,14 @@ class VanillaVAE():
         torch.save(self.encoder.state_dict(), f"{file_path}/{enc_name}.pt")
         torch.save(self.decoder.state_dict(), f"{file_path}/{dec_name}.pt")
         
-    def saveAnnData(self, adata, key, file_path, file_name=None):
+    def save_anndata(self, adata, key, file_path, file_name=None):
         """
         < Description >
         Save the ODE parameters and cell time to the anndata object and write it to disk.
         """
         os.makedirs(file_path, exist_ok=True)
         
-        self.setMode('eval')
+        self.set_mode('eval')
         adata.var[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy())
         adata.var[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy())
         adata.var[f"{key}_gamma"] = np.exp(self.decoder.gamma.detach().cpu().numpy())
@@ -996,7 +996,7 @@ class VanillaVAE():
         adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
         scaling = adata.var[f"{key}_scaling"].to_numpy()
         
-        out, elbo = self.predAll(np.concatenate((adata.layers['Mu'], adata.layers['Ms']),axis=1), mode="both", gene_idx=np.array(range(adata.n_vars)))
+        out, elbo = self.pred_all(np.concatenate((adata.layers['Mu'], adata.layers['Ms']),axis=1), mode="both", gene_idx=np.array(range(adata.n_vars)))
         Uhat, Shat, t, std_t = out[0], out[1], out[2], out[3]
         
         adata.obs[f"{key}_time"] = t
@@ -1007,7 +1007,7 @@ class VanillaVAE():
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
         
-        rnaVelocityVanillaVAE(adata, key)
+        rna_velocity_vanillavae(adata, key)
         
         if(file_name is not None):
             adata.write_h5ad(f"{file_path}/{file_name}")

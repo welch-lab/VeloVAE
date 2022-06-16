@@ -8,7 +8,7 @@ from .model_util import knn_transition_prob
 #######################################################################
 # Functions to encode string-type data as integers
 #######################################################################
-def encodeType(cell_types_raw):
+def encode_type(cell_types_raw):
     """
     Use integer to encode the cell types
     Each cell type has one unique integer label.
@@ -22,7 +22,7 @@ def encodeType(cell_types_raw):
         
     return label_dic, label_dic_rev
     
-def encodeGraph(graph_raw, init_types_raw, label_dic):
+def encode_graph(graph_raw, init_types_raw, label_dic):
     """
     Encode the transition graph using integers
     Each cell type has one unique integer label.
@@ -34,7 +34,7 @@ def encodeGraph(graph_raw, init_types_raw, label_dic):
     
     return graph_enc, init_types_enc
     
-def decodeGraph(graph, init_types, label_dic_rev):
+def decode_graph(graph, init_types, label_dic_rev):
     """
     Decode the transition graph from integers to the type name
     """
@@ -45,7 +45,7 @@ def decodeGraph(graph, init_types, label_dic_rev):
     
     return graph_enc, init_types_enc
     
-def encodeTypeGraph(key, cell_types_raw):
+def encode_type_graph(key, cell_types_raw):
     """
     Fetch a default transition graph and convert the string into integer encoding.
     key: name of the dataset
@@ -80,7 +80,7 @@ def str2int(cell_labels_raw, label_dic):
 def int2str(cell_labels, label_dic_rev):
     return np.array([label_dic_rev[cell_labels[i]] for i in range(len(cell_labels))])
 
-def recoverTransitionTimeRec(t_trans, ts, prev_type, graph):
+def recover_transition_time_rec(t_trans, ts, prev_type, graph):
     """
     Applied to the branching ODE
     Recursive helper function of recovering transition time.
@@ -90,7 +90,7 @@ def recoverTransitionTimeRec(t_trans, ts, prev_type, graph):
     for cur_type in graph[prev_type]:
         t_trans[cur_type] += t_trans[prev_type]
         ts[cur_type] += t_trans[cur_type]
-        recoverTransitionTimeRec(t_trans, ts, cur_type, graph)
+        recover_transition_time_rec(t_trans, ts, cur_type, graph)
     return
 
 def recoverTransitionTime(t_trans, ts, graph, init_type):
@@ -102,7 +102,7 @@ def recoverTransitionTime(t_trans, ts, graph, init_type):
     ts_orig = deepcopy(ts)
     for x in init_type:
         ts_orig[x] += t_trans_orig[x]
-        recoverTransitionTimeRec(t_trans_orig, ts_orig, x, graph)
+        recover_transition_time_rec(t_trans_orig, ts_orig, x, graph)
     return t_trans_orig, ts_orig
 
 def merge_nodes(graph, parents, n_nodes, loop, v_outside):
@@ -340,7 +340,7 @@ class TransGraph():
         self.z = adata.obsm[embed_key] if train_idx is None else adata.obsm[embed_key][train_idx]
         
         cell_types_raw = np.unique(cell_labels_raw)
-        self.label_dic, self.label_dic_rev = encodeType(cell_types_raw)
+        self.label_dic, self.label_dic_rev = encode_type(cell_types_raw)
 
         self.n_type = len(cell_types_raw)
         self.cell_labels = np.array([self.label_dic[x] for x in cell_labels_raw])

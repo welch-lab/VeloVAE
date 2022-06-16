@@ -1,14 +1,12 @@
 import numpy as np
 import scipy as sp
 import scipy.sparse as spr
-from scipy.spatial.distance import cosine as cosdist
-from scipy.spatial.distance import pdist, squareform
 from scipy.ndimage import gaussian_filter1d
 import pynndescent
 from sklearn.preprocessing import normalize
-from .model_util import odeNumpy, ode_br_numpy, predSUNumpy
+from .model_util import ode_numpy, ode_br_numpy, pred_su_numpy
 
-def rnaVelocityVanillaVAE(adata, key, use_raw=False, use_scv_genes=False, k=10):
+def rna_velocity_vanillavae(adata, key, use_raw=False, use_scv_genes=False, k=10):
     """
     < description >
     Compute the velocity based on:
@@ -50,7 +48,7 @@ def rnaVelocityVanillaVAE(adata, key, use_raw=False, use_scv_genes=False, k=10):
             U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
             U = U/scaling
         else:
-            U, S = odeNumpy(t.reshape(-1,1),alpha,beta,gamma,ton,toff, None) #don't need scaling here
+            U, S = ode_numpy(t.reshape(-1,1),alpha,beta,gamma,ton,toff, None) #don't need scaling here
             adata.layers["Uhat"] = U*scaling
             adata.layers["Shat"] = S
     
@@ -63,7 +61,7 @@ def rnaVelocityVanillaVAE(adata, key, use_raw=False, use_scv_genes=False, k=10):
         V[:, gene_mask] = np.nan
     return V, U, S
 
-def rnaVelocityVAE(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False, full_vb=False):
+def rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False, full_vb=False):
     """
     Compute the velocity based on:
     ds/dt = beta * u - gamma * s
@@ -84,7 +82,7 @@ def rnaVelocityVAE(adata, key, use_raw=False, use_scv_genes=False, sigma=None, a
             U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
             U = U/scaling
         else:
-            U, S = predSUNumpy(np.clip(t-t0,0,None).reshape(-1,1),U0/scaling,S0,alpha*rho,beta,gamma)
+            U, S = pred_su_numpy(np.clip(t-t0,0,None).reshape(-1,1),U0/scaling,S0,alpha*rho,beta,gamma)
             U, S = np.clip(U, 0, None), np.clip(S, 0, None)
             adata.layers["Uhat"] = U * scaling
             adata.layers["Shat"] = S
@@ -101,7 +99,7 @@ def rnaVelocityVAE(adata, key, use_raw=False, use_scv_genes=False, sigma=None, a
         V[:, gene_mask] = np.nan
     return V, U, S
 
-def rnaVelocityBrODE(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
+def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
     """
     < Description >
     Compute the velocity based on:
@@ -154,7 +152,7 @@ def rnaVelocityBrODE(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
         V[:, gene_mask] = np.nan
     return V, U, S
 
-def smoothVel(v, t, W=5):
+def smooth_vel(v, t, W=5):
     order_t = np.argsort(t)
     h = np.ones((W))*(1/W)
     v_ret = np.zeros((len(v)))

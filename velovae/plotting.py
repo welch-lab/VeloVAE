@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-import  matplotlib.colors as clr
 import igraph as ig
 import pynndescent
 import umap
@@ -315,11 +314,13 @@ def plot_cluster(X_embed, cell_labels, color_map=None, save=None):
     y_range = y.max()-y.min()
     colors = get_colors(len(cell_types), color_map)
     
+    n_char_max = np.max([len(x) for x in cell_types])
     for i, typei in enumerate(cell_types):
         mask = cell_labels==typei
         xbar, ybar = np.mean(x[mask]), np.mean(y[mask])
         ax.plot(x[mask], y[mask], '.', color=colors[i%len(colors)])
-        txt = ax.text(xbar - x_range*0.05, ybar - y_range*0.05, typei, fontsize=20, color='k')
+        n_char = len(typei)
+        txt = ax.text(xbar - x_range*4e-3*n_char, ybar - y_range*4e-3, typei, fontsize= 200//n_char_max, color='k')
         txt.set_bbox(dict(facecolor='white', alpha=0.5, edgecolor='black'))
     
     ax.set_xlabel('Umap 1') 
@@ -744,6 +745,25 @@ def plot_phase_grid(Nr,
         save = None if figname is None else f'{path}/{figname}_phase_{l+1}.png'
         save_fig(fig_phase, save, (lgd,))
 
+def sample_scatter_plot(x, down_sample, n_bins=20):
+    idx_downsample = []
+    n_sample = len(x)//down_sample
+    if(n_bins>n_sample):
+        n_bins = n_sample
+    sample_per_bin = n_sample // n_bins
+    n_res = n_sample - sample_per_bin * n_bins
+    
+    edges = np.linspace(x.min(), x.max(), n_bins+1)
+    
+    for i in range(len(edges)-1):
+        idx_pool = np.where((x>=edges[i]) & (x<=edges[i+1]))[0]
+        if(len(idx_pool)>sample_per_bin+int(i+1<=n_res)): 
+            idx_downsample.extend(np.random.choice(idx_pool, sample_per_bin+int(i+1<=n_res)))
+        else: #fewer samples in the bin than needed
+            idx_downsample.extend(idx_pool)
+    
+    return np.array(idx_downsample).astype(int)
+
 def plot_sig_axis(ax,
                   t,
                   x,
@@ -767,11 +787,12 @@ def plot_sig_axis(ax,
         for i in range(len(legends)):
             mask = labels==i
             if(np.any(mask)):
+                idx_sample = sample_scatter_plot(x[mask], D)
                 if(show_legend):
-                    line = ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color=colors[i%len(colors)], alpha=a, label=legends[i])[0]
+                    line = ax.plot(t[mask][idx_sample], x[mask][idx_sample], marker, markersize=5, color=colors[i%len(colors)], alpha=a, label=legends[i])[0]
                     lines.append(line)
                 else:
-                    ax.plot(t[mask][::D], x[mask][::D], marker, markersize=5, color=colors[i%len(colors)], alpha=a)
+                    ax.plot(t[mask][idx_sample], x[mask][idx_sample], marker, markersize=5, color=colors[i%len(colors)], alpha=a)
                 
     if(title is not None):
         ax.set_title(title, fontsize=30)
@@ -837,15 +858,27 @@ def plot_sig_loess_axis(ax,
         ax.set_title(title, fontsize=30)
     return ax
 
-def sample_quiver_plot(t, dt):
+def sample_quiver_plot(t, dt, x=None, n_bins=3):
+    """
+    Helper function.
+    Samples cells to plot the velocity in a quiver plot.
+    """
     tmax, tmin = t.max()+1e-3, t.min()
     Nbin = int( np.clip((tmax-tmin)/dt,1,len(t)//2) )
     indices = []
     for i in range(Nbin):
         I = np.where((t>=tmin+i*dt) & (t<=tmin+(i+1)*dt))[0]
         if(len(I)>0):
-            indices.append(I[len(I)//2])
+            if(x is None):
+                indices.append(I[len(I)//2])
+            else:
+                edges = np.linspace(np.quantile(x[I], 0.1), np.quantile(x[I], 0.9), n_bins+1)
+                for j in range(n_bins):
+                    mask = (x[I] >= edges[j]) & (x[I] <= edges[j+1])
+                    if(np.any(mask)):
+                        indices.append(np.random.choice(I[mask]))
     return np.array(indices).astype(int)
+
 
 def plot_vel_axis(ax,
                   t,
@@ -856,15 +889,16 @@ def plot_vel_axis(ax,
                   dt=0.1,
                   a=1.0,
                   show_legend=False,
+                  sparsity_correction=False,
                   color_map=None,
                   title=None):
     """
     Sample a subset of cells and plot the velocity arrows in a x-t plot.
     """
     if(labels is None or legends is None):
-        dt_sample = (t.max()-t.min())/30
+        dt_sample = (t.max()-t.min())/50
         torder = np.argsort(t)
-        indices = sample_quiver_plot(t[torder], dt_sample)
+        indices = sample_quiver_plot(t[torder], dt_sample, x[torder]) if sparsity_correction else sample_quiver_plot(t[torder], dt_sample)
         ax.quiver(t[torder][indices], 
                   x[torder][indices], 
                   dt*np.ones((len(t))), 
@@ -881,12 +915,9 @@ def plot_vel_axis(ax,
             mask = labels==i
             t_type = t[mask]
             if(np.any(mask)):
-                #t_lb, t_ub = np.quantile(t_type, 0.02), np.quantile(t_type, 0.98)
-                #mask2 = (t_type<t_ub) & (t_type>=t_lb)
-                #t_type = t_type[mask2]
                 dt_sample = (t_type.max()-t_type.min())/30
                 torder = np.argsort(t_type)
-                indices = sample_quiver_plot(t_type[torder], dt_sample)
+                indices = sample_quiver_plot(t_type[torder], dt_sample, x[mask][torder]) if sparsity_correction else sample_quiver_plot(t_type[torder], dt_sample)
                 v_type = v[mask][torder][indices]
                 v_type = np.clip(v_type, np.quantile(v_type,0.02), np.quantile(v_type,0.98))
                 if(show_legend):
@@ -929,10 +960,11 @@ def plot_sig_grid(Nr,
                   Labels_demo={},
                   W=6,
                   H=5,
-                  frac=0.5,
+                  frac=0.0,
                   alpha=1.0,
                   down_sample=1,
                   legend_fontsize=None,
+                  sparsity_correction=False,
                   plot_loess=False,
                   color_map=None, 
                   path='figures', 
@@ -988,9 +1020,9 @@ def plot_sig_grid(Nr,
     14-15.  W,H [float]
             (Optional) Width and height of each gene subplot.
     
-    16.     frac [float in (0,1)]
+    16.     frac [float in [0,1)]
             (Optional) Hyper-parameter for the LOESS plot.
-            This is the window length of the local regression.
+            This is the window length of the local regression. If it's 0, LOESS will not be plotted.
     
     17.     alpha [float in (0,1)]
             (Optional) Transparency of the data points.
@@ -1001,16 +1033,20 @@ def plot_sig_grid(Nr,
     19.     legend_fontsize [float]
             (Optional) 
     
-    20.     plot_loess [bool]
-            (Optional) Whether to generate LOESS plots
+    20.     sparsity_correction [bool]
+            (Optional) Whether to sample u/s uniformly in the range to avoid
+            sapling most zeros in sparse expression profiles.
     
-    21.     color_map [string]
+    21.     plot_loess [bool]
+            (Optional) Whether to plot a line fit for VeloVAE
+    
+    22.     color_map [string]
             (Optional) User-defined colormap for different cell types.
     
-    22.     path [string]
+    23.     path [string]
             Saving path
     
-    23.     figname [string]
+    24.     figname [string]
             (Optional) Name if the figure.
             Because there can be multiple figures generated in this function.
             We will append a number to figname when saving the figures.
@@ -1032,23 +1068,23 @@ def plot_sig_grid(Nr,
             for i in range(min(Nr,len(gene_list)-l*Nr)):
                 idx = l*Nr+i
                 t = T[methods[0]][:,idx] if T[methods[0]].ndim==2 else T[methods[0]]
+                
                 that = That[methods[0]][:,idx] if That[methods[0]].ndim==2 else That[methods[0]]
                 title = f"{gene_list[idx]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[idx]} ({methods[0]})"
                 line_u = plot_sig_axis(ax_sig[3*i], t, U[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, down_sample, True, color_map=color_map, title=title)
                 line_s = plot_sig_axis(ax_sig[3*i+1], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, down_sample, color_map=color_map)
-                if(len(line_u)>0):
-                    lines = line_u
+                
                 try:
-                    if methods[0]=='VeloVAE':
+                    if methods[0]=='VeloVAE' or methods[0]=='FullVB':
                         K = min(10, max(len(that)//5000, 1))
-                        if(plot_loess):
+                        if(frac>0 and frac<1):
                             plot_sig_loess_axis(ax_sig[3*i], that[::K], Uhat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
                             plot_sig_loess_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
-                        plot_vel_axis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]], color_map=color_map)
+                        plot_vel_axis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]], sparsity_correction=sparsity_correction, color_map=color_map)
                     else:
                         plot_sig_pred_axis(ax_sig[3*i], that, Uhat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
                         plot_sig_pred_axis(ax_sig[3*i+1], that, Shat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
-                        plot_vel_axis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]], color_map=color_map)
+                        plot_vel_axis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]], sparsity_correction=sparsity_correction, color_map=color_map)
                 except (KeyError, TypeError):
                     print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                     return
@@ -1087,24 +1123,24 @@ def plot_sig_grid(Nr,
                         else:
                             t = T[method]
                             that = That[method]
+
                         title = f"{gene_list[idx]} (VeloVAE)" if method=="FullVB" else f"{gene_list[idx]} ({method})"
                         line_u = plot_sig_axis(ax_sig[3*i, M*j+k], t, U[:,idx], Labels[method], Legends[method], '.', alpha, down_sample, True, color_map=color_map, title=title)
                         line_s = plot_sig_axis(ax_sig[3*i+1, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', alpha, down_sample, color_map=color_map)
-                        if(len(line_u)>0):
-                            lines = line_u
+                        
                         if(len(Legends[method])>len(legends)):
                             legends = Legends[method]
                         try:
                             if method=='VeloVAE' or method=='FullVB':
                                 K = min(10, max(len(that)//5000, 1))
-                                if(plot_loess):
+                                if(frac>0 and frac<1):
                                     plot_sig_loess_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
                                     plot_sig_loess_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
-                                plot_vel_axis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method], color_map=color_map)
+                                plot_vel_axis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method], sparsity_correction=sparsity_correction, color_map=color_map)
                             else:
                                 plot_sig_pred_axis(ax_sig[3*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
                                 plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
-                                plot_vel_axis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method], color_map=color_map)
+                                plot_vel_axis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method], sparsity_correction=sparsity_correction, color_map=color_map)
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
@@ -1151,7 +1187,7 @@ def plot_sig_grid(Nr,
         
         l_indent = 1 - 0.02/Nr
         if(legend_fontsize is None):
-            legend_fontsize = min(int(30*Nr), 300*Nr/len(Legends[methods[0]]))
+            legend_fontsize = np.min([int(30*Nr), 300*Nr/len(Legends[methods[0]]), int(10*Nc)])
         lgd = fig_sig.legend(handles, labels, fontsize=legend_fontsize, markerscale=5.0, bbox_to_anchor=(-0.03/Nc,l_indent), loc='upper right')
         
         fig_sig.subplots_adjust(hspace=0.3, wspace=0.12)

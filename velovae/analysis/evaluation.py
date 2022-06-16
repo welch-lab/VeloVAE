@@ -1,14 +1,14 @@
 import numpy as np
 import pandas as pd
 from pandas import DataFrame, Index
-from ..model.model_util import makeDir
+from ..model.model_util import make_dir
 from .evaluation_util import *
 from velovae.plotting import plot_cluster, plot_phase_grid, plot_sig_grid, plot_time_grid
 
 
 
 
-def getMetric(adata, method, key, scv_key=None, scv_mask=True):
+def get_metric(adata, method, key, scv_key=None, scv_mask=True):
     """
     < General Description >
     Get specific metrics given a method.
@@ -111,10 +111,11 @@ def post_analysis(adata,
                   plot_type=["signal"], 
                   cluster_key="clusters",
                   nplot=500, 
-                  frac=0.5, 
+                  frac=0.0, 
                   embed="umap", 
                   grid_size=(1,1),
-                  save_path="figures"):
+                  save_path="figures",
+                  **kwargs):
     """
     < Description >
     Main function for post analysis. This function computes performance metrics and generates
@@ -175,7 +176,7 @@ def post_analysis(adata,
         Contains the performance metrics of all methods.
     2.  Saves the figures to 'save_path'.
     """
-    makeDir(save_path)
+    make_dir(save_path)
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     X_embed = adata.obsm[f"X_{embed}"]
     cell_labels_raw = adata.obs["clusters"].to_numpy()
@@ -202,7 +203,7 @@ def post_analysis(adata,
     scv_key = keys[scv_idx[0]] if(len(scv_idx)>0) else None
     for i, method in enumerate(methods):
         if(compute_metrics):
-            stats_i = getMetric(adata, method, keys[i], scv_key, (scv_key is not None) )
+            stats_i = get_metric(adata, method, keys[i], scv_key, (scv_key is not None) )
             stats[method] = stats_i
         
         if(method=='scVelo'):
@@ -303,7 +304,7 @@ def post_analysis(adata,
             else:
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs[cluster_key].to_numpy()])
-            
+        sparsity_correction = kwargs["sparsity_correction"] if "sparsity_correction" in kwargs else False    
         plot_sig_grid(grid_size[0], 
                       grid_size[1], 
                       genes,
@@ -319,6 +320,7 @@ def post_analysis(adata,
                       Yhat,
                       frac=frac,
                       down_sample=min(10, max(1,adata.n_obs//5000)),
+                      sparsity_correction=sparsity_correction,
                       path=save_path, 
                       figname=test_id)
     if(compute_metrics):

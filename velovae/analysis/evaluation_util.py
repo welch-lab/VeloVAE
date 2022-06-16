@@ -1,15 +1,15 @@
 import numpy as np
 from scipy.stats import spearmanr
 from sklearn.metrics.pairwise import pairwise_distances
-from ..model.model_util import initParams, predSUNumpy, odeNumpy, ode_br_numpy, scvPred, scvPredSingle, optimal_transport_duality_gap
+from ..model.model_util import pred_su_numpy, ode_numpy, ode_br_numpy, scv_pred, scv_pred_single, optimal_transport_duality_gap
 
-def getMSE(U,S,Uhat,Shat):
+def get_mse(U,S,Uhat,Shat):
     return np.mean((U-Uhat)**2+(S-Shat)**2)
 
-def getMAE(U,S,Uhat,Shat):
+def get_mae(U,S,Uhat,Shat):
     return np.mean(np.abs(U-Uhat)+np.abs(S-Shat))
     
-def timeCorr(t1, t2):
+def time_corr(t1, t2):
     return spearmanr(t1,t2)
 
 def cell_state(adata, method, key, gene_indices=None):
@@ -42,7 +42,7 @@ def cell_state(adata, method, key, gene_indices=None):
     return cell_state
 
 def get_pred_scv(adata, key='fit'):
-    Uhat, Shat = scvPred(adata, key)
+    Uhat, Shat = scv_pred(adata, key)
     logp = np.sum(np.log(adata.var[f"{key}_likelihood"]))
     return Uhat, Shat, logp
 
@@ -59,7 +59,7 @@ def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
         idx = np.where(adata.var_names==gene)[0][0]
         t_demo = np.concatenate((np.linspace(0,toff[idx],N), np.linspace(toff[idx], max(T[:,idx].max(), toff[i]+T[:,idx].max()*0.01),N)))
         T_demo[:,i] = t_demo
-        uhat, shat = scvPredSingle(t_demo,alpha[idx],beta[idx],gamma[idx],toff[idx],scaling=scaling[idx], uinit=0, sinit=0)
+        uhat, shat = scv_pred_single(t_demo,alpha[idx],beta[idx],gamma[idx],toff[idx],scaling=scaling[idx], uinit=0, sinit=0)
         Uhat[:,i] = uhat
         Shat[:,i] = shat
     return T_demo, Uhat, Shat
@@ -77,7 +77,7 @@ def get_pred_vanilla(adata, key, scv_key=None):
     sigma_u, sigma_s = adata.var[f"{key}_sigma_u"].to_numpy(), adata.var[f"{key}_sigma_s"].to_numpy()
     
     if( (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers)):
-        Uhat, Shat = odeNumpy(t.reshape(-1,1), alpha, beta, gamma, ton, toff, scaling)
+        Uhat, Shat = ode_numpy(t.reshape(-1,1), alpha, beta, gamma, ton, toff, scaling)
     else:
         Uhat, Shat = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
     
@@ -108,10 +108,10 @@ def get_pred_vanilla_demo(adata, key, genes=None, N=100):
     
     t_demo = np.linspace(0, t.max(), N)
     if(genes is None):
-        Uhat_demo, Shat_demo = odeNumpy(t_demo.reshape(-1,1), alpha, beta, gamma, ton, toff, scaling)
+        Uhat_demo, Shat_demo = ode_numpy(t_demo.reshape(-1,1), alpha, beta, gamma, ton, toff, scaling)
     else:
         gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
-        Uhat_demo, Shat_demo = odeNumpy(t_demo.reshape(-1,1), alpha[gene_indices], beta[gene_indices], gamma[gene_indices], ton[gene_indices], toff[gene_indices], scaling[gene_indices])
+        Uhat_demo, Shat_demo = ode_numpy(t_demo.reshape(-1,1), alpha[gene_indices], beta[gene_indices], gamma[gene_indices], ton[gene_indices], toff[gene_indices], scaling[gene_indices])
     
     return t_demo, Uhat_demo, Shat_demo
 
@@ -129,7 +129,7 @@ def get_pred_velovae(adata, key, scv_key=None, full_vb=False):
         u0, s0 = adata.layers[f"{key}_u0"], adata.layers[f"{key}_s0"]
         t0 = adata.obs[f"{key}_t0"].to_numpy()
         
-        Uhat, Shat = predSUNUmpy((t-t0).reshape(-1,1), u0, s0, rho*alpha, beta, gamma)
+        Uhat, Shat = pred_su_numpy((t-t0).reshape(-1,1), u0, s0, rho*alpha, beta, gamma)
         Uhat = Uhat*scaling
     else:
         Uhat, Shat = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
@@ -160,12 +160,12 @@ def get_pred_velovae_demo(adata, key, genes=None, full_vb=False):
         t0 = adata.obs[f"{key}_t0"].to_numpy()
         if(genes is None):
             rho = adata.layers[f"{key}_rho"]
-            Uhat, Shat = predSUNUmpy((t-t0).reshape(-1,1), u0, s0, alpha, beta, gamma)
+            Uhat, Shat = pred_su_numpy((t-t0).reshape(-1,1), u0, s0, alpha, beta, gamma)
             Uhat = Uhat*scaling
         else:
             gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
             rho = adata.layers[f"{key}_rho"][:,gene_indices]
-            Uhat, Shat = predSUNUmpy((t-t0).reshape(-1,1), u0[:,gene_indices], s0[:,gene_indices], rho*alpha[gene_indices], beta[gene_indices], gamma[gene_indices])
+            Uhat, Shat = pred_su_numpy((t-t0).reshape(-1,1), u0[:,gene_indices], s0[:,gene_indices], rho*alpha[gene_indices], beta[gene_indices], gamma[gene_indices])
             Uhat = Uhat*scaling[gene_indices]
     else:
         if(genes is None):

@@ -17,7 +17,7 @@ Bergen, V., Lange, M., Peidli, S., Wolf, F. A., & Theis, F. J. (2020).
 Generalizing RNA velocity to transient cell states through dynamical modeling. 
 Nature biotechnology, 38(12), 1408-1414.
 """
-def scvPredSingle(t,alpha,beta,gamma,ts,scaling=1.0, uinit=0, sinit=0):
+def scv_pred_single(t,alpha,beta,gamma,ts,scaling=1.0, uinit=0, sinit=0):
     """
     Predicts u and s using the dynamical model.
     """
@@ -28,7 +28,7 @@ def scvPredSingle(t,alpha,beta,gamma,ts,scaling=1.0, uinit=0, sinit=0):
     ut = ut*scaling
     return ut.squeeze(), st.squeeze()
 
-def scvPred(adata, key, glist=None):
+def scv_pred(adata, key, glist=None):
 	"""
 	Reproduce the full prediction of scvelo dynamical model
 	"""
@@ -51,7 +51,7 @@ def scvPred(adata, key, glist=None):
 		t = adata.layers[f'{key}_t'][:,idx]
 		if(np.isnan(alpha)):
 			continue
-		u_g, s_g = scvPredSingle(t,alpha,beta,gamma,ts,scaling)
+		u_g, s_g = scv_pred_single(t,alpha,beta,gamma,ts,scaling)
 		
 		ut[:,i] = u_g
 		st[:,i] = s_g
@@ -61,7 +61,7 @@ def scvPred(adata, key, glist=None):
 ############################################################
 #Shared among all VAEs
 ############################################################
-def histEqual(t, Tmax, perc=0.95, Nbin=101):
+def hist_equal(t, Tmax, perc=0.95, Nbin=101):
     """
     Perform histogram equalization across all local times.
     """
@@ -84,7 +84,7 @@ def histEqual(t, Tmax, perc=0.95, Nbin=101):
 ############################################################
 #Basic utility function to compute ODE solutions for all models
 ############################################################
-def predSUNumpy(tau, u0, s0, alpha, beta, gamma):
+def pred_su_numpy(tau, u0, s0, alpha, beta, gamma):
     """
     (Numpy Version)
     Analytical solution of the ODE
@@ -101,7 +101,7 @@ def predSUNumpy(tau, u0, s0, alpha, beta, gamma):
     return np.clip(upred, a_min=0, a_max=None), np.clip(spred, a_min=0, a_max=None)
 
 
-def predSU(tau, u0, s0, alpha, beta, gamma):
+def pred_su(tau, u0, s0, alpha, beta, gamma):
     """
     (PyTorch Version)
     Analytical solution of the ODE
@@ -134,7 +134,7 @@ def linreg(u, s):
         k = 1.0+np.random.rand()
     return k
     
-def initGene(s,u,percent,fit_scaling=False,Ntype=None):
+def init_gene(s,u,percent,fit_scaling=False,Ntype=None):
     """
     Adopted from scvelo
 
@@ -195,7 +195,7 @@ def initGene(s,u,percent,fit_scaling=False,Ntype=None):
     
     return alpha, beta, gamma, t_latent, u0_, s0_, t_, scaling
     
-def initParams(data, percent,fit_offset=False,fit_scaling=True):
+def init_params(data, percent,fit_offset=False,fit_scaling=True):
     """
     Adopted from SCVELO
 
@@ -221,7 +221,7 @@ def initParams(data, percent,fit_offset=False,fit_scaling=True):
         si, ui = s[:,i], u[:,i]
         sfilt, ufilt = si[(si>0) & (ui>0)], ui[(si>0) & (ui>0)] #Use only nonzero data points
         if(len(sfilt)>3 and len(ufilt)>3):
-            alpha, beta, gamma, t, u0_, s0_, ts, scaling = initGene(sfilt,ufilt,percent,fit_scaling)
+            alpha, beta, gamma, t, u0_, s0_, ts, scaling = init_gene(sfilt,ufilt,percent,fit_scaling)
             params[i,:] = np.array([alpha,beta,gamma,scaling])
             T[i, (si>0) & (ui>0)] = t
             U0[i] = u0_
@@ -242,7 +242,7 @@ def initParams(data, percent,fit_offset=False,fit_scaling=True):
     
     dist_u, dist_s = np.zeros(u.shape),np.zeros(s.shape)
     for i in range(ngene):
-        upred, spred = scvPredSingle(T[i],params[i,0],params[i,1],params[i,2],Ts[i],params[i,3]) #upred has the original scale
+        upred, spred = scv_pred_single(T[i],params[i,0],params[i,1],params[i,2],Ts[i],params[i,3]) #upred has the original scale
         dist_u[:,i] = u[:,i] - upred
         dist_s[:,i] = s[:,i] - spred
     
@@ -261,7 +261,7 @@ def initParams(data, percent,fit_offset=False,fit_scaling=True):
 """
 Reinitialization based on the global time
 """
-def getTsGlobal(tgl, U, S, perc):
+def get_ts_global(tgl, U, S, perc):
     """
     Initialize the transition time in the original ODE model.
     """
@@ -280,7 +280,7 @@ def getTsGlobal(tgl, U, S, perc):
 
 
 
-def reinitGene(u,s,t,ts):
+def reinit_gene(u,s,t,ts):
     """
     Applied to the regular ODE 
     Initialize the ODE parameters (alpha,beta,gamma,t_on) from
@@ -319,14 +319,14 @@ def reinitGene(u,s,t,ts):
         gamma = 2.0
     return alpha,beta,gamma,t0
     
-def reinitParams(U, S, t, ts):
+def reinit_params(U, S, t, ts):
     """
     Reinitialize the regular ODE parameters based on estimated global latent time.
     """
     G = U.shape[1]
     alpha, beta, gamma, ton = np.zeros((G)), np.zeros((G)), np.zeros((G)), np.zeros((G))
     for i in range(G):
-        alpha_g, beta_g, gamma_g, ton_g = reinitGene(U[:,i], S[:,i], t, ts[i])
+        alpha_g, beta_g, gamma_g, ton_g = reinit_gene(U[:,i], S[:,i], t, ts[i])
         alpha[i] = alpha_g
         beta[i] = beta_g
         gamma[i] = gamma_g
@@ -340,7 +340,7 @@ def reinitParams(U, S, t, ts):
 """
 ODE Solution, with both numpy (for post-training analysis or plotting) and pytorch versions (for training)
 """
-def predSteadyNumpy(ts,alpha,beta,gamma):
+def pred_steady_numpy(ts,alpha,beta,gamma):
     """
     (Numpy Version)
     Predict the steady states.
@@ -357,7 +357,7 @@ def predSteadyNumpy(ts,alpha,beta,gamma):
     s0 = alpha/(gamma+eps)*(1.0-expg)+alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability)+alpha*ts_*expg*unstability
     return u0,s0
     
-def predSteady(tau_s, alpha, beta, gamma):
+def pred_steady(tau_s, alpha, beta, gamma):
     """
     (PyTorch Version)
     Predict the steady states.
@@ -373,7 +373,7 @@ def predSteady(tau_s, alpha, beta, gamma):
     
     return u0,s0
 
-def odeNumpy(t,alpha,beta,gamma,to,ts,scaling=None, k=10.0):
+def ode_numpy(t,alpha,beta,gamma,to,ts,scaling=None, k=10.0):
     """
     (Numpy Version)
     ODE solution with fixed rates
@@ -407,7 +407,7 @@ def odeNumpy(t,alpha,beta,gamma,to,ts,scaling=None, k=10.0):
     shat_on = alpha/(gamma+eps)*(1.0-expg)+alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability)+alpha*tau_on*unstability
     
     #Repression
-    u0_,s0_ = predSteadyNumpy(np.clip(ts-to,0,None),alpha,beta,gamma) #[G]
+    u0_,s0_ = pred_steady_numpy(np.clip(ts-to,0,None),alpha,beta,gamma) #[G]
     if(ts.ndim==2 and to.ndim==2):
         u0_ = u0_.reshape(-1,1)
         s0_ = s0_.reshape(-1,1)
@@ -442,7 +442,7 @@ def ode(t,alpha,beta,gamma,to,ts,neg_slope=0.0):
     shat_on = alpha/(gamma+eps)*(torch.tensor([1.0]).to(alpha.device)-expg)+ (alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability) + alpha*tau_on*expg * unstability)
     
     #Repression
-    u0_,s0_ = predSteady(F.relu(ts-to),alpha,beta,gamma)
+    u0_,s0_ = pred_steady(F.relu(ts-to),alpha,beta,gamma)
     
     tau_off = F.leaky_relu(t-ts, negative_slope=neg_slope)
     expb, expg = torch.exp(-beta*tau_off), torch.exp(-gamma*tau_off)
@@ -493,7 +493,7 @@ def linreg_mtx(u,s):
     #k[np.isinf(k) | np.isnan(k)] = 1.5
     return k
 
-def reinitTypeParams(U, S, t, ts, cell_labels, cell_types, init_types):
+def reinit_type_params(U, S, t, ts, cell_labels, cell_types, init_types):
     """
     Applied under branching ODE
     Use the steady-state model and estimated cell time to initialize
@@ -576,7 +576,7 @@ def ode_br(t, y, par, neg_slope=0.0, **kwargs):
     N = t.shape[0]
     
     tau0 = F.leaky_relu((t_trans - t_trans[par]).view(-1,1), neg_slope)
-    u0_hat, s0_hat = predSU(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) 
+    u0_hat, s0_hat = pred_su(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) 
     
     #For cells with time violation, we use its parent type 
     mask = (t >= t_trans[y].view(-1,1)).float()
@@ -584,12 +584,12 @@ def ode_br(t, y, par, neg_slope=0.0, **kwargs):
     u0_batch = u0_hat[y] * mask + u0_hat[par_batch] * (1-mask)
     s0_batch = s0_hat[y] * mask + s0_hat[par_batch] * (1-mask) #[N x G]
     tau = F.leaky_relu(t - t_trans[y].view(-1,1), neg_slope) * mask + F.leaky_relu(t - t_trans[par_batch].view(-1,1), neg_slope) * (1-mask)
-    uhat, shat = predSU(tau,
-                        u0_batch,
-                        s0_batch,
-                        alpha[y] * mask + alpha[par_batch] * (1-mask),
-                        beta[y] * mask + beta[par_batch] * (1-mask),
-                        gamma[y] * mask + gamma[par_batch] * (1-mask))
+    uhat, shat = pred_su(tau,
+                         u0_batch,
+                         s0_batch,
+                         alpha[y] * mask + alpha[par_batch] * (1-mask),
+                         beta[y] * mask + beta[par_batch] * (1-mask),
+                         gamma[y] * mask + gamma[par_batch] * (1-mask))
     return uhat * scaling, shat
 
 def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
@@ -606,14 +606,14 @@ def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
     N = t.shape[0]
     
     tau0 = np.clip((t_trans - t_trans[par]).reshape(-1,1), 0, None)
-    u0_hat, s0_hat = predSUNumpy(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) #[Ntype x G]
+    u0_hat, s0_hat = pred_su_numpy(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par]) #[Ntype x G]
     
     
     uhat, shat = np.zeros((N,G)), np.zeros((N,G))
     for i in range(Ntype):
         mask = (t[y==i] >= t_trans[i])
         tau = np.clip(t[y==i].reshape(-1,1) - t_trans[i], 0, None) * mask + np.clip(t[y==i].reshape(-1,1) - t_trans[par[i]], 0, None) * (1-mask)
-        uhat_i, shat_i = predSUNumpy(tau,
+        uhat_i, shat_i = pred_su_numpy(tau,
                                      u0_hat[i]*mask+u0_hat[par[i]]*(1-mask),
                                      s0_hat[i]*mask+s0_hat[par[i]]*(1-mask),
                                      alpha[i],
@@ -878,7 +878,7 @@ def optimal_transport_duality_gap_ts(C, G, lambda1, lambda2, epsilon, batch_size
 ############################################################
 #  KNN-Related Functions
 ############################################################
-def knnX0_alt(U, S, t, z, t_query, z_query, dt, k):
+def knnx0_alt(U, S, t, z, t_query, z_query, dt, k):
     N, Nq = len(t), len(t_query)
     u0 = np.zeros((Nq, U.shape[1]))
     s0 = np.zeros((Nq, S.shape[1]))
@@ -940,7 +940,7 @@ def knnX0_alt(U, S, t, z, t_query, z_query, dt, k):
     #s0 = np.convolve(s0[order_idx], np.ones((k))*(1/k), mode='same')
     return u0,s0,t0
 
-def knnX0(U, S, t, z, t_query, z_query, dt, k):
+def knnx0(U, S, t, z, t_query, z_query, dt, k):
     """
     < Description >
     Given cell time and state, find KNN for each cell in a time window ahead of
@@ -1132,7 +1132,7 @@ def knn_transition_prob(t,
 ############################################################
 #Other Auxilliary Functions
 ############################################################
-def makeDir(file_path):
+def make_dir(file_path):
     if(os.path.exists(file_path)):
         return
     else:
@@ -1148,7 +1148,7 @@ def makeDir(file_path):
                     os.mkdir(cur_path)
     
 
-def getGeneIndex(genes_all, gene_list):
+def get_gene_index(genes_all, gene_list):
     gind = []
     gremove = []
     for gene in gene_list:
@@ -1166,7 +1166,7 @@ def getGeneIndex(genes_all, gene_list):
         gene_list.remove(gene)
     return gind, gene_list
     
-def convertTime(t):
+def convert_time(t):
     """
     Convert the time in sec into the format: hour:minute:second
     """
