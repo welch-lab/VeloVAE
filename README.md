@@ -16,4 +16,4 @@ import sys
 sys.path.append(< path to the package >)
 import velovae
 ```
-Sorry for the inconvenience and we will make it available on PyPI soon!
+We also plan to make the package available on PyPI soon.
