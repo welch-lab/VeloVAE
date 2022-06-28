@@ -1868,7 +1868,7 @@ def plot_trajectory_3d(X_embed,
     ax.set_zlabel('Time', fontsize=16)
     
     lgd = ax.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
-    plt.tight_layout
+    plt.tight_layout()
     
     save_fig(fig, save, (lgd,))
     
