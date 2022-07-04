@@ -16,7 +16,7 @@ from .VanillaVAE import VanillaVAE, kl_gaussian, kl_uniform
 from .velocity import rna_velocity_vae
 
 ##############################################################
-# VAE+
+# VAE
 ##############################################################
 class encoder(nn.Module):
     """
@@ -594,10 +594,10 @@ class VAE(VanillaVAE):
             (Optional) time at the initial condition
         
         < Output >
-        1.  mu_t [tensor (N, G)]
+        1.  mu_t [tensor (N, 1)]
             time mean
         
-        2.  std_t [tensor (N, G)]
+        2.  std_t [tensor (N, 1)]
             time standard deviation
         
         3.  mu_z [tensor (N, G)]
@@ -605,6 +605,18 @@ class VAE(VanillaVAE):
         
         4.  std_z [tensor (N, G)]
             cell state standard deviation
+        
+        5.  t [tensor (N, 1)]
+            sampled cell time
+        
+        6.  z [tensor (N, G)]
+            sampled cell sate
+        
+        7.  uhat [tensor (N,G)]
+            predicted mean u values
+        
+        8.  shat [tensor (N,G)]
+            predicted mean s values
         """
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale, condition)
@@ -837,7 +849,8 @@ class VAE(VanillaVAE):
               gene_plot=[], 
               cluster_key = "clusters",
               figure_path = "figures", 
-              embed="umap"):
+              embed="umap",
+              use_raw=False):
         """
         < Description >
         The high-level API for training.
@@ -867,6 +880,8 @@ class VAE(VanillaVAE):
             (Optional) Low dimensional embedding in adata.obsm.
             The actual key storing the embedding should be f'X_{embed}'
         
+        8.  use_raw [bool]
+            (Optional) Whether to use the raw counts as training data
         < Output >
         None
         """
@@ -874,8 +889,15 @@ class VAE(VanillaVAE):
         
         print("--------------------------- Train a VeloVAE ---------------------------")
         #Get data loader
-        X = np.concatenate((adata.layers['Mu'], adata.layers['Ms']), 1)
-        X = X.astype(float)
+        if(use_raw):
+            U, S = np.array(adata.layers['unspliced'].todense()), np.array(adata.layers['spliced'].todense())
+            #initial_size_spliced = adata.obs["initial_size_spliced"].to_numpy()
+            #initial_size_unspliced = adata.obs["initial_size_unspliced"].to_numpy()
+            #U = U * ((initial_size_unspliced/U.sum(1)).reshape(-1,1))
+            #S = S * ((initial_size_spliced/S.sum(1)).reshape(-1,1))
+            X = np.concatenate((U,S), 1).astype(int)
+        else:
+            X = np.concatenate((adata.layers['Mu'], adata.layers['Ms']), 1).astype(float)
         try:
             Xembed = adata.obsm[f"X_{embed}"]
         except KeyError:
@@ -971,7 +993,7 @@ class VAE(VanillaVAE):
         
         print("*********                      Stage  2                       *********")
         self.encoder.eval()
-        u0, s0, t0 = self.update_x0(adata.layers['Mu'], adata.layers['Ms'], self.config["n_bin"])
+        u0, s0, t0 = self.update_x0(X[:,:X.shape[1]//2], X[:,X.shape[1]//2:], self.config["n_bin"])
         self.u0 = u0
         self.s0 = s0
         self.t0 = t0
