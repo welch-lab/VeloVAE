@@ -287,7 +287,7 @@ def plot_phase(u, s,
     
     save_fig(fig, save, (lgd,))
 
-def plot_cluster(X_embed, cell_labels, color_map=None, save=None):
+def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels=True, save=None):
     """
     < Description >
     Plot the predicted cell types from the encoder
@@ -320,11 +320,12 @@ def plot_cluster(X_embed, cell_labels, color_map=None, save=None):
         xbar, ybar = np.mean(x[mask]), np.mean(y[mask])
         ax.plot(x[mask], y[mask], '.', color=colors[i%len(colors)])
         n_char = len(typei)
-        txt = ax.text(xbar - x_range*4e-3*n_char, ybar - y_range*4e-3, typei, fontsize= 200//n_char_max, color='k')
-        txt.set_bbox(dict(facecolor='white', alpha=0.5, edgecolor='black'))
+        if(show_labels):
+            txt = ax.text(xbar - x_range*4e-3*n_char, ybar - y_range*4e-3, typei, fontsize= 200//n_char_max, color='k')
+            txt.set_bbox(dict(facecolor='white', alpha=0.5, edgecolor='black'))
     
-    ax.set_xlabel('Umap 1') 
-    ax.set_ylabel('Umap 2') 
+    ax.set_xlabel(f'{embed} 1') 
+    ax.set_ylabel(f'{embed} 2') 
     
     save_fig(fig, save)
 
@@ -1754,9 +1755,14 @@ def plot_trajectory_3d(X_embed,
                        k_grid=8,
                        scale=1.5,
                        angle=(15,45),
+                       figsize=(15,12),
                        eps_t=None,
                        color_map=None,
+<<<<<<< HEAD
                        legend_fontsize=None,
+=======
+                       embed='umap',
+>>>>>>> b3f6d387b959b21baa7d4944e8a951de91085b4e
                        save=None):
     """
     < Description >
@@ -1768,7 +1774,7 @@ def plot_trajectory_3d(X_embed,
     w = range_z/(t_clip.max()-t_clip.min())
     x_3d = np.concatenate((X_embed, (t_clip - t_clip.min()).reshape(-1,1)*w),1)
     
-    fig = plt.figure(figsize=(30,15))
+    fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(projection='3d')
     ax.view_init(angle[0], angle[1])
     #Plot cells by label
@@ -1849,6 +1855,7 @@ def plot_trajectory_3d(X_embed,
         vy_grid[mask] = vy_grid_filter
         vz_grid[mask] = vz_grid_filter
         
+        range_x = np.mean(X_embed.max(0) - X_embed.min(0))
         ax.quiver(xgrid.reshape(n_grid, n_grid, n_time),
                   ygrid.reshape(n_grid, n_grid, n_time),
                   zgrid.reshape(n_grid, n_grid, n_time),
@@ -1856,24 +1863,16 @@ def plot_trajectory_3d(X_embed,
                   vy_grid.reshape(n_grid, n_grid, n_time),
                   vz_grid.reshape(n_grid, n_grid, n_time),
                   color='k',
-                  length=(15/n_grid + 15/n_time), 
+                  length=(0.8*range_x/n_grid + 0.8*range_x/n_time), 
                   normalize=True)
     
     #ax.quiver(xgrid[mask], ygrid[mask], (vx_grid_filter.flatten()), (vy_grid_filter.flatten()), angles='xy')
-    ax.set_xlabel('UMAP 1', fontsize=16)
-    ax.set_ylabel('UMAP 2', fontsize=16)
+    ax.set_xlabel(f'{embed} 1', fontsize=16)
+    ax.set_ylabel(f'{embed} 2', fontsize=16)
     ax.set_zlabel('Time', fontsize=16)
     
-    
-    """
-    handles, labels = ax.get_legend_handles_labels()
-    max_len_name = np.max([len(x) for x in cell_types])
-    if(legend_fontsize is None):
-        legend_fontsize = np.min([30, 300/len(cell_types), 600/max_len_name])
-    lgd = ax.legend(handles, labels, fontsize=legend_fontsize, markerscale=3.0, bbox_to_anchor=(-0.03,0.98), loc='upper right')
-    """
     lgd = ax.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
-    fig.tight_layout()
+    plt.tight_layout()
     
     save_fig(fig, save, (lgd,))
     

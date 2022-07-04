@@ -1,5 +1,6 @@
 from .VanillaVAE import VanillaVAE
 from .VAE import VAE,VAEFullVB
+from .DVAE import DVAE
 from .BrODE import BrODE
 from .model_util import ode, ode_numpy
 from .model_util import knnx0, knnx0_alt, knnx0_bin, knn_transition_prob
@@ -13,6 +14,7 @@ __all__ = [
     "VAE",
     "VAEFullVB",
     "BrODE",
+    "DVAE",
     "rna_velocity_vanillavae",
     "rna_velocity_vae",
     "rna_velocity_brode",

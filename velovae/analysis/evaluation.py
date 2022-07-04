@@ -247,7 +247,7 @@ def post_analysis(adata,
     
     print("---   Plotting  Results   ---")
     if('cluster' in plot_type or "all" in plot_type):
-        plot_cluster(adata.obsm[f"X_{embed}"], adata.obs[cluster_key].to_numpy(), save=f"{save_path}/{test_id}_umap.png")
+        plot_cluster(adata.obsm[f"X_{embed}"], adata.obs[cluster_key].to_numpy(), embed=embed, save=f"{save_path}/{test_id}_umap.png")
     
     if("time" in plot_type or "all" in plot_type):
         T = {}
