@@ -378,7 +378,7 @@ def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasm
     < Description >
     General function for plotting heatmap on a 2D embedding.
     """
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(8,6))
     ax.scatter(X_embed[:,0], X_embed[:,1], s=5.0, c=vals, cmap=cmap, edgecolors='none')
     vmin = np.quantile(vals, 0.01)
     vmax = np.quantile(vals, 0.99)
@@ -1756,6 +1756,7 @@ def plot_trajectory_3d(X_embed,
                        angle=(15,45),
                        eps_t=None,
                        color_map=None,
+                       legend_fontsize=None,
                        save=None):
     """
     < Description >
@@ -1776,7 +1777,7 @@ def plot_trajectory_3d(X_embed,
     for i, type_ in enumerate(cell_types):
         cell_mask = cell_labels==type_
         d = max(1, np.sum(cell_mask)//3000)
-        ax.scatter(x_3d[:,0][cell_mask][::d], x_3d[:,1][cell_mask][::d], x_3d[:,2][cell_mask][::d], s=5.0, color=colors[i], label=type_, alpha=0.5, edgecolor='none')
+        ax.scatter(x_3d[:,0][cell_mask][::d], x_3d[:,1][cell_mask][::d], x_3d[:,2][cell_mask][::d], s=5.0, color=colors[i], label=type_, edgecolor='none')
     
     if(plot_arrow):
         #Used for filtering target grid points
@@ -1863,8 +1864,16 @@ def plot_trajectory_3d(X_embed,
     ax.set_ylabel('UMAP 2', fontsize=16)
     ax.set_zlabel('Time', fontsize=16)
     
-    lgd = ax.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
     
+    """
+    handles, labels = ax.get_legend_handles_labels()
+    max_len_name = np.max([len(x) for x in cell_types])
+    if(legend_fontsize is None):
+        legend_fontsize = np.min([30, 300/len(cell_types), 600/max_len_name])
+    lgd = ax.legend(handles, labels, fontsize=legend_fontsize, markerscale=3.0, bbox_to_anchor=(-0.03,0.98), loc='upper right')
+    """
+    lgd = ax.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
+    fig.tight_layout()
     
     save_fig(fig, save, (lgd,))
     
