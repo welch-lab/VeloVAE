@@ -1758,11 +1758,7 @@ def plot_trajectory_3d(X_embed,
                        figsize=(15,12),
                        eps_t=None,
                        color_map=None,
-<<<<<<< HEAD
-                       legend_fontsize=None,
-=======
                        embed='umap',
->>>>>>> b3f6d387b959b21baa7d4944e8a951de91085b4e
                        save=None):
     """
     < Description >
