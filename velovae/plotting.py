@@ -20,6 +20,16 @@ RAINBOW = [plt.cm.rainbow(i) for i in range(256)]
 markers = ["o","x","s","v","+","d","1","*","^","p","h","8","1","2","|"]
 
 def get_colors(n, color_map=None):
+    """Get colors for plotting cell clusters.
+    
+    Arguments
+    ---------
+    
+    n : int
+        Number of cell clusters
+    color_map : str, optional
+        User-defined colormap. If not set, the colors will be chosen as the colors for tabular data in matplotlib.
+    """
     if(color_map is None): #default color based on 
         if(n<=10):
             return TAB10[:n]
@@ -56,10 +66,6 @@ def plot_sig_(t,
             title='Gene', 
             save=None, 
             **kwargs):
-    """
-    < Description >
-    Generate a 2x1 u/s-t plot for a single gene.
-    """
     fig, ax = plt.subplots(2,1,figsize=(15,12))
     D = kwargs['sparsify'] if('sparsify' in kwargs) else 1
     cell_types = np.unique(cell_labels)
@@ -114,37 +120,29 @@ def plot_sig(t,
              title="Gene", 
              save=None, 
              **kwargs):
-    """
-    < Description >
-    Generate a 2x2 u/s-t plot for a single gene.
-    This function plots the same quantities as plot_sig_. 
-    The difference is that it has two additional subplots plotting just the original
-    data vs. time. This is for clear visualization because the prediction of 
-    VeloVAE is usually a point cloud and overlaps with data points.
+    """Generate a 2x2 u/s-t plot for a single gene
+    The first row shows the original data, while the second row overlaps prediction with original data because VeloVAE outputs a point cloud instead of line fitting.
     
-    < Input Arguments >
-    1.      t [float array]
-            Cell time
-        
-    2-3.    u,s [float array]
-            original unspliced/spliced counts of a single gene
-        
-    4-5.    upred, spred [float array]
-            predicted unspliced/spliced counts of a single gene
-        
-    6.      cell_labels [string array]
-            (Optional) cell type annotation
+    ArgumentS
+    ---------
     
-    7.      title [string]
-            title of the figure
-    
-    8.      save [string]
-            Figure name to save (including path).
+    t : `numpy array`
+        Cell time, (N,)
+    u, s : `numpy array`
+        Original unspliced and spliced counts of a single gene, (N,)
+    upred, spred : `numpy array`
+        Predicted unspliced and spliced counts of a single gene, (N,)
+    cell_labels : `numpy array`, optional
+        Cell type annotation, (N,)
+    title : str, optional
+        Title of the figure
+    save : str
+        Figure name for saving (including path)
     """
     D = kwargs['sparsify'] if('sparsify' in kwargs) else 1
     tscv = kwargs['tscv'] if 'tscv' in kwargs else t
     tdemo = kwargs["tdemo"] if "tdemo" in kwargs else t
-    if('cell_labels' is None):
+    if('cell_labels' == None):
         fig, ax = plt.subplots(2,1,figsize=(15,12))
         #order = np.argsort(t)
         ax[0].plot(t[::D], u[::D],'b.',label="raw")
@@ -231,31 +229,25 @@ def plot_phase(u, s,
               labels=None, # array/list of integer
               types=None,  # array/list of string
               save=None):
-    """
-    < Description >
-    Plot the phase portrait of a gene.
+    """Plot the phase portrait of a gene
     
-    < Input Arguments >
-    1-2.    u,s [float array (N)]
+    Arguments
+    ---------
     
-    3-4.    upred, spred [float array (N)]
-            predicted u,s values
-        
-    5.      title [string]
-            graph title
-            
-    6.      track_idx [int array]
-            (Optional) Indices of cells with lines connecting input data and 
-            prediction
-    
-    7.      labels [array]
-            (Optional) cell type annotation
-    
-    8.      types [array]
-            (Optional) unique cell types
-    
-    9.      save [string]
-            (Optional) name of the saved figure
+    u, s : :class:`numpy array`
+        Original unpsliced and spliced counts, (N,)
+    upred, spred : :class:`numpy array`
+        Predicted u,s values, (N,)
+    title : str
+        Figure title
+    track_idx : `numpy array`, optional
+        Indices of cells with lines connecting input data and prediction, (N,)
+    labels : `numpy array`, optional 
+        Cell type annotation
+    types : `numpy array`, optional
+        Unique cell types
+    save : str
+        Figure name for saving (including path)
     """
     fig, ax = plt.subplots(figsize=(6,6))
     if(labels is None or types is None):
@@ -288,22 +280,19 @@ def plot_phase(u, s,
     save_fig(fig, save, (lgd,))
 
 def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels=True, save=None):
-    """
-    < Description >
-    Plot the predicted cell types from the encoder
+    """Plot the predicted cell types from the encoder
     
-    < Input Arguments >
-    1.  X_embed [array (N,2)]
-        2D embedding for visualization
+    Arguments
+    ---------
     
-    2.  cell_labels [array (N)]
-        cell type annotation
-    
-    3.  color_map [string]
-        (Optional) User-defined colormap for cell clusters
-    
-    4.  save [string]
-        (Optional) name of the saved figure
+    X_embed : `numpy array`
+        2D embedding for visualization, (N,2)
+    cell_labels : `numpy array`
+        Cell type annotation, (N,)
+    color_map : str, optional
+        User-defined colormap for cell clusters
+    save : str, optional
+        Figure name for saving (including path)
     """
     
     cell_types = np.unique(cell_labels) if cell_labels is not None else np.unique(pred_labels)
@@ -331,10 +320,6 @@ def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels
 
 
 def plot_train_loss(loss, iters, save=None):
-    """
-    < Description >
-    Line plot of the training loss.
-    """
     fig, ax = plt.subplots()
     ax.plot(iters, loss, '.-')
     ax.set_title("Training Loss")
@@ -344,10 +329,6 @@ def plot_train_loss(loss, iters, save=None):
     save_fig(fig, save)
 
 def plot_test_loss(loss, iters, save=None):
-    """
-    < Description >
-    Line plot of the validation loss.
-    """
     fig, ax = plt.subplots()
     ax.plot(iters, loss, '.-')
     ax.set_title("Testing Loss")
@@ -357,11 +338,6 @@ def plot_test_loss(loss, iters, save=None):
     save_fig(fig, save)
 
 def plot_test_acc(acc, epoch, save=None):
-    """
-    < Description >
-    Line plot of the prediction accuracy.
-    Deprecated.
-    """
     fig, ax = plt.subplots()
     ax.plot(epoch, acc, '.-')
     ax.set_title("Test Accuracy")
@@ -375,10 +351,6 @@ def plot_test_acc(acc, epoch, save=None):
 # Post Analysis
 #########################################################################
 def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasma', axis_off=True, save="figures/heatmap.png"):
-    """
-    < Description >
-    General function for plotting heatmap on a 2D embedding.
-    """
     fig, ax = plt.subplots(figsize=(8,6))
     ax.scatter(X_embed[:,0], X_embed[:,1], s=5.0, c=vals, cmap=cmap, edgecolors='none')
     vmin = np.quantile(vals, 0.01)
@@ -391,7 +363,7 @@ def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasm
     if(colorbar_ticklabels is not None):
         if(len(colorbar_ticklabels)==2):
             cbar.ax.get_yaxis().labelpad = 5
-        cbar.set_ticks(np.linspace(vmin,vmax,len(colorbar_ticklabels)),fontsize=12)
+        cbar.set_ticks(np.linspace(vmin,vmax,len(colorbar_ticklabels)))
         cbar.ax.set_yticklabels(colorbar_ticklabels,fontsize=12)
     if(axis_off):
         ax.axis("off")
@@ -399,9 +371,6 @@ def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasm
     save_fig(fig, save)
 
 def histeq(x, perc=0.95, Nbin=101):
-    """
-    Perform histogram equalization across all local times.
-    """
     x_ub = np.quantile(x, perc)
     x_lb = x.min()
     delta_x = (x_ub - x_lb)/(Nbin-1)
@@ -423,9 +392,21 @@ def plot_heatmap(vals,
                  colorbar_name="Latent Time", 
                  colorbar_ticks=None, 
                  save=None):
-    """
-    < Description >
-    Wrapper function that plots cell time as a heatmap.
+    """Plots a quantity as a heatmap.
+    
+    Arguments
+    ---------
+    
+    vals : `numpy array`
+        Values to be plotted as a heatmap, (N,)
+    X_embed : `numpy array`
+        2D coordinates for visualization, (N,2)
+    colorbar_name : str, optional
+        Name shown next to the colorbar
+    colorbar_ticks : str, optional
+        Name shown on the colorbar axis
+    save : str, optional
+        Figure name for saving (including path)
     """
     _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticks, axis_off=True, save=save)
 
@@ -433,9 +414,19 @@ def plot_time(t_latent,
               X_embed, 
               cmap='plasma', 
               save=None):
-    """
-    < Description >
-    Wrapper function that plots mean cell time as a heatmap.
+    """Plots mean cell time as a heatmap.
+    
+    Arguments
+    ---------
+    
+    t_latent : `numpy array`
+        Mean latent time, (N,)
+    X_embed : `numpy array`
+        2D coordinates for visualization, (N,2)
+    cmap : str, optional
+        Colormap name
+    save : str, optional
+        Figure name for saving (including path)
     """
     _plot_heatmap(t_latent, X_embed, "Latent Time", ['early', 'late'], cmap=cmap, axis_off=True, save=save)
 
@@ -445,9 +436,23 @@ def plot_time_var(std_t,
                   hist_eq=True, 
                   cmap='viridis', 
                   save=None):
-    """
-    < Description >
-    Wrapper function that plots cell time variance as a heatmap.
+    """Plots cell time coefficient of variation as a heatmap.
+    
+    Arguments
+    ---------
+    
+    std_t : `numpy array`
+        Standard deviation of latent time, (N,)
+    X_embed : `numpy array`
+        2D coordinates for visualization, (N,2)
+    t : `numpy array`, optional
+        Mean latent time, (N,)
+    hist_eq : bool, optional
+        Whether to perform histogram equalization
+    cmap : str, optional
+        Colormap name
+    save : str, optional
+        Figure name for saving (including path)
     """
     t_norm = np.ones((std_t.shape)) if t is None else np.abs(t) + 1e-10
     diff_entropy = np.log(std_t/t_norm)+0.5*(1+np.log(2*np.pi))
@@ -461,9 +466,23 @@ def plot_state_var(std_z,
                    hist_eq=True, 
                    cmap='viridis', 
                    save=None):
-    """
-    < Description >
-    Wrapper function that plots cell state variance (in the form of entropy) as a heatmap.
+    """Plots cell state variance (in the form of coefficient of variation) as a heatmap.
+    
+    Arguments
+    ---------
+    
+    std_z : `numpy array`
+        Standard deviation of cell state, assuming diagonal covariance, (N,Cz)
+    X_embed : `numpy array`
+        2D coordinates for visualization, (N,2)
+    z : `numpy array`
+        Mean cell state, (N,Cz)
+    hist_eq : bool, optional
+        Whether to perform histogram equalization
+    cmap : str, optional
+        Colormap name
+    save : str, optional
+        Figure name for saving (including path)
     """
     z_norm = np.ones((std_z.shape)) if z is None else np.linalg.norm(z, axis=1).reshape(-1,1) + 1e-10
     diff_entropy = np.sum(np.log(std_z/z_norm), 1)+0.5*std_z.shape[1]*(1+np.log(2*np.pi))
@@ -483,9 +502,6 @@ def plot_phase_axis(ax,
                     show_legend=False,
                     label_fontsize=30,
                     color_map=None):
-    """
-    Helper function that plots the phase portrait on each subplot.
-    """
     try:
         if(labels is None):
             ax.plot(s[::D],u[::D], marker, color='k')
@@ -535,65 +551,50 @@ def plot_phase_grid(Nr,
                     path='figures', 
                     figname=None,
                     **kwargs):
-    """
-    < Description >
-    Plot the phase portrait of a list of genes in an [Nr x Nc] grid.
-    Cells are colored according to their dynamical state or cell type.
+    """Plot the phase portrait of a list of genes in an [Nr x Nc] grid. Cells are colored according to their dynamical state or cell type.
     
-    < Input Arguments >
-    1-2.    Nr, Nc [int]
-            Number of rows and columns of the grid plot.
-            If Nr*Nc < number of genes, the last few genes will be ignored.
-            If Nr*Nc > number of genes, the last few subplots will be blank.
+    Arguments
+    ---------
     
-    3.      gene_list [string list]
-            Genes to plot
-    
-    5-6.    U, S: [float array (N_cell, N_gene)]
-            Count matrices
-    
-    7.      Labels [dictionary]
-            Keys are method names and values are (N) cell annotations
-            For the regular ODE, this can be induction/repression annotation.
-            Otherwise, it's usually just the cell type annotation.
-    
-    8.      Legends [dictionary]
-            Keys are method names and values are the legend names to show.
-            If the labels are phase labels, then the legends are usually 
-            ['off', induction', 'repression'].
-            If the labels are cell type annotations, the legends will be the unique 
-            cell type names. 
-    
-    9-10.   Uhat, Shat [dictionary]
-            (Optional) Keys are method names and values are arrays of size (N_pred, N_gene).
-            Notice that N_pred is not necessarily the number of cells.
-            This could happen if we want to save computational cost and evaluate
-            the ODE just at a user-defined number of time points.
-    
-    11.     Labels_demo [dictionary]
-            (Optional) Keys are method names and values are arrays of size (N_pred).
-            This is the annotation for the predictions. 
-    
-    12-13.  W,H [float]
-            (Optional) Width and height of each subplot.
-    
-    14.     alpha [float in (0,1]]
-            (Optional) Transparency of the data points.
-    
-    15.     downsample [int]
-            (Optional) Down-sampling factor to display the data points.
-    
-    16.     legend_fontsize [float]
-            (Optional) As the name suggests.
-    
-    17.     color_map [string]
-            (Optional) User-defined colormap for cell labels
-            
-    18.     path [string]
-            (Optional) Path to the saved figure
-    
-    19.     figname [string]
-            (Optional) Name of the saved figure, without .png at the end
+    Nr, Nc : int
+        Number of rows and columns of the grid plot.
+        If Nr*Nc < number of genes, the last few genes will be ignored.
+        If Nr*Nc > number of genes, the last few subplots will be blank.
+    gene_list : string list
+        Genes to plot
+    U, S : `numpy array`
+        Count matrices, (N,G)
+    Labels : dictionary
+        Keys are method names and values are (N) cell annotations
+        For the regular ODE, this can be induction/repression annotation.
+        Otherwise, it's usually just the cell type annotation.
+    Legends : dictionary
+        Keys are method names and values are the legend names to show.
+        If the labels are phase labels, then the legends are usually 
+        ['off', induction', 'repression'].
+        If the labels are cell type annotations, the legends will be the unique 
+        cell type names. 
+    Uhat, Shat : dictionary, optional
+        Keys are method names and values are arrays of size (N_pred, N_gene).
+        Notice that N_pred is not necessarily the number of cells.
+        This could happen if we want to save computational cost and evaluate
+        the ODE just at a user-defined number of time points.
+    Labels_demo : dictionary, optional
+        Keys are method names and values are arrays of size (N_pred).
+        This is the annotation for the predictions. 
+    W,H : float, optional
+        Width and height of each subplot.
+    alpha : float in (0,1], optional
+        Transparency of the data points.
+    downsample : int, optional
+        Down-sampling factor to display the data points.
+    legend_fontsize : float, optional
+    color_map : str, optional
+        User-defined colormap for cell labels
+    path : string, optional
+        Path to the saved figure
+    figname : string, optional
+        Name of the saved figure, without .png at the end
     """
     D = downsample
     methods = list(Uhat.keys())
@@ -776,10 +777,6 @@ def plot_sig_axis(ax,
                   show_legend=False,
                   color_map=None,
                   title=None):
-    """
-    Scatter x-t plot in each subplot.
-    x is usually the input data.
-    """
     lines = []
     if(labels is None or legends is None):
         lines.append( ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)[0] )
@@ -809,10 +806,6 @@ def plot_sig_pred_axis(ax,
                        D=1,
                        show_legend=False,
                        title=None):
-    """
-    Scatter x-t plot in each subplot.
-    x is usually the prediction.
-    """
     if(labels is None or legends is None):
         ax.plot(t[::D], x[::D], marker, linewidth=5, color='k', alpha=a)
     else:
@@ -837,10 +830,6 @@ def plot_sig_loess_axis(ax,
                         D=1,
                         show_legend=False,
                         title=None,):
-    """
-    LOESS line plot.
-    x is usually prediction.
-    """
     xt = np.stack([t,x])
     Ngrid = max(len(t)//200, 50)
     for i in range(len(legends)):
@@ -860,10 +849,6 @@ def plot_sig_loess_axis(ax,
     return ax
 
 def sample_quiver_plot(t, dt, x=None, n_bins=3):
-    """
-    Helper function.
-    Samples cells to plot the velocity in a quiver plot.
-    """
     tmax, tmin = t.max()+1e-3, t.min()
     Nbin = int( np.clip((tmax-tmin)/dt,1,len(t)//2) )
     indices = []
@@ -893,9 +878,6 @@ def plot_vel_axis(ax,
                   sparsity_correction=False,
                   color_map=None,
                   title=None):
-    """
-    Sample a subset of cells and plot the velocity arrows in a x-t plot.
-    """
     if(labels is None or legends is None):
         dt_sample = (t.max()-t.min())/50
         torder = np.argsort(t)
@@ -970,88 +952,65 @@ def plot_sig_grid(Nr,
                   color_map=None, 
                   path='figures', 
                   figname=None):
-    """
-    < Description >
-    Plot u/s of a list of genes vs. time in an [Nr x Nc] grid.
-    Cells are colored according to their dynamical state or cell type.
+    """Plot u/s of a list of genes vs. time in an [Nr x Nc] grid. Cells are colored according to their dynamical state or cell type.
     
-    < Input Arguments >
-    1-2.    Nr, Nc [int]
-            Number of rows and columns of the grid plot.
+    Arguments
+    ---------
     
-    3.      gene_list [string list/array]
-            Genes to plot. If the length exceeds Nr*Nc, multiple figures will
-            be generated. If length is less than Nr*Nc, some subplots will be
-            blank.
-    
-    4       T [dictionary]
-            Keys are methods (string) and values are time arrays.
-            For scVelo, the value is an (N,G) array instead of an (N) array because of local fitting.
-            
-    5-6.    U, S [float array (N_cell, N_gene)]
-            Count data
-    
-    7.      Labels [dictionary]
-            Keys are methods and values are arrays of cell annotation.
-            Usually the values are cell type annotations.
-    
-    8.      Legends [dictionary]
-            Keys are methods and values are legend names.
-            Usually the legend names are unique values of cell annotation.
-            In our application, these are unique cell types. 
-    
-    9.      That [dictionary]
-            (Optional) Keys are methods and values are (N_eval) of cell time.
-            Time used in evaluation. N_eval is generally unequal to number of cells
-            in the original data and the time points don't necessarily match the original
-            cell because we often need fewer time points to evaluate a parametric model. 
-            For scVelo, the value is an (N_eval,G) array instead of an (N_eval) array 
-            because of local fitting.
-    
-    10-11.  Uhat, Shat [dictionary]
-            (Optional) Dictionary with method names as keys and arrays of predicted u/s as values.
-            The array size 
-            
-    12.     V [dictionary]
-            (Optional) Keys are methods and values are (N,G) arrays of velocity.
-    
-    13.     Labels_demo [dictionary]
-            (Optional) Keys are methods and values are cell type annotations of the prediction.
-    
-    14-15.  W,H [float]
-            (Optional) Width and height of each gene subplot.
-    
-    16.     frac [float in [0,1)]
-            (Optional) Hyper-parameter for the LOESS plot.
-            This is the window length of the local regression. If it's 0, LOESS will not be plotted.
-    
-    17.     alpha [float in (0,1)]
-            (Optional) Transparency of the data points.
-    
-    18.     down_sample [int]
-            (Optional) Down-sampling factor to reduce the overlapping of data points.
-    
-    19.     legend_fontsize [float]
-            (Optional) 
-    
-    20.     sparsity_correction [bool]
-            (Optional) Whether to sample u/s uniformly in the range to avoid
-            sapling most zeros in sparse expression profiles.
-    
-    21.     plot_loess [bool]
-            (Optional) Whether to plot a line fit for VeloVAE
-    
-    22.     color_map [string]
-            (Optional) User-defined colormap for different cell types.
-    
-    23.     path [string]
-            Saving path
-    
-    24.     figname [string]
-            (Optional) Name if the figure.
-            Because there can be multiple figures generated in this function.
-            We will append a number to figname when saving the figures.
-            Figures will not be saved if set to None.
+    Nr, Nc : int
+        Number of rows and columns of the grid plot.
+    gene_list : string list or `numpy array`
+        Genes to plot. If the length exceeds Nr*Nc, multiple figures will
+        be generated. If length is less than Nr*Nc, some subplots will be
+        blank.
+    T : dictionary
+        Keys are methods (string) and values are time arrays.
+        For scVelo, the value is an (N,G) array instead of an (N) array because of local fitting.
+    U, S : `numpy array`
+        Count data
+    Labels : 
+        Keys are methods and values are arrays of cell annotation.
+        Usually the values are cell type annotations.
+    Legends : dictionary
+        Keys are methods and values are legend names.
+        Usually the legend names are unique values of cell annotation.
+        In our application, these are unique cell types. 
+    That : dictionary, optional
+        Keys are methods and values are (N_eval) of cell time.
+        Time used in evaluation. N_eval is generally unequal to number of cells
+        in the original data and the time points don't necessarily match the original
+        cell because we often need fewer time points to evaluate a parametric model. 
+        For scVelo, the value is an (N_eval,G) array instead of an (N_eval) array 
+        because of local fitting.
+    Uhat, Shat : dictionary, optional
+        Dictionary with method names as keys and arrays of predicted u/s as values.
+    V : dictionary, optional
+        Keys are methods and values are (N,G) arrays of velocity.
+    Labels_demo : dictionary, optional
+        Keys are methods and values are cell type annotations of the prediction.
+    W,H : float, optional
+        Width and height of each gene subplot.
+    frac : float in [0,1), optional
+        Hyper-parameter for the LOESS plot.
+        This is the window length of the local regression. If it's 0, LOESS will not be plotted.
+    alpha : float in (0,1), optional
+        Transparency of the data points.
+    down_sample : int, optional
+        Down-sampling factor to reduce the overlapping of data points.
+    legend_fontsize : float, optional
+    sparsity_correction : bool, optional
+        Whether to sample u/s uniformly in the range to avoid sapling most zeros in sparse expression profiles.
+    plot_loess : bool, optional
+        Whether to plot a line fit for VeloVAE
+    color_map : str, optional
+        User-defined colormap for different cell types.
+    path : str, optional
+        Saving path
+    figname : str, optional
+        Name if the figure.
+        Because there can be multiple figures generated in this function.
+        We will append a number to figname when saving the figures.
+        Figures will not be saved if set to None.
     """
     methods = list(Uhat.keys())
     M = max(1, len(methods))
@@ -1203,33 +1162,27 @@ def plot_time_grid(T,
                    down_sample=1,
                    q=0.99,
                    save="figures/time_grid.png"):
-    """
-    < Description >
-    Plot the latent time of different methods.
+    """Plot the latent time of different methods.
     
-    < Input Arguments >
-    1.  T [dictionary]
+    Arguments
+    ---------
+    
+    T : dictionary
         Keys are method names and values are (N) arrays containing time
-    
-    2.  X_emb [array (N,2)]
-        2D embedding for visualization
-    
-    3.  capture_time [array (N)]
-        (Optional) Capture time
-    
-    4.  std_t [dictionary]
-        (Optional) Keys are method names and values are (N) arrays 
+    X_emb : `numpy array`
+        2D embedding for visualization, (N,2)
+    capture_time : `numpy array`, optional
+        Capture time, (N,)
+    std_t : dictionary, optional
+        Keys are method names and values are (N) arrays 
         containing standard deviations of cell time.
         Not applicable to scVelo.
-    
-    5.  down_sample [int]
-        (Optional) Down-sampling factor to reduce data point overlapping.
-    
-    6.  q [float in (0,1)]
-        (Optional) Top quantile for clipping extreme values.
-    
-    7.  save [string]
-        (Optional) Save path and filename.
+    down_sample : int, optional
+        Down-sampling factor to reduce data point overlapping.
+    q : float in (0,1), optional
+        Top quantile for clipping extreme values.
+    save : str, optional
+        Figure name for saving (including path)
     """
     if(capture_time is not None):
         methods = ["Capture Time"] + list(T.keys())
@@ -1362,6 +1315,31 @@ def plot_rate_grid(adata,
                    color_map=None,
                    path="figures",
                    figname="genes"):
+    """Plot cell-type-specific rate parameters inferred from branching ODE.
+    
+    Arguments
+    ---------
+    
+    adata : :class:`anndata.AnnData`
+    key : str
+        Key used to extract the corresponding rate parameters. 
+        For example, f"{key}_alpha" will be used to extract the transcription rate from .varm
+    gene_list : `numpy array` or string list
+        List of genes to plot
+    Nr, Nc : int
+        Number of rows and columns of the grid
+    W, H : float, optional
+        Width and height of each subplot
+    legend_ncol : int, optional
+        Number of columns in the legend
+    plot_depth : bool, optional
+        Whether to plot the depth in transition graph as a surrogate of time. Set to true by default for better visualization.
+    color_map : str, optional
+    path : str, optional
+        Path to the folder for saving the figure
+    figname : str, optional
+        Name of the saved figure
+    """
     Nfig = len(gene_list) // (Nr*Nc)
     if(Nfig * Nr * Nc < len(gene_list)):
         Nfig += 1
@@ -1467,6 +1445,9 @@ def plot_velocity_stream(X_embed,
                          color_map=None,
                          figsize=(8,6), 
                          save='figures/velstream.png'):
+    """
+    .. deprecated:: 1.0
+    """
     #Compute velocity on a grid
     knn_model = pynndescent.NNDescent(X_embed, n_neighbors=2*k)
     umap1, umap2 = X_embed[:,0], X_embed[:,1]
@@ -1540,10 +1521,8 @@ def plot_cell_trajectory(X_embed,
                          eps_t=None,
                          color_map=None,
                          save=None):
-    """
-    < Description >
-    Plot the velocity stream based on time.
-    This is not stable yet and we suggest not using it for now.
+    """Plot the velocity stream based on time. This is not stable yet and we suggest not using it for now.
+    .. deprecated:: 1.0
     """
     #Compute the time on a grid
     knn_model = pynndescent.NNDescent(X_embed, n_neighbors=k+20)
@@ -1640,10 +1619,8 @@ def plot_velocity_3d(X_embed,
                      eps_t=None,
                      color_map=None,
                      save=None):
-    """
-    < Description >
-    3D velocity quiver plot. Arrows follow the direction of time to nearby points.
-    This is not stable yet and we suggest not using it for now.
+    """3D velocity quiver plot. Arrows follow the direction of time to nearby points. This is not stable yet and we suggest not using it for now.
+    .. deprecated:: 3.1
     """
     fig = plt.figure(figsize=(30,15))
     ax = fig.add_subplot(projection='3d')
@@ -1760,10 +1737,38 @@ def plot_trajectory_3d(X_embed,
                        color_map=None,
                        embed='umap',
                        save=None):
-    """
-    < Description >
-    3D quiver plot. x-y plane is a 2D embedding such as UMAP. z axis is the 
-    cell time. Arrows follow the direction of time to nearby points.
+    """3D quiver plot. x-y plane is a 2D embedding such as UMAP. z axis is the cell time. Arrows follow the direction of time to nearby points.
+    
+    Arguments
+    ---------
+    
+    X_embed : `numpy array`
+        2D embedding for visualization
+    t : `numpy array`
+        Cell time
+    cell_labels : `numpy array`
+        Cell type annotation
+    plot_arrow : bool, optional
+    n_grid : int, optional
+        Grid size of the x-y plane
+    n_time : int, optional
+        Grid size of the z (time) axis
+    k : int, optional
+        Number of neighbors when computing velocity of each grid point
+    k_grid : int, optional
+        Number of neighbors when averaging across the 3D grid
+    scale : float, optional
+        Parameter to control boundary detection
+    angle : tuple, optional
+        Angle of the 3D plot
+    figsize : tuple, optional
+    eps_t : float, optional
+        Parameter to control the relative time order of cells
+    color_map : str, optional
+    emed : str, optional
+        Name of the embedding.
+    save : str, optional
+        Figure name for saving (including path)
     """
     t_clip = np.clip(t,np.quantile(t,0.01),np.quantile(t,0.99))
     range_z = np.max(X_embed.max(0) - X_embed.min(0))
@@ -1880,11 +1885,22 @@ def plot_umap_transition(graph,
                          label_dic_rev, 
                          color_map=None,
                          save=None):
-    """
-    Plot the Umap coordinates and connect the cluster centers with a line.
-    Transition probability is encoded in the opacity of the line
-    T: transition matrix [n_type x n_type]
-    X_embed: umap coordinates [ncell x 2]
+    """ Plot a 2D embedding and connect the cluster centers with a directed edge based on a cell-type transition graph.
+    
+    Arguments
+    ---------
+    
+    graph : dictionary
+        Transition graph in the form of an adjacency list
+    X_embed : `numpy array`
+        2D embedding for visualization
+    cell_labels : 
+    label_dic_rev : dictionary
+        Keys are integer encoding of cell types and values are the cell type names in the string form
+    color_map : str, optional
+    save : str, optional
+        Figure name for saving (including path)
+    .. deprecated:: 1.0
     """
     fig, ax = plt.subplots(figsize=(8,6))
     Xmean = {}
@@ -1917,6 +1933,19 @@ def plot_transition_graph(adata,
                           figsize=(8,10), 
                           color_map=None, 
                           save=None):
+    """Plot a directed graph with cell types as nodes and progenitor-descendant relation as edges.
+    
+    Arguments
+    ---------
+    
+    adata : :class:`anndata.AnnData`
+    key : str, optional
+        Key used to extract the transition probability from .uns
+    figsize : tuple, optional
+    color_map : str, optional
+    save : str, optional
+        Figure name for saving (including path)
+    """
     fig, ax = plt.subplots(figsize=figsize)
     adj_mtx = adata.uns[f"{key}_w"]
     n_type = adj_mtx.shape[0]
