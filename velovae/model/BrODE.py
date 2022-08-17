@@ -20,9 +20,6 @@ from .velocity import rna_velocity_brode
 
 
 class decoder(nn.Module):
-    """
-    The ODE model that recovers the input data
-    """
     def __init__(self, 
                  adata, 
                  cluster_key,
@@ -34,55 +31,6 @@ class decoder(nn.Module):
                  p=98,
                  checkpoint = None,
                  graph_param = None):
-        """
-        < Description >
-        Constructor of the class
-        
-        < Input Arguments >
-        1.  adata [AnnData]
-            Input AnnData object
-        
-        2.  cluster_key [string]
-            Key in adata.obs storing the cell type annotation.
-        
-        3.  tkey [string]
-            Key in adata.obs storing the latent cell time
-        
-        4.  embed_key [string]
-            Key in adata.obsm storing the latent cell state
-        
-        5.  train_idx [int array]
-            The indices of all training samples. We pick 70% of the data as
-            training samples by default.
-        
-        6.  param_key [string]
-            Used to extract sigma_u, sigma_s and scaling from adata.var
-        
-        7.  device [torch device]
-            Either cpu or gpu
-        
-        8.  p [int in (0,100)]
-            Percentile to pick steady-state cells.
-
-        9.  checkpoint [string]
-            (Optional) Path to a file containing a pretrained model. If given, initialization
-            will be skipped and arguments relating to initialization will be ignored.
-        
-        10. graph_param [dictionary]
-            Hyper-parameters for the transition graph computation.
-            Keys should contain:
-            (1) partition_k: num_neighbors in graph partition (a KNN graph is computed by scanpy)
-            (2) partition_res: resolution of Louvain clustering in graph partition
-            (3) n_par: number of parents to keep in graph pruning
-            (4) dt: tuple (r1,r2), proportion of time range to consider as the parent time window
-                Let t_range be the time range. Then for any cell with time t, only cells in the
-                time window (t-r2*t_range, t-r1*t_range)
-            (5) k: KNN in parent counting.
-                This is different from partition_k. When we pick the time window, KNN
-                is computed to choose the most likely parents from the cells in the window.
-        < Output >
-        None. Construct an instance of the class.
-        """
         super(decoder,self).__init__()
         
         U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
@@ -163,14 +111,6 @@ class decoder(nn.Module):
 
     
     def forward(self, t, y, neg_slope=0.0):
-        """
-        < Description >
-        Evaluate the model in training.
-        
-        < Input Arguments >
-        1.  t [float tensor (N,1)]
-        2.  y [int tensor]
-        """
         return ode_br(t, 
                       y,
                       self.par,
@@ -227,6 +167,9 @@ class decoder(nn.Module):
                              lambda2 = 50, 
                              max_iter = 2000, 
                              q = 0.01):
+        """
+        .. deprecated:: 1.0
+        """
         dt = (t.max()-t.min())/nbin
         
         P = torch.zeros((self.Ntype, self.Ntype), device=self.alpha.device)
@@ -268,9 +211,6 @@ class decoder(nn.Module):
 
 
 class BrODE():
-    """
-    Distilled high-level ODE model for RNA velocity with branching structure.
-    """
     def __init__(self, 
                  adata, 
                  cluster_key,
@@ -280,9 +220,36 @@ class BrODE():
                  device='cpu', 
                  checkpoint=None,
                  graph_param=None):
-        """
-        adata: anndata object
-        Tmax: user-defined maximum time for the process
+        """High-level ODE model for RNA velocity with branching structure.
+        
+        Arguments
+        ---------
+        
+        adata : :class:`anndata.AnnData`
+        cluster_key : str
+            Key in adata.obs storing the cell type annotation.
+        tkey : str
+            Key in adata.obs storing the latent cell time
+        embed_key : str
+            Key in adata.obsm storing the latent cell state
+        param_key : str, optional
+            Used to extract sigma_u, sigma_s and scaling from adata.var
+        device : `torch.device`
+            Either cpu or gpu
+        checkpoint : string, optional
+            Path to a file containing a pretrained model. If given, initialization will be skipped and arguments relating to initialization will be ignored.
+        graph_param : dictionary, optional
+            Hyper-parameters for the transition graph computation.
+            Keys should contain:
+            (1) partition_k: num_neighbors in graph partition (a KNN graph is computed by scanpy)
+            (2) partition_res: resolution of Louvain clustering in graph partition
+            (3) n_par: number of parents to keep in graph pruning
+            (4) dt: tuple (r1,r2), proportion of time range to consider as the parent time window
+                Let t_range be the time range. Then for any cell with time t, only cells in the
+                time window (t-r2*t_range, t-r1*t_range)
+            (5) k: KNN in parent counting.
+                This is different from partition_k. When we pick the time window, KNN
+                is computed to choose the most likely parents from the cells in the window.
         """
         try:
             U,S = adata.layers['Mu'], adata.layers['Ms']
@@ -354,13 +321,43 @@ class BrODE():
     
     
     def forward(self, t, y):
+        
+        """Evaluate the model in training.
+        
+        Arguments
+        ---------
+        
+        t : `torch.tensor`
+            Cell time, (N,1)
+        y : `torch.tensor`
+            Cell type encoded in integers, (N,1)
+        
+        Returns
+        -------
+        uhat, shat : `torch.tensor`
+            Predicted u and s values, (N,G)
+        """
         uhat, shat = self.decoder.forward(t, y, neg_slope=self.config['neg_slope'])
         
         return uhat, shat
     
     def eval_model(self, t, y, gidx=None):
-        """
-        Run the full model with determinisic parent types.
+        """Evaluate the model in validation/test.
+        
+        Arguments
+        ---------
+        
+        t : `torch.tensor`
+            Cell time, (N,1)
+        y : `torch.tensor`
+            Cell type encoded in integers, (N,1)
+        gidx : `numpy array`, optional
+            A subset of genes to compute
+        
+        Returns
+        -------
+        uhat, shat : `torch.tensor`
+            Predicted u and s values, (N,G)
         """
         uhat, shat = self.decoder.pred_su(t, y, gidx)
         
@@ -385,26 +382,21 @@ class BrODE():
                  shat,
                  sigma_u, sigma_s, 
                  weight=None):
-        """
-        1. u,s,uhat,shat: raw and predicted counts
-        2. sigma_u, sigma_s : standard deviation of the Gaussian likelihood (decoder)
-        3. weight: sample weight
-        """
-    
+        #1. u,s,uhat,shat: raw and predicted counts
+        #2. sigma_u, sigma_s : standard deviation of the Gaussian likelihood (decoder)
+        #3. weight: sample weight
+        
         neg_log_gaussian = 0.5*((uhat-u)/sigma_u).pow(2)+0.5*((shat-s)/sigma_s).pow(2)+torch.log(sigma_u)+torch.log(sigma_s*2*np.pi)
         
         if( weight is not None):
             neg_log_gaussian = neg_log_gaussian*weight.view(-1,1)
         
         return torch.mean(torch.sum(neg_log_gaussian, 1))
-    #ToDo 
+     
     def train_epoch(self, 
                     train_loader, 
                     test_set, 
                     optimizer):
-        """
-        Training in each epoch
-        """
         self.set_mode('train')
         stop_training = False
         
@@ -482,6 +474,26 @@ class BrODE():
               gene_plot=[], 
               figure_path="figures", 
               embed="umap"):
+        """Train the model.
+        
+        Arguments
+        ---------
+        adata : :class:`anndata.AnnData`
+        tkey : str
+            Key in adata.obs storing the latent cell time
+        cluster_key : str
+            Key in adata.obs storing the cell type annotation.
+        config : dictionary, optional
+            Contains training hyperparameters. All hyperparameters have default values, so users don't need to set every one of them.
+        plot : bool, optional
+            Whether to generate gene plots during training. Used mainly for debugging.
+        gene_plot : `numpy array` or string list, optional
+            Genes to plot during training. Effective only if 'plot' is set to True
+        figure_path : str, optional
+            Path to the folder to save figures
+        embed : str, optional
+            2D embedding name in .obsm for visualization.
+        """
         self.tkey = tkey
         self.cluster_key = cluster_key
         self.load_config(config)
@@ -569,12 +581,9 @@ class BrODE():
     
     #ToDo 
     def pred_all(self, data, t, cell_labels, N, G, gene_idx=None):
-        """
-        Input Arguments:
-        1. data [N x 2G] : input mRNA count
-        2. mode : train or test or both
-        3. gene_idx : gene index, used for reducing unnecessary memory usage
-        """
+        # data [N x 2G] : input mRNA count
+        # mode : train or test or both
+        # gene_idx : gene index, used for reducing unnecessary memory usage
         if(gene_idx is None):
             Uhat, Shat = None, None
         else:
@@ -614,9 +623,6 @@ class BrODE():
              plot=False,
              path='figures', 
              **kwargs):
-        """
-        data: ncell x ngene tensor
-        """
         
         self.set_mode('eval')
         
@@ -639,15 +645,32 @@ class BrODE():
     
     #ToDo 
     def save_model(self, file_path, name='brode'):
-        """
-        Save the decoder parameters to a .pt file.
+        """Save the decoder parameters to a .pt file.
+        
+        Arguments
+        ---------
+        
+        file_path : str
+            Path to the folder for saving the model parameters
+        name : str
+            Name of the saved file.
         """
         os.makedirs(file_path, exist_ok=True)
         torch.save(self.decoder.state_dict(), f"{file_path}/{name}.pt")
     #ToDo 
     def save_anndata(self, adata, key, file_path, file_name=None):
-        """
-        Save the ODE parameters and cell time to the anndata object and write it to disk.
+        """Save the ODE parameters and cell time to the anndata object and write it to disk.
+        
+        Arguments
+        ---------
+        
+        adata : :class:`anndata`
+        key : str
+            Key name used to store all results
+        file_path : str
+            Path to the folder for saving the output file
+        file_name : str, optional
+            Name of the output file. If set to None, the original anndata object will be overwritten, but nothing will be saved to disk.
         """
         self.set_mode('eval')
         os.makedirs(file_path, exist_ok=True)

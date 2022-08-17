@@ -9,10 +9,11 @@ from .model_util import knn_transition_prob
 # Functions to encode string-type data as integers
 #######################################################################
 def encode_type(cell_types_raw):
-    """
-    Use integer to encode the cell types
-    Each cell type has one unique integer label.
-    """
+    #######################################################################
+    #Use integer to encode the cell types
+    #Each cell type has one unique integer label.
+    #######################################################################
+    
     #Map cell types to integers 
     label_dic = {}
     label_dic_rev = {}
@@ -23,10 +24,11 @@ def encode_type(cell_types_raw):
     return label_dic, label_dic_rev
     
 def encode_graph(graph_raw, init_types_raw, label_dic):
-    """
-    Encode the transition graph using integers
-    Each cell type has one unique integer label.
-    """
+    #######################################################################
+    #Encode the transition graph using integers
+    #Each cell type has one unique integer label.
+    #######################################################################
+    
     graph_enc = {}
     for type_ in graph_raw.keys():
         graph_enc[label_dic[type_]] = [label_dic[child] for child in graph_raw[type_]]
@@ -35,9 +37,10 @@ def encode_graph(graph_raw, init_types_raw, label_dic):
     return graph_enc, init_types_enc
     
 def decode_graph(graph, init_types, label_dic_rev):
-    """
-    Decode the transition graph from integers to the type name
-    """
+    #######################################################################
+    #Decode the transition graph from integers to the type name
+    #######################################################################
+    
     graph_dec = {}
     for type_ in graph.keys():
         graph_dec[label_dic_rev[type_]] = [label_dic_rev[child] for child in graph[type_]]
@@ -46,11 +49,12 @@ def decode_graph(graph, init_types, label_dic_rev):
     return graph_enc, init_types_enc
     
 def encode_type_graph(key, cell_types_raw):
-    """
-    Fetch a default transition graph and convert the string into integer encoding.
-    key: name of the dataset
-    cell_types_raw: an array of cell types of the string type
-    """
+    #######################################################################
+    #Fetch a default transition graph and convert the string into integer encoding.
+    #key: name of the dataset
+    #cell_types_raw: an array of cell types of the string type
+    #######################################################################
+    
     if(not key in graph_default):
         print('Unknown dataset!')
         return {},{},{},[]
@@ -81,10 +85,11 @@ def int2str(cell_labels, label_dic_rev):
     return np.array([label_dic_rev[cell_labels[i]] for i in range(len(cell_labels))])
 
 def recover_transition_time_rec(t_trans, ts, prev_type, graph):
-    """
-    Applied to the branching ODE
-    Recursive helper function of recovering transition time.
-    """
+    #######################################################################
+    #Applied to the branching ODE
+    #Recursive helper function of recovering transition time.
+    #######################################################################
+    
     if(len(graph[prev_type])==0):
         return
     for cur_type in graph[prev_type]:
@@ -94,10 +99,11 @@ def recover_transition_time_rec(t_trans, ts, prev_type, graph):
     return
 
 def recoverTransitionTime(t_trans, ts, graph, init_type):
-    """
-    Applied to the branching ODE
-    Recovers the transition and switching time from the relative time.
-    """
+    #######################################################################
+    #Applied to the branching ODE
+    #Recovers the transition and switching time from the relative time.
+    #######################################################################
+    
     t_trans_orig = deepcopy(t_trans)
     ts_orig = deepcopy(ts)
     for x in init_type:
@@ -106,9 +112,10 @@ def recoverTransitionTime(t_trans, ts, graph, init_type):
     return t_trans_orig, ts_orig
 
 def merge_nodes(graph, parents, n_nodes, loop, v_outside):
-    """
-    Merge nodes into a super node and change the graph accordingly
-    """
+    #######################################################################
+    #Merge nodes into a super node and change the graph accordingly
+    #######################################################################
+    
     #Create a new map from 
     v_map = {}
     v_to_loop = {} #maps any vertex outside the loop to the vertex in the loop with the maximum weight
@@ -166,9 +173,10 @@ def adj_matrix_to_list(A):
     return adj_list
 
 def check_connected(adj_list, root, n_nodes):
-    """
-    Check if a directed graph is connected
-    """
+    #######################################################################
+    #Check if a directed graph is connected
+    #######################################################################
+    
     checked = np.array([False for i in range(n_nodes)])
     loop = []
     
@@ -184,9 +192,10 @@ def check_connected(adj_list, root, n_nodes):
     return np.all(checked)
 
 def get_loop(trace_back, n_nodes, start):
-    """
-    trace_back is a dictionary mapping each node to its antecedent
-    """
+    #######################################################################
+    #trace_back is a dictionary mapping each node to its antecedent
+    #######################################################################
+    
     loop = []
     v_outside = []
     ptr = start
@@ -227,10 +236,11 @@ def check_loop(adj_list, n_nodes):
     return np.array([]), np.array(range(n_nodes))
 
 def edmond_chu_liu(graph, r):
-    """
-    graph: a 2-d array representing an adjacency matrix
-    Notice that graph[i,j] is the edge from j to i
-    """
+    #######################################################################
+    #graph: a 2-d array representing an adjacency matrix
+    #Notice that graph[i,j] is the edge from j to i
+    #######################################################################
+    
     #print(f"root: {r}")
     #print(graph)
     n_type = graph.shape[0]
@@ -310,30 +320,23 @@ def edmond_chu_liu(graph, r):
 #######################################################################
 class TransGraph():
     def __init__(self, adata, tkey, embed_key, cluster_key, train_idx=None, k=5, res=0.005):
-        """
-        < Description >
-        Class constructor
+        """Class constructor
         
-        < Input Arguments >
-        1.  adata [AnnData]
-        
-        2.  tkey [string]
+        Arguments
+        ---------
+        adata : :class:`anndata.AnnData`
+        tkey : str
             Key in adata.obs storing the cell time
-        
-        3.  embed_key [string]
+        embed_key : str
             Key in adata.obs storing the cell state
-        
-        4.  cluster_key [string]
+        cluster_key : str
             Key in adata.obs storing the cell type annotation
-        
-        5.  train_idx [int array]
-            (Optional) List of cell indices in the training data
-        
-        6.  k [int]
-            (Optional) Number of neighbors used in Louvain clustering during graph partition
-        
-        7.  res [int]
-            (Optional) Resolution parameter used in Louvain clustering during graph partition
+        train_idx : `numpy array`, optional
+            List of cell indices in the training data
+        k : int, optional
+            Number of neighbors used in Louvain clustering during graph partition
+        res : int, optional
+            Resolution parameter used in Louvain clustering during graph partition
         """
         cell_labels_raw = adata.obs[cluster_key].to_numpy() if train_idx is None else adata.obs[cluster_key][train_idx].to_numpy()
         self.t = adata.obs[tkey].to_numpy() if train_idx is None else adata.obs[tkey][train_idx].to_numpy()
@@ -364,32 +367,32 @@ class TransGraph():
         print("Number of partitions: ",len(lineages))
     
     def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01,0.03), k=5, soft_assign=True):
-        """
-        < Description >
-        Compute a type-to-type transition based a cell-to-cell transition matrix
+        """Compute a type-to-type transition based a cell-to-cell transition matrix
         
-        < Input Arguments >
-        1.  adata [AnnData]
+        Arguments
+        ---------
         
-        2.  n_par [int]
+        adata : :class:`anndata.AnnData`
+        n_par : int
             Number of parents to keep in graph pruning.
-        
-        3.  dt [float tuple]
+        dt : tuple
             Time window coefficient used in cell type transition counting.
             For a cell with time t and a population with a time range of range_t,
             we apply KNN to cells in the time window [dt[0]*range_t, dt[1]*range_t] 
             and the k nearest neighbors will be considered as the parents of the cell. 
             The frequency of cell type transition will be the approximated cell type 
             transition probability, which will be the weight of the transition graph.
-        
-        4.  k [int] 
+        k : int 
             Number of neighbors in each time window.
-        
-        5.  soft_assign [bool]
+        soft_assign : bool
             If set to False, only one cell type will be counted as the parent for 
             each cell. Otherwise, we consider all transitions and aggregate them 
             across the cells.
-            
+        
+        Returns
+        -------
+        out : `numpy array`
+            Cell type transition probability matrix
         """
         #Estimate initial time
         t_init = np.zeros((self.n_type))

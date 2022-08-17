@@ -2,31 +2,26 @@ import numpy as np
 from torch.utils.data import Dataset
 
 class SCData(Dataset):
-    """
-    This is a simple pytorch dataset class for batch training.
-    Each sample represents a cell. Each dimension represents a single gene.
-    THe dataset also contains the cell labels (types).
+    """This is a simple pytorch dataset class for batch training. 
+    Each sample represents a cell. Each dimension represents a single gene. 
+    The dataset also contains the cell labels (types).
     """
     def __init__(self, D, labels, u0=None, s0=None, t0=None, weight=None):
-        """
-        < Description >
-        Class constructor
+        """Class constructor
         
-        < Input Arguments >
-        1.      D [float array (N,G)] 
-                cell by gene data matrix
+        Arguments
+        ---------
         
-        2.      labels [string array (N,1)]
-                cell type information
-        
-        3-4.    u0, s0 [float array (N,G)]
-                cell-specific initial condition
-        
-        5.      t0 [float array (N,1)]
-                cell-specific initial time
-        
-        6.      weight [float array (N,1)]
-                (Optional) Training weight of each sample.
+        D : `numpy array`
+            Cell by gene data matrix, (N,G)
+        labels : `numpy array`
+            Cell type information, (N,1)
+        u0, s0 : `numpy array`, optional
+            Cell-specific initial condition, (N,G)
+        t0 : `numpy array`, optional
+            Cell-specific initial time, (N,1)
+        weight : `numpy array`, optional
+            Training weight of each sample.
         """
         self.N, self.G = D.shape[0], D.shape[1]//2
         self.data = D
@@ -50,28 +45,23 @@ class SCTimedData(Dataset):
     of cell time. This is used for training the branching ODE.
     """
     def __init__(self, D, labels, t, u0=None, s0=None, t0=None, weight=None):
-        """
-        < Description >
-        Class constructor
+        """Class constructor
         
-        < Input Arguments >
-        1.      D [float array (N,G)] 
-                cell by gene data matrix
+        Arguments
+        ---------
         
-        2.      labels [string array (N,1)]
-                cell type information
-        
-        3.      t [float array (N,1)]
-                cell time
-        
-        4-5.    u0, s0 [float array (N,G)]
-                cell-specific initial condition
-        
-        6.      t0 [float array (N,1)]
-                cell-specific initial time
-        
-        7.      weight [float array (N,1)]
-                (Optional) Training weight of each sample.
+        D : `numpy array`
+            Cell by gene data matrix, (N,G)
+        labels : `numpy array`
+            Cell type information, (N,1)
+        t : `numpy array`
+            Cell time, (N,1)
+        u0, s0 : `numpy array`, optional
+            Cell-specific initial condition, (N,G)
+        t0 : `numpy array`, optional
+            Cell-specific initial time, (N,1)
+        weight : `numpy array`, optional
+            Training weight of each sample.
         """
         self.N, self.G = D.shape[0], D.shape[1]//2
         self.data = D

@@ -9,23 +9,22 @@ from velovae.plotting import plot_cluster, plot_phase_grid, plot_sig_grid, plot_
 
 
 def get_metric(adata, method, key, scv_key=None, scv_mask=True):
-    """
-    < General Description >
-    Get specific metrics given a method.
+    """Get specific metrics given a method.
     
-    < Input Arguments >
-    1. adata
-       AnnData object
-    2. key
-       key in .var or .varm for extracting the ODE parameters learned by the model
-    3. scv_key:
-       (optional) key for scvelo fitting. Used for filtering the genes (only effective if scv_mask=True)
-    4. scv_mask: 
-       (optional) whether to filter out the genes not fitted by scvelo (used for fairness in the comparison with scVelo)
+    Arguments
+    ---------
+    adata : :class:`anndata.AnnData`
+    key : str
+       Key in .var or .varm for extracting the ODE parameters learned by the model
+    scv_key : str, optional
+       Key for scvelo fitting. Used for filtering the genes (only effective if scv_mask=True)
+    scv_mask : bool, optional
+       Whether to filter out the genes not fitted by scvelo (used for fairness in the comparison with scVelo)
     
-    < Output >
-    1.  stats [pandas.DataFrame]
-        Stores the performance metrics. Rows are metric names and columns are method names.
+    Returns
+    -------
+    stats : :class:`pandas.DataFrame`
+        Stores the performance metrics. Rows are metric names and columns are method names
     """
     
     stats = {}  #contains the performance metrics
@@ -116,65 +115,51 @@ def post_analysis(adata,
                   grid_size=(1,1),
                   save_path="figures",
                   **kwargs):
-    """
-    < Description >
-    Main function for post analysis. This function computes performance metrics and generates
-    plots based on user input.
+    """Main function for post analysis. This function computes performance metrics and generates plots based on user input.
     
-    < Input Arguments >
-    1.  adata [AnnData]
-        AnnData object
-     
-    2.  test_id: [string]
+    Arguments
+    ---------
+    adata : :class:`anndata.AnnData`
+    test_id : str
         Used for naming the figures. 
         For example, it can be set as the name of the dataset.
-     
-    3.  methods [string list]
+    methods : string list
         Contains the methods to compare with. 
         Valid methods are "scVelo", "Vanilla VAE", "VeloVAE" and "BrODE".
-     
-    4.  keys [string list]
+    keys : string list
         Used for extracting ODE parameters from .var or .varm from anndata
         It should be of the same length as methods.
-    
-    5.  compute_metrics [bool]
-        (Optional) Whether to compute the performance metrics for the methods
-     
-    6.  genes [string list] 
-        (Optional) Genes to plot. Used when plot_type contains "phase" or "signal"
-     
-    7.  plot_type [string list]
-        (Optional) Type of plots to generate.
+    compute_metrics : bool, optional
+        Whether to compute the performance metrics for the methods
+    genes : string list, optional 
+        Genes to plot. Used when plot_type contains "phase" or "signal"
+    plot_type : string list, optional
+        Type of plots to generate.
         Currently supports phase, signal (u/s/v vs. t), time and cell type
-    
-    8.  cluster_key [string]
-        (Optional) Key in .obs containing the cell type labels
-     
-    9.  nplot [int]
+    cluster_key : str, optional
+        Key in .obs containing the cell type labels
+    nplot : int, optional
         (Optional) Number of data points in the prediction (or for each cell type in VeloVAE and BrODE).
         This is to save computation. For plotting the prediction, we don't need 
         as many points as the original dataset contains.
-       
-    10.  frac [float in (0,1)]
-        (Optional) Parameter for the loess plot. 
+    frac : float in (0,1), optional
+        Parameter for the loess plot. 
         A higher value means larger time window and the resulting fitted line will
         be smoother. 
-     
-    11.  embed [string]
-        (Optional) 2D embedding used for visualization of time and cell type.
+    embed : str, optional
+        2D embedding used for visualization of time and cell type.
         The true key for the embedding is f"X_{embed}" in .obsm
-    
-    12. grid_size [int tuple (n_row, n_col)]
-        (Optional) Grid size for plotting the genes.
+    grid_size : int tuple, optional
+        Grid size for plotting the genes.
         n_row*n_col >= len(genes)
+    save_path : str, optional
+        Path to save the figures.
     
-    13. save_path [string]
-        (Optional) Path to save the figures.
-    
-    < Output >
-    1.  stats_df [pandas.DataFrame]
+    Returns
+    -------
+    stats_df : :class:`pandas.DataFrame`
         Contains the performance metrics of all methods.
-    2.  Saves the figures to 'save_path'.
+        Saves the figures to 'save_path'.
     """
     make_dir(save_path)
     U, S = adata.layers["Mu"], adata.layers["Ms"]
