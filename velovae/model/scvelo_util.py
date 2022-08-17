@@ -20,8 +20,8 @@ from numpy import exp
 from scipy.sparse import csr_matrix, issparse
 
 def prod_sum_obs(A, B):
-    """dot product and sum over axis 0 (obs) equivalent to np.sum(A * B, 0)
-    """
+    #dot product and sum over axis 0 (obs) equivalent to np.sum(A * B, 0)
+    
     if issparse(A):
         return A.multiply(B).sum(0).A1
     else:
@@ -35,8 +35,8 @@ def R_squared(residual, total):
     return r2
 
 def test_bimodality(x, bins=30, kde=True, plot=False):
-    """Test for bimodal distribution.
-    """
+    #Test for bimodal distribution.
+    
     from scipy.stats import gaussian_kde, norm
 
     lb, ub = np.min(x), np.percentile(x, 99.9)
@@ -94,8 +94,8 @@ def get_weight(x, y=None, perc=95):
     return weights
 
 def leastsq_NxN(x, y, fit_offset=False, perc=None, constraint_positive_offset=True):
-    """Solves least squares X*b=Y for b.
-    """
+    #Solves least squares X*b=Y for b.
+    
     if perc is not None:
         if not fit_offset and isinstance(perc, (list, tuple)):
             perc = perc[1]

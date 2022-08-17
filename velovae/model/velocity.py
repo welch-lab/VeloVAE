@@ -7,31 +7,26 @@ from sklearn.preprocessing import normalize
 from .model_util import ode_numpy, ode_br_numpy, pred_su_numpy
 
 def rna_velocity_vanillavae(adata, key, use_raw=False, use_scv_genes=False, k=10):
-    """
-    < description >
-    Compute the velocity based on:
+    """Compute the velocity based on:
     ds/dt = beta * u - gamma * s
     
-    < Input Arguments >
-    1.  adata [AnnData]
-    
-    2.  key [string]
+    Arguments
+    ---------
+    adata : :class:`anndata.AnnData`
+    key : str
         key used for extracting ODE parameters
-    
-    3.  use_raw [bool]
+    use_raw : bool, optional
         whether to use the (noisy) input count to compute the velocity
-    
-    4.  use_scv_genes [bool]
+    use_scv_genes : bool, optional
         whether to compute velocity only for genes scVelo fits
     
-    < Output >
-    1.  V [array (N x G)]
+    Returns
+    -------
+    V : `numpy array`
         velocity
-    
-    2.  U [array (N x G)]
+    U : `numpy array`
         predicted u values
-    
-    3.  S [array (N x G)]
+    S : `numpy array`
         predicted s values
     """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
@@ -62,9 +57,33 @@ def rna_velocity_vanillavae(adata, key, use_raw=False, use_scv_genes=False, k=10
     return V, U, S
 
 def rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False, full_vb=False):
-    """
-    Compute the velocity based on:
-    ds/dt = beta * u - gamma * s
+    """Compute the velocity based on: ds/dt = beta * u - gamma * s
+    
+    Arguments
+    ---------
+    adata : :class:`anndata.AnnData`
+    key : str
+        key used for extracting ODE parameters
+    use_raw : bool, optional
+        whether to use the (noisy) input count to compute the velocity
+    use_scv_genes : bool, optional
+        whether to compute velocity only for genes scVelo fits
+    sigma : float, optional
+        Parameter used in Gaussian filtering of velocity values.
+    apprx : bool, optional
+        Whether to use linear approximation to compute velocity
+    full_vb : bool, optional
+        Whether the model is full VB
+    
+    Returns
+    -------
+    V : `numpy array`
+        velocity
+    U : `numpy array`
+        predicted u values
+    S : `numpy array`
+        predicted s values
+    
     """
     alpha = np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy()) if full_vb else adata.var[f"{key}_alpha"].to_numpy()
     rho = adata.layers[f"{key}_rho"]
@@ -100,11 +119,29 @@ def rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, sigma=None,
     return V, U, S
 
 def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
-    """
-    < Description >
-    Compute the velocity based on:
-    ds/dt = beta * u - gamma * s where
+    """Compute the velocity based on: ds/dt = beta * u - gamma * s where
     u and s are predicted by branching ODE
+    
+    Arguments
+    ---------
+    adata : :class:`anndata.AnnData`
+    key : str
+        key used for extracting ODE parameters
+    use_raw : bool, optional
+        whether to use the (noisy) input count to compute the velocity
+    use_scv_genes : bool, optional
+        whether to compute velocity only for genes scVelo fits
+    k : float, optional
+        Parameter used in soft clipping of time duration
+    
+    Returns
+    -------
+    V : `numpy array`
+        velocity
+    U : `numpy array`
+        predicted u values
+    S : `numpy array`
+        predicted s values
     """
     alpha = adata.varm[f"{key}_alpha"].T
     beta = adata.varm[f"{key}_beta"].T
@@ -160,78 +197,3 @@ def smooth_vel(v, t, W=5):
     return v_ret
     
 
-"""
-Reference:
-
-Bergen, V., Lange, M., Peidli, S., Wolf, F. A., & Theis, F. J. (2020). 
-Generalizing RNA velocity to transient cell states through dynamical modeling. 
-Nature biotechnology, 38(12), 1408-1414.
-"""
-def compute_vscore(v, delta_s, sigma_v=None):
-    """
-    v: (N, G)
-    v_neighbors: (N, N neighbors, G)
-    """
-    #normalize velocity
-    N,k,G = delta_s.shape
-    v_norm = np.linalg.norm(v,axis=1)
-    v_norm[v_norm==0] = 1.0
-    v_ = v/v_norm.reshape(N,1)
-    
-    delta_s_norm = np.linalg.norm(delta_s,axis=2)
-    delta_s_norm[delta_s_norm==0] = 1.0
-    delta_s_ = delta_s/delta_s_norm.reshape(N,k,1)
-    
-    cos_dist = 1 - np.einsum('ik,ijk->ij', v_, delta_s_)
-    if(sigma_v is None):
-        sigma_v = np.quantile(cos_dist, 0.25, 1).reshape(-1,1)
-    return np.exp(-(cos_dist/sigma_v))
-
-def velocity_embedding(adata, 
-                       vkey, 
-                       tkey,
-                       n_neighbors,
-                       embedding="umap",
-                       eps_t = None):
-    """
-    Project the RNA velocity onto low-dimensional embedding.
-    
-    Arguments:
-    1. adata: AnnData object
-    2. vkey: key for extracting RNA velocity
-    3. tkey: key for extracting time
-    4. n_neighbors: number of neighbors in KNN graph build on the embedding
-    5. embedding: type of low-dimensional embedding
-    6. eps_t: time margin when considering cell transition
-    """
-    print("---     Computing velocity embedding...     ---")
-    v = adata.layers[vkey]
-    s = adata.layers["Ms"]
-    gene_mask = ~np.isnan(v[0])
-    t = adata.obs[tkey].to_numpy()
-    if(~np.all(gene_mask)):
-        v = v[:,gene_mask]
-        s = s[:,gene_mask]
-    x_umap = adata.obsm[f"X_{embedding}"]
-    knn_model = pynndescent.NNDescent(x_umap, n_neighbors=n_neighbors)
-    neighbors, dist = knn_model.neighbor_graph
-    neighbors = neighbors.astype(int)
-    
-    if(eps_t is None):
-        eps_t = np.quantile(np.clip(t[neighbors]-t.reshape(-1,1),0,None), 0.05, 1).reshape(-1,1)
-    tscore = t.reshape(-1,1)<=t[neighbors]-eps_t
-    delta_s = np.stack([s[neighbors[i]]-s[i] for i in range(v.shape[0])])
-    vscore = compute_vscore(v, delta_s)
-    score = tscore*vscore
-    
-    vx = (x_umap[:,0][neighbors] - x_umap[:,0].reshape(-1,1))
-    vy = (x_umap[:,1][neighbors] - x_umap[:,1].reshape(-1,1))
-    #vx = vx/(np.linalg.norm(vx).reshape(-1,1)+1e-8)
-    #vy = vy/(np.linalg.norm(vx).reshape(-1,1)+1e-8)
-    vx = (vx*score).sum(1)/score.sum(1)
-    vy = (vy*score).sum(1)/score.sum(1)
-    print("---                Finished.                ---")
-    
-    adata.obsm[f"{vkey}_{embedding}"] = np.stack([vx,vy]).T
-    return
-    

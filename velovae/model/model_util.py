@@ -18,9 +18,8 @@ Generalizing RNA velocity to transient cell states through dynamical modeling.
 Nature biotechnology, 38(12), 1408-1414.
 """
 def scv_pred_single(t,alpha,beta,gamma,ts,scaling=1.0, uinit=0, sinit=0):
-    """
-    Predicts u and s using the dynamical model.
-    """
+    #Predicts u and s using the dynamical model.
+    
     beta = beta*scaling
     tau, alpha, u0, s0 = vectorize(t, ts, alpha, beta, gamma, u0=uinit, s0=sinit)
     tau = np.clip(tau,a_min=0,a_max=None)
@@ -29,9 +28,8 @@ def scv_pred_single(t,alpha,beta,gamma,ts,scaling=1.0, uinit=0, sinit=0):
     return ut.squeeze(), st.squeeze()
 
 def scv_pred(adata, key, glist=None):
-	"""
-	Reproduce the full prediction of scvelo dynamical model
-	"""
+	#Reproduce the full prediction of scvelo dynamical model
+	
 	ngene = len(glist) if glist is not None else adata.n_vars
 	ncell = adata.n_obs
 	ut, st = np.ones((adata.n_obs,ngene))*np.nan, np.ones((adata.n_obs,ngene))*np.nan
@@ -62,9 +60,8 @@ def scv_pred(adata, key, glist=None):
 #Shared among all VAEs
 ############################################################
 def hist_equal(t, Tmax, perc=0.95, Nbin=101):
-    """
-    Perform histogram equalization across all local times.
-    """
+    #Perform histogram equalization across all local times.
+    
     t_ub = np.quantile(t, perc)
     t_lb = t.min()
     delta_t = (t_ub - t_lb)/(Nbin-1)
@@ -85,14 +82,14 @@ def hist_equal(t, Tmax, perc=0.95, Nbin=101):
 #Basic utility function to compute ODE solutions for all models
 ############################################################
 def pred_su_numpy(tau, u0, s0, alpha, beta, gamma):
-    """
-    (Numpy Version)
-    Analytical solution of the ODE
+    ############################################################
+    #(Numpy Version)
+    #Analytical solution of the ODE
+    #tau: [B x 1] or [B x 1 x 1] time duration starting from the switch-on time of each gene.
+    #u0, s0: [G] or [N type x G] initial conditions
+    #alpha, beta, gamma: [G] or [N type x G] generation, splicing and degradation rates
+    ############################################################
     
-    tau: [B x 1] or [B x 1 x 1] time duration starting from the switch-on time of each gene.
-    u0, s0: [G] or [N type x G] initial conditions
-    alpha, beta, gamma: [G] or [N type x G] generation, splicing and degradation rates
-    """
     unstability = (np.abs(beta-gamma) < 1e-6)
     expb, expg = np.exp(-beta*tau), np.exp(-gamma*tau)
     
@@ -102,14 +99,14 @@ def pred_su_numpy(tau, u0, s0, alpha, beta, gamma):
 
 
 def pred_su(tau, u0, s0, alpha, beta, gamma):
-    """
-    (PyTorch Version)
-    Analytical solution of the ODE
+    ############################################################
+    #(PyTorch Version)
+    #Analytical solution of the ODE
+    #tau: [B x 1] or [B x 1 x 1] time duration starting from the switch-on time of each gene.
+    #u0, s0: [G] or [N type x G] initial conditions
+    #alpha, beta, gamma: [G] or [N type x G] generation, splicing and degradation rates
+    ############################################################
     
-    tau: [B x 1] or [B x 1 x 1] time duration starting from the switch-on time of each gene.
-    u0, s0: [G] or [N type x G] initial conditions
-    alpha, beta, gamma: [G] or [N type x G] generation, splicing and degradation rates
-    """
     expb, expg = torch.exp(-beta*tau), torch.exp(-gamma*tau)
     eps = 1e-6
     unstability = (torch.abs(beta-gamma) < eps).long()
@@ -135,15 +132,8 @@ def linreg(u, s):
     return k
     
 def init_gene(s,u,percent,fit_scaling=False,Ntype=None):
-    """
-    Adopted from scvelo
-
-    Helper Function
-    Estimate alpha, beta, gamma and the latent time of a
-    single gene
-    s: 1D array of spliced count
-    u: 1D array of unspliced count
-    """
+    #Adopted from scvelo
+    
     std_u, std_s = np.std(u), np.std(s)
     scaling = std_u / std_s if fit_scaling else 1.0
     u = u/scaling
@@ -196,15 +186,13 @@ def init_gene(s,u,percent,fit_scaling=False,Ntype=None):
     return alpha, beta, gamma, t_latent, u0_, s0_, t_, scaling
     
 def init_params(data, percent,fit_offset=False,fit_scaling=True):
-    """
-    Adopted from SCVELO
-
-    Use the steady-state model to estimate alpha, beta,
-    gamma and the latent time
-    data: ncell x (2*ngene) tensor
-    percent: percentage limit to pick the data
-    Output: a ncellx4 2D array of parameters
-    """
+    #Adopted from SCVELO
+    #Use the steady-state model to estimate alpha, beta,
+    #gamma and the latent time
+    #data: ncell x (2*ngene) tensor
+    #percent: percentage limit to pick the data
+    #Output: a ncellx4 2D array of parameters
+    
     ngene = data.shape[1]//2
     u = data[:,:ngene]
     s = data[:,ngene:]
@@ -262,9 +250,8 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True):
 Reinitialization based on the global time
 """
 def get_ts_global(tgl, U, S, perc):
-    """
-    Initialize the transition time in the original ODE model.
-    """
+    #Initialize the transition time in the original ODE model.
+    
     tsgl = np.zeros((U.shape[1]))
     for i in range(U.shape[1]):
         u,s = U[:,i],S[:,i]
@@ -281,11 +268,10 @@ def get_ts_global(tgl, U, S, perc):
 
 
 def reinit_gene(u,s,t,ts):
-    """
-    Applied to the regular ODE 
-    Initialize the ODE parameters (alpha,beta,gamma,t_on) from
-    input data and estimated global cell time.
-    """
+    #Applied to the regular ODE 
+    #Initialize the ODE parameters (alpha,beta,gamma,t_on) from
+    #input data and estimated global cell time.
+    
     #u1, u2: picked from induction
     mask1_u = u>np.quantile(u,0.95)
     mask1_s = s>np.quantile(s,0.95)
@@ -320,9 +306,8 @@ def reinit_gene(u,s,t,ts):
     return alpha,beta,gamma,t0
     
 def reinit_params(U, S, t, ts):
-    """
-    Reinitialize the regular ODE parameters based on estimated global latent time.
-    """
+    #Reinitialize the regular ODE parameters based on estimated global latent time.
+    
     G = U.shape[1]
     alpha, beta, gamma, ton = np.zeros((G)), np.zeros((G)), np.zeros((G)), np.zeros((G))
     for i in range(G):
@@ -341,12 +326,13 @@ def reinit_params(U, S, t, ts):
 ODE Solution, with both numpy (for post-training analysis or plotting) and pytorch versions (for training)
 """
 def pred_steady_numpy(ts,alpha,beta,gamma):
-    """
-    (Numpy Version)
-    Predict the steady states.
-    ts: [G] switching time, when the kinetics enters the repression phase
-    alpha, beta, gamma: [G] generation, splicing and degradation rates
-    """
+    ############################################################
+    #(Numpy Version)
+    #Predict the steady states.
+    #ts: [G] switching time, when the kinetics enters the repression phase
+    #alpha, beta, gamma: [G] generation, splicing and degradation rates
+    ############################################################
+    
     alpha_, beta_, gamma_ = np.clip(alpha,a_min=0,a_max=None), np.clip(beta,a_min=0,a_max=None), np.clip(gamma,a_min=0,a_max=None)
     eps = 1e-6
     unstability = np.abs(beta-gamma) < eps
@@ -358,12 +344,13 @@ def pred_steady_numpy(ts,alpha,beta,gamma):
     return u0,s0
     
 def pred_steady(tau_s, alpha, beta, gamma):
-    """
-    (PyTorch Version)
-    Predict the steady states.
-    tau_s: [G] time duration from ton to toff
-    alpha, beta, gamma: [G] generation, splicing and degradation rates
-    """
+    ############################################################
+    #(PyTorch Version)
+    #Predict the steady states.
+    #tau_s: [G] time duration from ton to toff
+    #alpha, beta, gamma: [G] generation, splicing and degradation rates
+    ############################################################
+    
     eps = 1e-6
     unstability = (torch.abs(beta - gamma) < eps).long()
     
@@ -374,25 +361,26 @@ def pred_steady(tau_s, alpha, beta, gamma):
     return u0,s0
 
 def ode_numpy(t,alpha,beta,gamma,to,ts,scaling=None, k=10.0):
-    """
-    (Numpy Version)
-    ODE solution with fixed rates
+    """(Numpy Version) ODE solution with fixed rates
     
-    < Input Arguments >
-    1.      t [2D array (N,1)]
-            cell time
+    Arguments
+    ---------
     
-    2-4.    alpha, beta, gamma [1D array (G)] 
-            generation, splicing and degradation rates
-            
-    5-6.    to, ts [1D array (G)] 
-            switch-on and -off time
+    t : `numpy array`
+        Cell time, (N,1)
+    alpha, beta, gamma : `numpy array`
+        Generation, splicing and degradation rates, (G,)
+    to, ts : `numpy array` 
+        Switch-on and -off time, (G,)
+    scaling : `numpy array`, optional
+        Scaling factor
+    k : float, optional
+        Parameter for a smooth clip of tau.
     
-    7.      scaling [1D array (G)]
-            scaling factor
-    
-    8.      k [float]
-            Parameter for a smooth clip of tau.
+    Returns
+    -------
+    uhat, shat : `numpy array`
+        Predicted u and s values
     """
     eps = 1e-6
     unstability = (np.abs(beta - gamma) < eps)
@@ -423,11 +411,8 @@ def ode_numpy(t,alpha,beta,gamma,to,ts,scaling=None, k=10.0):
         uhat *= scaling
     return uhat, shat 
 
-def ode(t,alpha,beta,gamma,to,ts,neg_slope=0.0):
-    """
-    (PyTorch Version)
-    ODE Solution
-    
+def ode(t, alpha, beta, gamma, to, ts, neg_slope=0.0):
+    """(PyTorch Version) ODE Solution
     Parameters are the same as the numpy version, with arrays replaced with 
     tensors. Additionally, neg_slope is used for time clipping.
     """
@@ -460,10 +445,11 @@ def ode(t,alpha,beta,gamma,to,ts,neg_slope=0.0):
 #Branching ODE
 ############################################################
 def encode_type(cell_types_raw):
-    """
-    Use integer to encode the cell types
-    Each cell type has one unique integer label.
-    """
+    ############################################################
+    #Use integer to encode the cell types
+    #Each cell type has one unique integer label.
+    ############################################################
+    
     #Map cell types to integers 
     label_dic = {}
     label_dic_rev = {}
@@ -480,11 +466,11 @@ def int2str(cell_labels, label_dic_rev):
     return np.array([label_dic_rev[cell_labels[i]] for i in range(len(cell_labels))])
     
 def linreg_mtx(u,s):
-    """
-    Performs linear regression ||U-kS||_2 while 
-    U and S are matrices and k is a vector.
-    Handles divide by zero by returninig some default value.
-    """
+    ############################################################
+    #Performs linear regression ||U-kS||_2 while 
+    #U and S are matrices and k is a vector.
+    #Handles divide by zero by returninig some default value.
+    ############################################################
     Q = np.sum(s*s, axis=0)
     R = np.sum(u*s, axis=0)
     k = R/Q
@@ -494,11 +480,11 @@ def linreg_mtx(u,s):
     return k
 
 def reinit_type_params(U, S, t, ts, cell_labels, cell_types, init_types):
-    """
-    Applied under branching ODE
-    Use the steady-state model and estimated cell time to initialize
-    branching ODE parameters.
-    """
+    ############################################################
+    #Applied under branching ODE
+    #Use the steady-state model and estimated cell time to initialize
+    #branching ODE parameters.
+    ############################################################
     Ntype = len(cell_types)
     G = U.shape[1]
     alpha, beta, gamma = np.ones((Ntype,G)), np.ones((Ntype,G)), np.ones((Ntype,G))
@@ -553,19 +539,7 @@ def reinit_type_params(U, S, t, ts, cell_labels, cell_types, init_types):
 
 
 def ode_br(t, y, par, neg_slope=0.0, **kwargs):
-    """
-    (PyTorch Version)
-    Branching ODE solution.
-    
-    < Input Arguments >
-    1.  t: [2D float tensor (N,1)]
-        Cell time
-    
-    2.  y: [1D int tensor (N)]
-        Cell type, encoded in integer
-    
-    3.  par: [1D int tensor (Ntype)]
-        Parent cell type in the transition graph
+    """(PyTorch Version) Branching ODE solution.
     """
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
     t_trans = kwargs['t_trans']
@@ -596,6 +570,20 @@ def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
     """
     (Numpy Version)
     Branching ODE solution.
+    
+    Arguments
+    ---------
+    t : `numpy array`
+        Cell time, (N,1)
+    y : `numpy array`
+        Cell type, encoded in integer, (N,)
+    par : `numpy array`
+        Parent cell type in the transition graph, (N_type,)
+    
+    Returns
+    -------
+    uhat, shat : `numpy array`
+        Predicted u and s values, (N,G)
     """
     alpha,beta,gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma'] #[N type x G]
     t_trans = kwargs['t_trans']
@@ -679,7 +667,9 @@ def optimal_transport_duality_gap(C, G, lambda1, lambda2, epsilon, batch_size, t
                                   epsilon0, max_iter, **ignored):
     """
     Compute the optimal transport with stabilized numerics, with the guarantee that the duality gap is at most `tolerance`
-    Parameters
+    Code is from `the work by Schiebinger et al. <https://www.cell.com/cell/fulltext/S0092-8674(19)30039-X?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS009286741930039X%3Fshowall%3Dtrue>`
+    
+    Arguments
     ----------
     C : 2-D ndarray
         The cost matrix. C[i][j] is the cost to transport cell i to cell j
@@ -701,6 +691,7 @@ def optimal_transport_duality_gap(C, G, lambda1, lambda2, epsilon, batch_size, t
         Starting value for exponentially-decreasing epsilon
     max_iter : int, optional
         Maximum number of iterations. Print a warning and return if it is reached, even without convergence.
+    
     Returns
     -------
     transport_map : 2-D ndarray
@@ -941,28 +932,21 @@ def knnx0_alt(U, S, t, z, t_query, z_query, dt, k):
     return u0,s0,t0
 
 def knnx0(U, S, t, z, t_query, z_query, dt, k):
-    """
-    < Description >
-    Given cell time and state, find KNN for each cell in a time window ahead of
-    it. The KNNs are used to compute the initial condition for the ODE of
-    the cell.
-    
-    < Input >
-    1-2.    U,S [2D array (N,G)]
-            Unspliced and Spliced count matrix
-    
-    3-4.    t,z [1D array (N)]
-            Latent cell time and state used to build KNN
-    
-    5-6.    t_query [1D array (N)]
-            Query cell time and state
-    
-    7.      dt [float tuple]
-            Time window coefficient
-    
-    8.      k [int]
-            Number of neighbors
-    """
+    ############################################################
+    #Given cell time and state, find KNN for each cell in a time window ahead of
+    #it. The KNNs are used to compute the initial condition for the ODE of
+    #the cell.
+    #1-2.    U,S [2D array (N,G)]
+    #        Unspliced and Spliced count matrix
+    #3-4.    t,z [1D array (N)]
+    #        Latent cell time and state used to build KNN
+    #5-6.    t_query [1D array (N)]
+    #        Query cell time and state
+    #7.      dt [float tuple]
+    #        Time window coefficient
+    #8.      k [int]
+    #        Number of neighbors
+    ############################################################
     N, Nq = len(t), len(t_query)
     u0 = np.zeros((Nq, U.shape[1]))
     s0 = np.zeros((Nq, S.shape[1]))
@@ -1004,12 +988,11 @@ def knnx0_bin(U,
               pruning_degree_multiplier=1.5, 
               diversify_prob=1.0, 
               max_bin_size=10000):
-    """
-    < Description >
-    Same functionality as knnx0, but with a different algorithm. Instead of computing
-    a KNN graph for each cell, we divide the time line into several bins and compute
-    a KNN for each bin. The parent of each cell is chosen from its previous bin. 
-    """
+    ############################################################
+    #Same functionality as knnx0, but with a different algorithm. Instead of computing
+    #a KNN graph for each cell, we divide the time line into several bins and compute
+    #a KNN for each bin. The parent of each cell is chosen from its previous bin. 
+    ############################################################
     tmin = min(t.min(), t_query.min())
     N, Nq = len(t), len(t_query)
     u0 = np.zeros((Nq, U.shape[1]))
@@ -1072,11 +1055,10 @@ def knn_transition_prob(t,
                         dt, 
                         k,
                         soft_assign=True):
-    """
-    < Description >
-    Compute the frequency of cell type transition based on windowed KNN.
-    Used in transition graph construction.
-    """
+    ############################################################
+    #Compute the frequency of cell type transition based on windowed KNN.
+    #Used in transition graph construction.
+    ############################################################
     N, Nq = len(t), len(t_query)
     P = np.zeros((n_type, n_type))
     t0 = np.zeros((n_type))

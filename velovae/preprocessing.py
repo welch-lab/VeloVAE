@@ -4,17 +4,10 @@ import numpy as np
 from .scvelo_preprocessing import *
 
 def count_peak_expression(adata, cluster_key = "clusters"):
-    """
-    < Description >
-    Count the number of genes with peak expression in each cell type.
-    This is used when we want to pick the same number of genes for each cell type.
-    """
+    #Count the number of genes with peak expression in each cell type.
     def encodeType(cell_types_raw):
-        """
-        < Description >
-        Use integer to encode the cell types
-        Each cell type has one unique integer label.
-        """
+        #Use integer to encode the cell types. 
+        #Each cell type has one unique integer label.
         #Map cell types to integers 
         label_dic = {}
         label_dic_rev = {}
@@ -47,10 +40,8 @@ def count_peak_expression(adata, cluster_key = "clusters"):
     return out_peak_count,out_peak_expr,out_peak_gene
 
 def balanced_gene_selection(adata, n_gene, cluster_key):
-    """
-    < Description >
-    Select the same number of genes for each cell type. 
-    """
+    #select the same number of genes for each cell type. 
+    
     if(n_gene>adata.n_vars):
         return 
     cell_labels = adata.obs[cluster_key].to_numpy()
@@ -106,52 +97,37 @@ def preprocess(adata,
                genes_retain=None,
                perform_clustering=False,
                compute_umap=False):
-    """
-    < Description >
-    Run the entire preprocessing pipeline using scanpy
+    """Run the entire preprocessing pipeline using scanpy
     
-    < Input Arguments >
-    1.      adata [AnnData]
+    Arguments
+    ---------
     
-    2.      Ngene [int]
-            (Optional) Number of genes to keep
-    
-    3.      cluster_key [string]
-            (Optional) Key in adata.obs containing the cell type 
-    
-    4.      tkey [string]
-            (Optional) Key in adata.obs containing the capture time
-    
-    5.      selection_method [string]
-            (Optional) Should be either 'scv' or 'balanced'. 
-            If set to 'balanced', the function will call balanced_gene_selection.
-            Otherwise, it uses scanpy to pick highly variable genes.
-    
-    6-17.   min_count_per_cell...max_cells_u [int]      
-            (Optional) RNA count threshold
-    
-    18.     npc [int]
-            (Optional) Number of principal components in PCA dimension reduction
-    
-    19.     n_neighbors [int]
-            (Optional) Number of neighbors in KNN graph
-    
-    20.     umap_min_dist [float]
-            (Optional) UMAP hyperparameter. Usually is set to less than 1
-    
-    21.     resolution [float]
-            (Optional) Leiden clustering hyperparameter. 
-    
-    22.     genes_retain [string list]
-            (Optional) By setting genes_retain to a specific list of gene names, 
-            preprocessing will pick these exact genes regardless of 
-            their counts and gene selection method.
-    
-    23.     perform_clustering [bool]
-            (Optional) Whether to perform Leiden clustering
-    
-    24      compute_umap [bool]
-            (Optional) Whether to compute 2D UMAP
+    adata : :class:`anndata.AnnData`
+    Ngene : int, optional
+        Number of genes to keep
+    cluster_key : str, optional
+        Key in adata.obs containing the cell type 
+    tkey : str, optional
+        Key in adata.obs containing the capture time
+    selection_method : {'scv','balanced'}, optional
+        If set to 'balanced', the function will call balanced_gene_selection.
+        Otherwise, it uses scanpy to pick highly variable genes.
+    min_count_per_cell...max_cells_u : int, optional      
+        RNA count threshold
+    npc : int, optional
+        Number of principal components in PCA dimension reduction
+    n_neighbors : int, optional
+        Number of neighbors in KNN graph
+    umap_min_dist : float, optional
+        UMAP hyperparameter. Usually is set to less than 1
+    resolution : float, optional
+        Leiden clustering hyperparameter. 
+    genes_retain : `numpy array` or string list, optional
+        By setting genes_retain to a specific list of gene names, preprocessing will pick these exact genes regardless of their counts and gene selection method.
+    perform_clustering : bool, optional
+        Whether to perform Leiden clustering
+    compute_umap : bool, optional
+        Whether to compute 2D UMAP
     """
     #Preprocessing
     #1. Cell, Gene filtering and data normalization
