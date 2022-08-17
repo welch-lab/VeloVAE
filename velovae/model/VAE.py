@@ -20,39 +20,7 @@ from .velocity import rna_velocity_vae
 # VAE
 ##############################################################
 class encoder(nn.Module):
-    """
-    Encoder of VeloVAE
-    """
     def __init__(self, Cin, dim_z, dim_cond=0, N1=500, N2=250, device=torch.device('cpu'), checkpoint=None):
-        """
-        < Description >
-        Constructor of the class
-        
-        < Input Arguments >
-        1.  Cin [int]
-            Input feature dimension. Usually just 2 x gene count
-        
-        2.  dim_z [int]
-            Dimension of the latent cell state
-            
-        3.  dim_cond [int]
-            (Optional) The user can optionally add the cell type information to the encoder.
-        
-        4.  N1 [int]
-            (Optional) Width of the first hidden layer
-        
-        5.  N2 [int]
-            (Optional) Width of the second hidden layer
-        
-        6.  device [torch.device]
-            Either cpu or gpu device
-        
-        7.  checkpoint [string]
-            Existing .pt file containing trained parameters
-        
-        < Output >
-        None. Construct an instance of the class.
-        """
         super(encoder, self).__init__()
         self.fc1 = nn.Linear(Cin, N1).to(device)
         self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
@@ -76,10 +44,6 @@ class encoder(nn.Module):
             self.init_weights()
 
     def init_weights(self):
-        """
-        < Description >
-        Initialize neural network weights.
-        """
         for m in self.net.modules():
             if(isinstance(m, nn.Linear)):
                 nn.init.xavier_uniform_(m.weight)
@@ -92,31 +56,6 @@ class encoder(nn.Module):
             nn.init.constant_(m.bias, 0.0)
     
     def forward(self, data_in, condition=None):
-        """
-        < Description >
-        Forward propagation.
-        
-        < Input Arguments>
-        1.  data_in [float/double tensor]
-            Input data of size (N, D) = (Batch Size, Input Data Dimension)
-        
-        2.  condition [float/double tensor]
-            (Optional) A tensor representing condition, with a size of (N, D_cond) = (Batch Size, Condition Dimension)
-            Used in the conditional VAE
-        
-        < Output >
-        1.  mu_tx [float/double tensor]
-            Posterior mean of time, with a size of (N, 1)
-            
-        2.  std_tx [float/double tensor]
-            Posterior standard deviation of time, with a size of (N, 1)
-            
-        3.  mu_zx [float/double tensor]
-            Posterior mean of cell state, with a size of (N, D_z)
-            
-        4.  std_zx [float/double tensor]
-            Posterior standard deviation of cell state, with a size of (N, D_z)
-        """
         h = self.net(data_in)
         if(condition is not None):
             h = torch.cat((h,condition),1)
@@ -125,9 +64,6 @@ class encoder(nn.Module):
         return mu_tx, std_tx, mu_zx, std_zx
 
 class decoder(nn.Module):
-    """
-    Decoder of VeloVAE
-    """
     def __init__(self, 
                  adata, 
                  tmax,
@@ -143,59 +79,6 @@ class decoder(nn.Module):
                  init_key=None, 
                  init_type=None,
                  checkpoint=None):
-        """
-        < Description >
-        Constructor of the class
-        
-        < Input Arguments >
-        1.  adata [AnnData]
-            Input AnnData object
-        
-        2.  tmax [float]
-            Time range (hyperparameter)
-            
-        3.  train_idx [int array]
-            The indices of all training samples. We pick 70% of the data as
-            training samples by default.
-        
-        4.  dim_z [int]
-            Dimension of the latent cell state
-        
-        5.  dim_cond [int]
-            (Optional) Dimension of additional information for the conditional VAE
-
-        6.  N1 [int]
-            (Optional) Width of the first hidden layer
-        
-        7.  N2 [int]
-            (Optional) Width of the second hidden layer
-        
-        8.  p [int in (0,100)]
-            (Optional) Percentile threshold of u and s for picking steady-state cells.
-            Used in initialization.
-        
-        9.  init_ton_zero [bool]
-            (Optional) Whether to add a non-zero switch-on time for each gene.
-
-        10. device [torch device]
-            Either cpu or gpu
-        
-        11. init_method [string]
-            (Optional) Initialization method. 
-                        
-        12. init_key [string]
-            (Optional) column in the AnnData object containing the capture time
-        
-        13. init_type [string]
-            (Optional) The stem cell type. Used to estimated the initial conditions.
-
-        14. checkpoint [string]
-            (Optional) Path to a file containing a pretrained model. If given, initialization
-            will be skipped and arguments relating to initialization will be ignored.
-        
-        < Output >
-        None. Construct an instance of the class.
-        """
         super(decoder,self).__init__()
         G = adata.n_vars
         self.fc1 = nn.Linear(dim_z+dim_cond, N1).to(device)
@@ -318,16 +201,6 @@ class decoder(nn.Module):
         self.sigma_s.requires_grad = False
     
     def init_weights(self):
-        """
-        < Description >
-        Regular PyTorch initialization of neural network parameters
-        
-        < Input Arguments >
-        1.  self: the decoder object itself.
-        
-        < Output >
-        None
-        """
         for m in self.net_rho.modules():
             if(isinstance(m, nn.Linear)):
                 nn.init.xavier_uniform_(m.weight)
@@ -348,45 +221,12 @@ class decoder(nn.Module):
             nn.init.constant_(m.bias, 0.0)
         
     def forward(self, t, z, condition=None, u0=None, s0=None, t0=None, neg_slope=0.0):
-        """
-        < Description >
-        Forward pass of the decoder. This is equivalent to evaluating the ODE
-        solution in our application.
-        
-        < Input Arguments >
-        1.  t [tensor]
-            cell time of size (N, 1) = (batch size, 1)
-        
-        2.  z [tensor]
-            cell state of size (N, Dz) = (batch size, latent dimension)
-        
-        3.  condition [tensor]
-            (Optional) Used in conditional VAE.
-            
-        4.  u0 [tensor,(N, G)]
-            (Optional) Initial condition of u
-        
-        5.  s0 [tensor,(N, G)]
-            (Optional) Initial condition of s
-        
-        6.  t0 [tensor, (N, 1)]
-            (Optional) time at the initial condition
-        
-        7.  neg_slope [negative float]
-            (Optional) Negative slope of the leaky ReLU used in time computation.
-            The original purpose was to provide some gradient to the backward
-            pass so that samples violating the time relation also contribute to
-            the training. Later we found it not helpful to the performance.
-            The users should consider leaving it to the default.
-        
-        """
         if(u0 is None or s0 is None or t0 is None):
             if(condition is None):
                 rho = torch.sigmoid(self.fc_out1(self.net_rho(z)))
             else:
                 rho = torch.sigmoid(self.fc_out1(self.net_rho(torch.cat((z,condition),1))))
             alpha = self.alpha.exp()*rho
-            #Uhat, Shat = ode(t, alpha, torch.exp(self.beta), torch.exp(self.gamma), self.ton.exp(), self.toff.exp(), neg_slope)
             Uhat, Shat = pred_su(F.leaky_relu(t - self.ton.exp(), neg_slope), self.u0.exp()/self.scaling.exp(),  self.s0.exp(), alpha, self.beta.exp(), self.gamma.exp())
         else:
             if(condition is None):
@@ -399,9 +239,6 @@ class decoder(nn.Module):
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
 
 class VAE(VanillaVAE):
-    """
-    VeloVAE Model
-    """
     def __init__(self, 
                  adata, 
                  tmax, 
@@ -417,38 +254,32 @@ class VAE(VanillaVAE):
                  time_distribution="gaussian",
                  std_z_prior=0.01,
                  checkpoints=[None, None]):
-        """
-        < Description >
-        Constructor of the class
+        """VeloVAE Model
         
-        < Input Arguments >
-        1.  adata [AnnData]
+        Arguments
+        ---------
+        
+        adata : :class:`anndata.AnnData`
             AnnData object containing all relevant data and meta-data
-            
-        2.  tmax [float]
+        tmax : float
             Time range.
             This is used to restrict the cell time within certain range. In the 
             case of a Gaussian model without capture time, tmax/2 will be the mean of prior.
             If capture time is provided, then they are scaled to match a range of tmax.
             In the case of a uniform model, tmax is strictly the maximum time.
-        
-        3.  dim_z [int]
+        dim_z : int
             Dimension of the latent cell state
-        
-        4.  dim_cond [int]
-            (Optional) Dimension of additional information for the conditional VAE
+        dim_cond : int, optional
+            Dimension of additional information for the conditional VAE.
             Set to zero by default, equivalent to a VAE.
             This feature is not stable now.
-        
-        5.  device [string]
-            (Optional) cpu or gpu
-        
-        6.  hidden_size [tuple of int]
+        device : {'gpu','cpu'}, optional
+            Training device
+        hidden_size : tuple of int, optional
             Width of the hidden layers. Should be a tuple of the form
             (encoder layer 1, encoder layer 2, decoder layer 1, decoder layer 2)
-        
-        7. init_method [string]
-            (Optional) Initialization method. 
+        init_method : {'random', 'tprior', 'steady}, optional
+            Initialization method. 
             Should choose from
             (1) random: random initialization
             (2) tprior: use the capture time to estimate rate parameters. Cell time will be 
@@ -458,30 +289,23 @@ class VAE(VanillaVAE):
                         After this, a global cell time is estimated by taking the quantile over
                         all local times. Finally, rate parameters are reinitialized using the
                         global cell time.
-                        
-        8. init_key [string]
-            (Optional) column in the AnnData object containing the capture time
-        
-        9. tprior [string]
-            (Optional) key in adata.obs that stores the capture time.
+        init_key : str, optional
+            column in the AnnData object containing the capture time
+        tprior : str, optional
+            key in adata.obs that stores the capture time.
             Used for informative time prior
-        
-        10. init_type [string]
-            (Optional) The stem cell type. Used to estimated the initial conditions.
+        init_type : str, optional
+            The stem cell type. Used to estimated the initial conditions.
             This is not commonly used in practice and please consider leaving it to default.
-        
-        11. init_ton_zero [bool]
-            (Optional) Whether to add a non-zero switch-on time for each gene.
+        init_ton_zero : bool, optional
+            Whether to add a non-zero switch-on time for each gene.
             It's set to True if there's no capture time.
-        
-        12. time_distribution [string]
-            (Optional) Should be either "gaussian" or "uniform.
-        
-        13. std_z_prior [float]
-            (Optional) Standard deviation of the prior of cell state
-        
-        14. checkpoints [list of 2 strings]
-            (Optional) Contains the path to saved encoder and decoder models.
+        time_distribution : {'gaussian', 'uniform'}, optional
+            Time distribution, set to Gaussian by default.
+        std_z_prior : float, optional
+            Standard deviation of the prior (isotropical Gaussian) of cell state.
+        checkpoints : list of 2 strings, optional
+            Contains the path to saved encoder and decoder models.
             Should be a .pt file.
         """
         try:
@@ -575,49 +399,42 @@ class VAE(VanillaVAE):
         self.n_drop = 0 #Count the number of consecutive iterations with little decrease in loss
     
     def forward(self, data_in, u0=None, s0=None, t0=None, condition=None):
-        """
-        < Description >
-        Standard forward pass.
+        """Standard forward pass.
         
-        < Input Arguments >
-        1.  data_in [tensor (N, 2G)]
-            input count data
-        2.  u0 [tensor (N, G)]
-            (Optional) Initial condition of u
+        Arguments
+        ---------
+        
+        data_in : `torch.tensor` 
+            input count data, (N, 2G)
+        u0 : `torch.tensor`, optional
+            Initial condition of u, (N, G)
             This is set to None in the first stage when cell time is 
             not fixed. It will have some value in the second stage, so the users
             shouldn't worry about feeding the parameter themselves.
+        s0 : `torch.tensor`, optional
+            Initial condition of s, (N,G)
+        t0 : `torch.tensor`, optional
+            time at the initial condition, (N,1)
         
-        3.  s0 [tensor (N, G)]
-            (Optional) Initial condition of s
+        Returns
+        -------
         
-        4.  t0 [tensor (N, 1)]
-            (Optional) time at the initial condition
-        
-        < Output >
-        1.  mu_t [tensor (N, 1)]
-            time mean
-        
-        2.  std_t [tensor (N, 1)]
-            time standard deviation
-        
-        3.  mu_z [tensor (N, G)]
-            cell state mean
-        
-        4.  std_z [tensor (N, G)]
-            cell state standard deviation
-        
-        5.  t [tensor (N, 1)]
-            sampled cell time
-        
-        6.  z [tensor (N, G)]
-            sampled cell sate
-        
-        7.  uhat [tensor (N,G)]
-            predicted mean u values
-        
-        8.  shat [tensor (N,G)]
-            predicted mean s values
+        mu_t : `torch.tensor`, optional
+            time mean, (N,1)
+        std_t : `torch.tensor`, optional
+            time standard deviation, (N,1)
+        mu_z : `torch.tensor`, optional
+            cell state mean, (N, Cz)
+        std_z : `torch.tensor`, optional
+            cell state standard deviation, (N, Cz)
+        t : `torch.tensor`, optional
+            sampled cell time, (N,1)
+        z : `torch.tensor`, optional
+            sampled cell sate, (N,Cz)
+        uhat : `torch.tensor`, optional
+            predicted mean u values, (N,G)
+        shat : `torch.tensor`, optional
+            predicted mean s values, (N,G)
         """
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale, condition)
@@ -628,17 +445,9 @@ class VAE(VanillaVAE):
         return mu_t, std_t, mu_z, std_z, t, z, uhat, shat
     
     def eval_model(self, data_in, u0=None, s0=None, t0=None, condition=None):
-        """
-        < Description >
-        Evaluate the model on the validation dataset. 
+        """Evaluate the model on the validation dataset. 
         The major difference from forward pass is that we use the mean time and
-        cell state instead of random sampling.
-        
-        < Input Arguments >
-        Same as forward
-
-        < Output >
-        Same as forward
+        cell state instead of random sampling. The input arguments are the same as 'forward'.
         """
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale, condition)
@@ -652,38 +461,31 @@ class VAE(VanillaVAE):
                 u, s, uhat, shat, 
                 sigma_u, sigma_s,
                 weight=None):
-        """
-        < Description >
-        Training objective function. This is the negative ELBO.
+        """Training objective function. This is the negative ELBO.
         
-        < Input Arguments >
-        1.  q_tx [a tuple of tensors (mean, standard deviation)]
+        Arguments
+        ---------
+        
+        q_tx : tuple of `torch.tensor`
             Parameters of time posterior. Mean and std are both (N, 1) tensors.
-        
-        2.  p_t [a tuple of tensors (mean, standard deviation)]
+        p_t : tuple of `torch.tensor`
             Parameters of time prior.
-        
-        3.  q_zx [a tuple of tensors (mean, standard deviation)]
+        q_zx : tuple of `torch.tensor`
             Parameters of cell state posterior. Mean and std are both (N, Dz) tensors.
-        
-        4.  p_z [a tuple of tensors (mean, standard deviation)]
+        p_z  : tuple of `torch.tensor`
             Parameters of cell state prior.
-        
-        5.  u, s [tensor (B,G)]
+        u, s : `torch.tensor`
             Input data
-        
-        6.  uhat, shat [tensor (B,G)]
+        uhat, shat : torch.tensor
             Prediction by VeloVAE
-        
-        7.  sigma_u, sigma_s [tensor (G)]
+        sigma_u, sigma_s : `torch.tensor`
             Standard deviation of the Gaussian noise
+        weight : `torch.tensor`, optional
+            Sample weight. This feature is not stable. Please consider setting it to None.
         
-        8.  weight [tensor (N,1)]
-            (Optional) Sample weight. 
-            This feature is not stable. Please consider setting it to None.
-        
-        < Output >
-        1.  Negative ELBO [tensor scalar]
+        Returns
+        -------
+        Negative ELBO : torch.tensor, scalar
         """
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
         kldz = kl_gaussian(q_zx[0], q_zx[1], p_z[0], p_z[1])
@@ -699,37 +501,32 @@ class VAE(VanillaVAE):
         return (- err_rec + self.config["kl_t"]*kldt + self.config["kl_z"]*kldz)
     
     def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
-        """
-        < Description >
-        Training in each epoch.
-        Early stopping if enforced by default. 
+        ##########################################################################
+        #Training in each epoch.
+        #Early stopping if enforced by default. 
+        #Arguments
+        #---------
+        #1.  train_loader [torch.utils.data.DataLoader]
+        #    Data loader of the input data.
+        #2.  test_set [torch.utils.data.Dataset]
+        #    Validation dataset
+        #3.  optimizer  [optimizer from torch.optim]
+        #4.  optimizer2 [optimizer from torch.optim]
+        #    (Optional) A second optimizer.
+        #    This is used when we optimize NN and ODE simultaneously in one epoch.
+        #    By default, VeloVAE performs alternating optimization in each epoch.
+        #    The argument will be set to proper value automatically.
+        #5.  K [int]
+        #    Alternating update period.
+        #    For every K updates of optimizer, there's one update for optimizer2.
+        #    If set to 0, optimizer2 will be ignored and only optimizer will be
+        #    updated. Users can set it to 0 if they want to update sorely NN in one 
+        #    epoch and ODE in the next epoch. 
+        #Returns
+        #1.  stop_training [bool]
+        #    Whether to stop training based on the early stopping criterium.
+        ##########################################################################
         
-        < Input Arguments >
-        1.  train_loader [torch.utils.data.DataLoader]
-            Data loader of the input data.
-        
-        2.  test_set [torch.utils.data.Dataset]
-            Validation dataset
-        
-        3.  optimizer  [optimizer from torch.optim]
-        
-        4.  optimizer2 [optimizer from torch.optim]
-            (Optional) A second optimizer.
-            This is used when we optimize NN and ODE simultaneously in one epoch.
-            By default, VeloVAE performs alternating optimization in each epoch.
-            The argument will be set to proper value automatically.
-        
-        5.  K [int]
-            Alternating update period.
-            For every K updates of optimizer, there's one update for optimizer2.
-            If set to 0, optimizer2 will be ignored and only optimizer will be
-            updated. Users can set it to 0 if they want to update sorely NN in one 
-            epoch and ODE in the next epoch. 
-        
-        < Output >
-        1.  stop_training [bool]
-            Whether to stop training based on the early stopping criterium.
-        """
         B = len(train_loader)
         self.set_mode('train')
         stop_training = False
@@ -802,30 +599,24 @@ class VAE(VanillaVAE):
         return stop_training
     
     def update_x0(self, U, S, n_bin=None):
-        """
-        < Description >
-        Estimate the initial conditions using KNN
-        
-        < Input Arguments >
-        1.  U [tensor (N,G)]
-            Input unspliced count matrix
-        
-        2   S [tensor (N,G)]
-            Input spliced count matrix
-        
-        3.  n_bin [int]
-            (Optional) Set to a positive integer if binned KNN is used.
-        
-        < Output >
-        1.  u0 [tensor (N,G)]
-            Initial condition for u
-        
-        2.  s0 [tensor (N,G)]
-            Initial condition for s
-        
-        3. t0 [tensor (N,1)]
-            Initial time
-        """
+        ##########################################################################
+        #Estimate the initial conditions using KNN
+        #< Input Arguments >
+        #1.  U [tensor (N,G)]
+        #    Input unspliced count matrix
+        #2   S [tensor (N,G)]
+        #    Input spliced count matrix
+        #3.  n_bin [int]
+        #    (Optional) Set to a positive integer if binned KNN is used.
+        #< Output >
+        #1.  u0 [tensor (N,G)]
+        #    Initial condition for u
+        #    
+        #2.  s0 [tensor (N,G)]
+        #    Initial condition for s
+        #3. t0 [tensor (N,1)]
+        #   Initial time
+        ##########################################################################
         start = time.time()
         self.set_mode('eval')
         out, elbo = self.pred_all(np.concatenate((U,S),1), self.cell_labels, "both", ["t","z"])
@@ -852,39 +643,26 @@ class VAE(VanillaVAE):
               figure_path = "figures", 
               embed="umap",
               use_raw=False):
-        """
-        < Description >
-        The high-level API for training.
+        """The high-level API for training.
         
-        < Input Arguments >
-        1.  adata [AnnData]
-            AnnData Object
+        Arguments
+        ---------
         
-        2.  config [dictionary]
-            (Optional) Contains all hyper-parameters.
-        
-        3.  plot [bool]
-            (Optional) Whether to plot some sample genes during training.
-            Used for debugging.
-        
-        4.  gene_plot [list of strings]
-            (Optional) List of gene names to plot. 
-            Used only if plot==True
-        
-        5.  cluster_key [string]
-            (Optional) Key in adata.obs storing the cell type annotation.
-         
-        6.  figure_path [string]
-            (Optional) Path to the folder for saving plots.
-        
-        7.  embed [string]
-            (Optional) Low dimensional embedding in adata.obsm.
-            The actual key storing the embedding should be f'X_{embed}'
-        
-        8.  use_raw [bool]
-            (Optional) Whether to use the raw counts as training data
-        < Output >
-        None
+        adata : :class:`anndata.AnnData`
+        config : dictionary, optional
+            Contains all hyper-parameters.
+        plot : bool, optional
+            Whether to plot some sample genes during training. Used for debugging.
+        gene_plot : string list, optional
+            List of gene names to plot. Used only if plot==True
+        cluster_key : str, optional
+            Key in adata.obs storing the cell type annotation.
+        figure_path : str, optional
+            Path to the folder for saving plots.
+        embed : str, optional
+            Low dimensional embedding in adata.obsm. The actual key storing the embedding should be f'X_{embed}'
+        use_raw : bool, optional
+            Whether to use the raw counts as training data.
         """
         self.load_config(config)
         
@@ -1052,36 +830,30 @@ class VAE(VanillaVAE):
                 break
         
         print(f"*********              Finished. Total Time = {convert_time(time.time()-start)}             *********")
-        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_velovae.png')
-        if(self.config["test_iter"]>0):
-            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_velovae.png')
+        #Plot final results
+        if(plot):
+            elbo_train = self.test(train_set,
+                                   Xembed[self.train_idx],
+                                   "final-train", 
+                                   False,
+                                   gind, 
+                                   gene_plot,
+                                   True, 
+                                   figure_path)
+            elbo_test = self.test(test_set,
+                                  Xembed[self.test_idx],
+                                  "final-test", 
+                                  True,
+                                  gind, 
+                                  gene_plot,
+                                  True, 
+                                  figure_path)
+            plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_velovae.png')
+            if(self.config["test_iter"]>0):
+                plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_velovae.png')
         return
     
     def pred_all(self, data, cell_labels, mode='test', output=["uhat", "shat", "t", "z"], gene_idx=None):
-        """
-        < Description >
-        Generate all predictions.
-        
-        < Input Arguments >
-        1.  data [array (N, 2G)] : 
-            Input mRNA count
-        
-        2.  mode [string]
-            train or test or both
-            
-        3.  output [list of string]
-            (Optional) variables to compute
-        
-        4.  gene_idx [int array/list]
-            (Optional) gene index, used for reducing unnecessary memory usage
-        
-        < Output >
-        1.  out [tuple of array]
-            Depends on the input argument 'output'.
-            Can return predicted u,s,time and cell state
-        
-        2. ELBO [float]
-        """
         N, G = data.shape[0], data.shape[1]//2
         elbo = 0
         if("uhat" in output):
@@ -1209,40 +981,30 @@ class VAE(VanillaVAE):
              plot=False, 
              path='figures',
              **kwargs):
-        """
-        < Description >
-        Evaluate the model upon training/test dataset.
+        """Evaluate the model upon training/test dataset.
         
-        < Input Arguments >
-        1.  dataset [torch.utils.data.Dataset]
+        Arguments
+        ---------
+        dataset : `torch.utils.data.Dataset`
             Training or validation dataset
-        
-        2.  Xembed [array]
+        Xembed : `numpy array`
             Low-dimensional embedding for plotting
+        testid : str or int, optional
+            Used to name the figures.
+        test_mode : bool, optional
+            Whether dataset is training or validation dataset. This is used when retreiving certain class variable, e.g. cell-specific initial condition.
+        gind : `numpy array`, optional
+            Index of genes in adata.var_names. Used for plotting.
+        gene_plot : `numpy array`, optional
+            Gene names.
+        plot : bool, optional
+            Whether to generate plots.
+        path : str
+            Saving path.
         
-        3.  testid [string/int]
-            (Optional) Used to name the figures.
-            
-        4.  test_mode [bool]
-            (Optional) Whether dataset is training or validation dataset.
-            This is used when retreiving certain class variable, e.g. cell-specific
-            initial condition.
-        
-        5.  gind [int array]
-            (Optional) Index of genes in adata.var_names.
-            Used for plotting.
-        
-        6.  gene_plot [string array]
-            (Optional) Gene names.
-        
-        7.  plot [bool]
-            (Optional) Whether to generate plots.
-        
-        8.  path [string]
-            (Optional) Saving path.
-        
-        < Output >
-        1.  elbo [float]
+        Returns
+        -------
+        elbo : float
         """
         self.set_mode('eval')
         mode = "test" if test_mode else "train"
@@ -1270,10 +1032,8 @@ class VAE(VanillaVAE):
         return elbo
     
     def update_std_noise(self, train_data):
-        """
-        < Description >
-        Update the standard deviation of Gaussian noise.
-        Not used in the current version.
+        """Update the standard deviation of Gaussian noise.
+        .. deprecated:: 1.0
         """
         G = train_data.shape[1]//2
         out, elbo = self.pred_all(train_data, mode='train', output=["uhat", "shat"], gene_idx = np.array(range(G)))
@@ -1282,25 +1042,17 @@ class VAE(VanillaVAE):
         return
     
     def save_anndata(self, adata, key, file_path, file_name=None):
-        """
-        < Description >
-        Save the ODE parameters and cell time to the anndata object and write it to disk.
+        """Save the ODE parameters and cell time to the anndata object and write it to disk.
         
-        < Input Arguments >
-        1.  adata [AnnData]
-        
-        2.  key [string]
+        Arguments
+        ---------
+        adata : :class:`anndata.AnnData`
+        key : str
             Used to store all parameters of the model.
-        
-        3.  file_path [string]
+        file_path : str
             Saving path.
-        
-        4.  file_name [string]
-            (Optional) If set to a string ending with .h5ad, the updated anndata
-            object will be written to disk.
-        
-        < Output >
-        None
+        file_name : str, optional
+            If set to a string ending with .h5ad, the updated anndata object will be written to disk.
         """
         self.set_mode('eval')
         os.makedirs(file_path, exist_ok=True)
@@ -1565,8 +1317,7 @@ class decoder_fullvb(nn.Module):
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
 
 class VAEFullVB(VAE):
-    """
-    Full Variational Bayes
+    """Full Variational Bayes
     This has an extra sampling of ODE parameters. Other parts are the same.
     Hence, we set it to be a subclass of VAE.
     """
@@ -1585,7 +1336,60 @@ class VAEFullVB(VAE):
                  time_distribution="gaussian",
                  std_z_prior=0.01,
                  checkpoints=[None, None]):
+        """Constructor of the class
         
+        Arguments
+        ---------
+        
+        adata : :class:`anndata.AnnData`
+            AnnData object containing all relevant data and meta-data
+        tmax : float
+            Time range.
+            This is used to restrict the cell time within certain range. In the 
+            case of a Gaussian model without capture time, tmax/2 will be the mean of prior.
+            If capture time is provided, then they are scaled to match a range of tmax.
+            In the case of a uniform model, tmax is strictly the maximum time.
+        dim_z : int
+            Dimension of the latent cell state
+        dim_cond : int, optional
+            Dimension of additional information for the conditional VAE.
+            Set to zero by default, equivalent to a VAE.
+            This feature is not stable now.
+        device : {'gpu','cpu'}, optional
+            Training device
+        hidden_size : tuple of int, optional
+            Width of the hidden layers. Should be a tuple of the form
+            (encoder layer 1, encoder layer 2, decoder layer 1, decoder layer 2)
+        init_method : {'random', 'tprior', 'steady}, optional
+            Initialization method. 
+            Should choose from
+            (1) random: random initialization
+            (2) tprior: use the capture time to estimate rate parameters. Cell time will be 
+                        randomly sampled with the capture time as the mean. The variance can
+                        be controlled by changing 'time_overlap' in config.
+            (3) steady: use the steady-state model to estimate gamma, alpha and assume beta = 1.
+                        After this, a global cell time is estimated by taking the quantile over
+                        all local times. Finally, rate parameters are reinitialized using the
+                        global cell time.
+        init_key : str, optional
+            column in the AnnData object containing the capture time
+        tprior : str, optional
+            key in adata.obs that stores the capture time.
+            Used for informative time prior
+        init_type : str, optional
+            The stem cell type. Used to estimated the initial conditions.
+            This is not commonly used in practice and please consider leaving it to default.
+        init_ton_zero : bool, optional
+            Whether to add a non-zero switch-on time for each gene.
+            It's set to True if there's no capture time.
+        time_distribution : {'gaussian', 'uniform'}, optional
+            Time distribution, set to Gaussian by default.
+        std_z_prior : float, optional
+            Standard deviation of the prior (isotropical Gaussian) of cell state.
+        checkpoints : list of 2 strings, optional
+            Contains the path to saved encoder and decoder models.
+            Should be a .pt file.
+        """
         try:
             U,S = adata.layers['Mu'], adata.layers['Ms']
         except KeyError:
@@ -1681,10 +1485,7 @@ class VAEFullVB(VAE):
         self.p_log_gamma = torch.tensor([[0.0], [0.5]]).to(self.device)
     
     def eval_model(self, data_in, u0=None, s0=None, t0=None, condition=None):
-        """
-        < Description >
-        Evaluate the decoder. Here, we use the mean 
-        instead of randomly sample the ODE parameters.
+        """Evaluate the decoder. Here, we use the mean instead of randomly sample the ODE parameters.
         """
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale)
@@ -1698,37 +1499,31 @@ class VAEFullVB(VAE):
                 u, s, uhat, shat, 
                 sigma_u, sigma_s, 
                 weight=None):
-        """
-        < Description >
-        This is the negative ELBO of the full VB. Hence, an additional KL divergence
-        term for the ODE parameters is added.
+        """Training objective function. This is the negative ELBO of the full VB. An additional KL term of decoder parameters is added.
         
-        < Input Arguments >
-        1.  q_tx [list of two torch.tensor (B x 1)] 
-            parameters of time posterior.
-            q_tx[0] and q_tx[1] should be mean and variance respectively.
+        Arguments
+        ---------
         
-        2.  p_t [list of two torch.tensor (B x 1) or scalar]
-            parameters of time prior
-            p_t[0] and p_t[1] should be mean and variance respectively.
+        q_tx : tuple of `torch.tensor`
+            Parameters of time posterior. Mean and std are both (N, 1) tensors.
+        p_t : tuple of `torch.tensor`
+            Parameters of time prior.
+        q_zx : tuple of `torch.tensor`
+            Parameters of cell state posterior. Mean and std are both (N, Dz) tensors.
+        p_z  : tuple of `torch.tensor`
+            Parameters of cell state prior.
+        u, s : `torch.tensor`
+            Input data
+        uhat, shat : torch.tensor
+            Prediction by VeloVAE
+        sigma_u, sigma_s : `torch.tensor`
+            Standard deviation of the Gaussian noise
+        weight : `torch.tensor`, optional
+            Sample weight. This feature is not stable. Please consider setting it to None.
         
-        3.  q_zx [list of two torch.tensor (B x dim_z)] 
-            parameters of cell state posterior
-            
-        4.  p_z [list of two torch.tensor (dim_z)]  
-            parameters of cell state prior
-        
-        5.  u , s : [tensor (B x G)] 
-            input data
-        
-        6.  uhat, shat: [tensor (B x G)] 
-            prediction by the ODE model
-        
-        7.  sigma_u, sigma_s 
-            standard deviation of the Gaussian noise
-        
-        < Output >
-        Negative ELBO (tensor).
+        Returns
+        -------
+        Negative ELBO : torch.tensor, scalar
         """
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
         kldz = kl_gaussian(q_zx[0], q_zx[1], p_z[0], p_z[1])
@@ -1747,9 +1542,17 @@ class VAEFullVB(VAE):
         return (- err_rec + self.config["kl_t"]*kldt + self.config["kl_z"]*kldz + self.config["kl_param"]*kld_param)
     
     def save_anndata(self, adata, key, file_path, file_name=None):
-        """
-        < Description >
-        Save the ODE parameters and cell time to the anndata object and write it to disk.
+        """Save the ODE parameters and cell time to the anndata object and write it to disk.
+        
+        Arguments
+        ---------
+        adata : :class:`anndata.AnnData`
+        key : str
+            Used to store all parameters of the model.
+        file_path : str
+            Saving path.
+        file_name : str, optional
+            If set to a string ending with .h5ad, the updated anndata object will be written to disk.
         """
         self.set_mode('eval')
         os.makedirs(file_path, exist_ok=True)
