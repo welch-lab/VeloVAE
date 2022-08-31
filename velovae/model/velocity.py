@@ -35,10 +35,11 @@ def rna_velocity_vanillavae(adata, key, use_raw=False, use_scv_genes=False, k=10
     t = adata.obs[f"{key}_time"].to_numpy()
     ton = adata.var[f"{key}_ton"].to_numpy()
     toff = adata.var[f"{key}_toff"].to_numpy()
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
+    
     if(use_raw):
         U, S = adata.layers['Mu'], adata.layers['Ms']
     else:
+        scaling = adata.var[f"{key}_scaling"].to_numpy()
         if(f"{key}_uhat" in adata.layers and f"{key}_shat" in adata.layers):
             U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
             U = U/scaling
@@ -93,10 +94,11 @@ def rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, sigma=None,
     t0 = adata.obs[f"{key}_t0"].to_numpy()
     U0 = adata.layers[f"{key}_u0"]
     S0 = adata.layers[f"{key}_s0"]
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
+    
     if(use_raw):
         U, S = adata.layers['Mu'], adata.layers['Ms']
     else:
+        scaling = adata.var[f"{key}_scaling"].to_numpy()
         if(f"{key}_uhat" in adata.layers and f"{key}_shat" in adata.layers):
             U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
             U = U/scaling
