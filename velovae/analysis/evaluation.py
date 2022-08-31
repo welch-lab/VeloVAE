@@ -252,6 +252,7 @@ def post_analysis(adata,
     if(len(genes)==0):
         return
     
+    format = kwargs["format"] if "format"  in kwargs else "png"
     if("phase" in plot_type or "all" in plot_type):
         Labels_phase = {}
         Legends_phase = {}
@@ -270,7 +271,8 @@ def post_analysis(adata,
                         Shat,
                         Yhat,
                         path=save_path,
-                        figname=test_id)
+                        figname=test_id,
+                        format=format)
     
     if("signal" in plot_type or "all" in plot_type):
         T = {}
@@ -289,7 +291,7 @@ def post_analysis(adata,
             else:
                 T[method] = adata.obs[f"{keys[i]}_time"].to_numpy()
                 Labels_sig[method] = np.array([label_dic[x] for x in adata.obs[cluster_key].to_numpy()])
-        sparsity_correction = kwargs["sparsity_correction"] if "sparsity_correction" in kwargs else False    
+        sparsity_correction = kwargs["sparsity_correction"] if "sparsity_correction" in kwargs else False 
         plot_sig_grid(grid_size[0], 
                       grid_size[1], 
                       genes,
@@ -307,7 +309,8 @@ def post_analysis(adata,
                       down_sample=min(10, max(1,adata.n_obs//5000)),
                       sparsity_correction=sparsity_correction,
                       path=save_path, 
-                      figname=test_id)
+                      figname=test_id,
+                      format=format)
     if(compute_metrics):
         return stats_df
     return
