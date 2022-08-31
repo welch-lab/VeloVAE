@@ -94,7 +94,7 @@ def pred_su_numpy(tau, u0, s0, alpha, beta, gamma):
     expb, expg = np.exp(-beta*tau), np.exp(-gamma*tau)
     
     upred = u0*expb+alpha/beta*(1-expb)
-    spred = s0*expg+alpha/gamma*(1-expg)+(alpha-beta*u0)/(gamma-beta+1e-6)*(expg-expb)*(1-unstability)+(alpha-beta*u0)*tau*expg*unstability
+    spred = s0*expg+alpha/gamma*(1-expg)+(alpha-beta*u0)/(gamma-beta+1e-6)*(expg-expb)*(1-unstability)-(alpha-beta*u0)*tau*expg*unstability
     return np.clip(upred, a_min=0, a_max=None), np.clip(spred, a_min=0, a_max=None)
 
 
@@ -112,7 +112,7 @@ def pred_su(tau, u0, s0, alpha, beta, gamma):
     unstability = (torch.abs(beta-gamma) < eps).long()
     
     upred = u0*expb+alpha/beta*(1-expb)
-    spred = s0*expg+alpha/gamma*(1-expg)+(alpha-beta*u0)/(gamma-beta+eps)*(expg-expb)*(1-unstability)+(alpha-beta*u0)*tau*expg*unstability
+    spred = s0*expg+alpha/gamma*(1-expg)+(alpha-beta*u0)/(gamma-beta+eps)*(expg-expb)*(1-unstability)-(alpha-beta*u0)*tau*expg*unstability
     return nn.functional.relu(upred), nn.functional.relu(spred)
 
 """
@@ -175,8 +175,8 @@ def init_gene(s,u,percent,fit_scaling=False,Ntype=None):
     tau_ = np.clip(tau_, 0, np.max(tau_[s > 0]))
     ut, st = mRNA(tau, 0, 0, alpha, beta, gamma)
     ut_, st_ = mRNA(tau_, u0_, s0_, 0, beta, gamma)
-    distu, distu_ = (u - ut) / std_u, (u - ut_) / std_u
-    dists, dists_ = (s - st) / std_s, (s - st_) / std_s
+    distu, distu_ = (u - ut), (u - ut_)
+    dists, dists_ = (s - st), (s - st_)
     res = np.array([distu ** 2 + dists ** 2, distu_ ** 2 + dists_ ** 2])
     t = np.array([tau,tau_+np.ones((len(tau_)))*t_])
     o = np.argmin(res, axis=0)
@@ -971,6 +971,51 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k):
                 dist, ind = knn_model.kneighbors(z_query[i:i+1])
                 u0[i] = np.mean( U[indices[ind.squeeze()].astype(int)], 0)
                 s0[i] = np.mean( S[indices[ind.squeeze()].astype(int)], 0)
+                t0[i] = np.mean( t[indices[ind.squeeze()].astype(int)] )
+    print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
+    print(f"Average Set Size: {len_avg//Nq}")
+    return u0,s0,t0
+
+def knnx0_quantile(U, S, t, z, t_query, z_query, dt, k, q=0.5):
+    ############################################################
+    #Given cell time and state, find KNN for each cell in a time window ahead of
+    #it. The KNNs are used to compute the initial condition for the ODE of
+    #the cell.
+    #1-2.    U,S [2D array (N,G)]
+    #        Unspliced and Spliced count matrix
+    #3-4.    t,z [1D array (N)]
+    #        Latent cell time and state used to build KNN
+    #5-6.    t_query [1D array (N)]
+    #        Query cell time and state
+    #7.      dt [float tuple]
+    #        Time window coefficient
+    #8.      k [int]
+    #        Number of neighbors
+    ############################################################
+    N, Nq = len(t), len(t_query)
+    u0 = np.zeros((Nq, U.shape[1]))
+    s0 = np.zeros((Nq, S.shape[1]))
+    t0 = np.ones((Nq))*(t.min() - dt[0])
+    
+    n1 = 0
+    len_avg = 0
+    for i in range(Nq):
+        t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
+        indices = np.where((t>=t_lb) & (t<t_ub))[0]
+        k_ = len(indices)
+        len_avg = len_avg+k_
+        if(k_>0):
+            if(k_<k):
+                u0[i] = np.quantile(U[indices], q, 0)
+                s0[i] = np.quantile(S[indices], q, 0)
+                t0[i] = t[indices].mean()
+                n1 = n1+1
+            else:
+                knn_model = NearestNeighbors(n_neighbors=k)
+                knn_model.fit(z[indices])
+                dist, ind = knn_model.kneighbors(z_query[i:i+1])
+                u0[i] = np.quantile(U[indices[ind.squeeze()].astype(int)], q, 0)
+                s0[i] = np.quantile(S[indices[ind.squeeze()].astype(int)], q, 0)
                 t0[i] = np.mean( t[indices[ind.squeeze()].astype(int)] )
     print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
     print(f"Average Set Size: {len_avg//Nq}")
