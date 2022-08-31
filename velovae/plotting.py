@@ -50,7 +50,8 @@ def get_colors(n, color_map=None):
 def save_fig(fig, save, bbox_extra_artists=None):
     if(save is not None):
         try:
-            fig.savefig(save,bbox_extra_artists=bbox_extra_artists, bbox_inches='tight')
+            idx = save.find('.')
+            fig.savefig(save,bbox_extra_artists=bbox_extra_artists, format=save[idx+1:], bbox_inches='tight')
         except FileNotFoundError:
             print("Saving failed. File path doesn't exist!")
         plt.close(fig)
@@ -66,7 +67,7 @@ def plot_sig_(t,
             title='Gene', 
             save=None, 
             **kwargs):
-    fig, ax = plt.subplots(2,1,figsize=(15,12))
+    fig, ax = plt.subplots(2,1,figsize=(15,12),facecolor='white')
     D = kwargs['sparsify'] if('sparsify' in kwargs) else 1
     cell_types = np.unique(cell_labels)
     colors = get_colors(len(cell_types), None)
@@ -107,7 +108,8 @@ def plot_sig_(t,
     ax[1].set_title('Spliced, VAE')
     
     lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, bbox_to_anchor=(1.0,1.0), loc='upper left')
-    fig.suptitle(title)
+    fig.suptitle(title, fontsize=28)
+    plt.tight_layout()
     
     save_fig(fig, save, (lgd,))
     
@@ -143,7 +145,7 @@ def plot_sig(t,
     tscv = kwargs['tscv'] if 'tscv' in kwargs else t
     tdemo = kwargs["tdemo"] if "tdemo" in kwargs else t
     if('cell_labels' == None):
-        fig, ax = plt.subplots(2,1,figsize=(15,12))
+        fig, ax = plt.subplots(2,1,figsize=(15,12),facecolor='white')
         #order = np.argsort(t)
         ax[0].plot(t[::D], u[::D],'b.',label="raw")
         ax[1].plot(t[::D], s[::D],'b.',label="raw")
@@ -159,7 +161,7 @@ def plot_sig(t,
         #fig.subplots_adjust(right=0.7)
         handles, labels = ax[1].get_legend_handles_labels()
     else:
-        fig, ax = plt.subplots(2,2,figsize=(24,12))
+        fig, ax = plt.subplots(2,2,figsize=(24,12),facecolor='white')
         labels_pred = kwargs['labels_pred'] if 'labels_pred' in kwargs else []
         labels_demo = kwargs['labels_demo'] if 'labels_demo' in kwargs else None
         cell_types = np.unique(cell_labels)
@@ -216,7 +218,8 @@ def plot_sig(t,
             ax[1,1].set_title('Spliced, VAE')
     
     lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, ncol=4, bbox_to_anchor=(0.0, 1.0, 1.0, 0.25), loc='center')
-    fig.suptitle(title)
+    fig.suptitle(title, fontsize=28)
+    plt.tight_layout()
     
     save_fig(fig, save, (lgd,))
     return
@@ -249,7 +252,7 @@ def plot_phase(u, s,
     save : str
         Figure name for saving (including path)
     """
-    fig, ax = plt.subplots(figsize=(6,6))
+    fig, ax = plt.subplots(figsize=(6,6),facecolor='white')
     if(labels is None or types is None):
         ax.scatter(s,u,c="b",alpha=0.5)
     else:
@@ -296,7 +299,7 @@ def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels
     """
     
     cell_types = np.unique(cell_labels) if cell_labels is not None else np.unique(pred_labels)
-    fig, ax = plt.subplots(figsize=(8,6))
+    fig, ax = plt.subplots(figsize=(8,6),facecolor='white')
     x = X_embed[:,0]
     y = X_embed[:,1]
     x_range = x.max()-x.min()
@@ -550,6 +553,7 @@ def plot_phase_grid(Nr,
                     color_map=None,
                     path='figures', 
                     figname=None,
+                    format='png',
                     **kwargs):
     """Plot the phase portrait of a list of genes in an [Nr x Nc] grid. Cells are colored according to their dynamical state or cell type.
     
@@ -608,7 +612,7 @@ def plot_phase_grid(Nr,
     
     label_fontsize = W*H
     for l in range(Nfig):
-        fig_phase, ax_phase = plt.subplots(Nr, M*Nc, figsize=(W*M*Nc+1.0,H*Nr))
+        fig_phase, ax_phase = plt.subplots(Nr, M*Nc, figsize=(W*M*Nc+1.0,H*Nr),facecolor='white')
         if(Nr==1 and M*Nc==1): #Single Gene, Single Method
             labels = Labels[methods[0]] if Labels[methods[0]].ndim==1 else Labels[methods[0]][:,l]
             title = f"{gene_list[l]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l]} ({methods[0]})"
@@ -744,7 +748,7 @@ def plot_phase_grid(Nr,
         fig_phase.subplots_adjust(hspace=0.3, wspace=0.12)
         fig_phase.tight_layout()
         
-        save = None if figname is None else f'{path}/{figname}_phase_{l+1}.png'
+        save = None if figname is None else f'{path}/{figname}_phase_{l+1}.{format}'
         save_fig(fig_phase, save, (lgd,))
 
 def sample_scatter_plot(x, down_sample, n_bins=20):
@@ -951,7 +955,8 @@ def plot_sig_grid(Nr,
                   plot_loess=False,
                   color_map=None, 
                   path='figures', 
-                  figname=None):
+                  figname=None,
+                  format='png'):
     """Plot u/s of a list of genes vs. time in an [Nr x Nc] grid. Cells are colored according to their dynamical state or cell type.
     
     Arguments
@@ -1011,6 +1016,8 @@ def plot_sig_grid(Nr,
         Because there can be multiple figures generated in this function.
         We will append a number to figname when saving the figures.
         Figures will not be saved if set to None.
+    format : str, optional
+        Figure format, could be png, pdf, svg, eps and ps
     """
     methods = list(Uhat.keys())
     M = max(1, len(methods))
@@ -1023,7 +1030,7 @@ def plot_sig_grid(Nr,
     
     #Plotting
     for l in range(Nfig):
-        fig_sig, ax_sig = plt.subplots(3*Nr,M*Nc,figsize=(W*M*Nc+1.0, 3*H*Nr))
+        fig_sig, ax_sig = plt.subplots(3*Nr,M*Nc,figsize=(W*M*Nc+1.0, 3*H*Nr),facecolor='white')
         if(M*Nc==1):
             for i in range(min(Nr,len(gene_list)-l*Nr)):
                 idx = l*Nr+i
@@ -1152,7 +1159,7 @@ def plot_sig_grid(Nr,
         
         fig_sig.subplots_adjust(hspace=0.3, wspace=0.12)
         
-        save = None if figname is None else f'{path}/{figname}_sig_{l+1}.png'
+        save = None if figname is None else f'{path}/{figname}_sig_{l+1}.{format}'
         save_fig(fig_sig, save, (lgd,))
 
 def plot_time_grid(T,
@@ -1190,7 +1197,7 @@ def plot_time_grid(T,
         methods = list(T.keys())
     M = len(methods)
     if(std_t is not None):
-        fig_time, ax = plt.subplots(2, M, figsize=(6*M+2,8))
+        fig_time, ax = plt.subplots(2, M, figsize=(6*M+2,8),facecolor='white')
         for i, method in enumerate(methods):
             t = capture_time if method=="Capture Time" else T[method]
             t = np.clip(t,None,np.quantile(t,q))
@@ -1229,7 +1236,7 @@ def plot_time_grid(T,
                     cbar1.ax.set_ylabel('Time Variance',rotation=270,fontsize=12)
                     ax[1].axis('off')
     else:
-        fig_time, ax = plt.subplots(1, M, figsize=(8*M,4))
+        fig_time, ax = plt.subplots(1, M, figsize=(8*M,4),facecolor='white')
         for i, method in enumerate(methods):
             t = capture_time if method=="Capture Time" else T[method]
             t = np.clip(t,None,np.quantile(t,q))
@@ -1314,7 +1321,8 @@ def plot_rate_grid(adata,
                    plot_depth=True,
                    color_map=None,
                    path="figures",
-                   figname="genes"):
+                   figname="genes",
+                   format="png"):
     """Plot cell-type-specific rate parameters inferred from branching ODE.
     
     Arguments
@@ -1351,7 +1359,7 @@ def plot_rate_grid(adata,
         
     #Plotting
     for l in range(Nfig):
-        fig, ax = plt.subplots(Nr,3*Nc,figsize=(W*3*Nc, H*Nr))
+        fig, ax = plt.subplots(Nr,3*Nc,figsize=(W*3*Nc, H*Nr),facecolor='white')
         if(Nr==1):
             for i in range(Nc):
                 idx = l*Nr*Nc+i
@@ -1414,7 +1422,7 @@ def plot_rate_grid(adata,
         
         lgd = fig.legend(handles, labels, fontsize=min(Nr*10, Nr*120/len(graph.keys())), markerscale=1, bbox_to_anchor=(-0.03/Nc,l_indent), loc='upper right')
         
-        save = None if figname is None else f'{path}/{figname}_brode_rates_{l+1}.png'
+        save = None if figname is None else f'{path}/{figname}_brode_rates_{l+1}.{format}'
         save_fig(fig, save, (lgd,))
     return
 
