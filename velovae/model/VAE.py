@@ -670,10 +670,6 @@ class VAE(VanillaVAE):
         #Get data loader
         if(use_raw):
             U, S = np.array(adata.layers['unspliced'].todense()), np.array(adata.layers['spliced'].todense())
-            #initial_size_spliced = adata.obs["initial_size_spliced"].to_numpy()
-            #initial_size_unspliced = adata.obs["initial_size_unspliced"].to_numpy()
-            #U = U * ((initial_size_unspliced/U.sum(1)).reshape(-1,1))
-            #S = S * ((initial_size_spliced/S.sum(1)).reshape(-1,1))
             X = np.concatenate((U,S), 1).astype(int)
         else:
             X = np.concatenate((adata.layers['Mu'], adata.layers['Ms']), 1).astype(float)
@@ -694,10 +690,10 @@ class VAE(VanillaVAE):
         self.cell_types = np.array([self.label_dic[cell_types_raw[i]] for i in range(self.n_type)])
         
         print("*********        Creating Training/Validation Datasets        *********")
-        train_set = SCData(X[self.train_idx], self.cell_labels[self.train_idx], self.decoder.Rscore[self.train_idx]) if self.config['weight_sample'] else SCData(X[self.train_idx], self.cell_labels[self.train_idx])
+        train_set = SCData(X[self.train_idx], self.cell_labels[self.train_idx], weight=self.decoder.Rscore[self.train_idx]) if self.config['weight_sample'] else SCData(X[self.train_idx], self.cell_labels[self.train_idx])
         test_set = None
         if(len(self.test_idx)>0):
-            test_set = SCData(X[self.test_idx], self.cell_labels[self.test_idx], self.decoder.Rscore[self.test_idx]) if self.config['weight_sample'] else SCData(X[self.test_idx], self.cell_labels[self.test_idx])
+            test_set = SCData(X[self.test_idx], self.cell_labels[self.test_idx], weight=self.decoder.Rscore[self.test_idx]) if self.config['weight_sample'] else SCData(X[self.test_idx], self.cell_labels[self.test_idx])
         data_loader = torch.utils.data.DataLoader(train_set, batch_size=self.config["batch_size"], shuffle=True)
         #Automatically set test iteration if not given
         if(self.config["test_iter"] is None):
