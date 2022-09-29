@@ -323,7 +323,7 @@ def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels
 
 
 def plot_train_loss(loss, iters, save=None):
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(facecolor='white')
     ax.plot(iters, loss, '.-')
     ax.set_title("Training Loss")
     ax.set_xlabel("Iteration")
@@ -332,7 +332,7 @@ def plot_train_loss(loss, iters, save=None):
     save_fig(fig, save)
 
 def plot_test_loss(loss, iters, save=None):
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(facecolor='white')
     ax.plot(iters, loss, '.-')
     ax.set_title("Testing Loss")
     ax.set_xlabel("Epoch")
@@ -341,7 +341,7 @@ def plot_test_loss(loss, iters, save=None):
     save_fig(fig, save)
 
 def plot_test_acc(acc, epoch, save=None):
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(facecolor='white')
     ax.plot(epoch, acc, '.-')
     ax.set_title("Test Accuracy")
     ax.set_xlabel("Epoch")
@@ -349,13 +349,121 @@ def plot_test_acc(acc, epoch, save=None):
     
     save_fig(fig, save)
 
+def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, save=None):
+    fig, ax = plt.subplots(1,2,figsize=(18,6),facecolor='white')
+    t0 = adata.obs[f'{key}_t0'].to_numpy()
+    u = np.array(adata.layers["unspliced"][:,gidx].todense()).squeeze()
+    s = np.array(adata.layers["spliced"][:,gidx].todense()).squeeze()
+    u0 = adata.layers[f'{key}_u0'][:,gidx]
+    s0 = adata.layers[f'{key}_s0'][:,gidx]
+    t = adata.obs[f'{key}_time'].to_numpy()
+    uhat = adata.layers[f'{key}_uhat'][:,gidx]
+    shat = adata.layers[f'{key}_shat'][:,gidx]
+    scaling = adata.var[f'{key}_scaling'].to_numpy()[gidx]
+    rho = adata.layers[f'{key}_rho'][:,gidx]
+    alpha = adata.var[f'{key}_alpha'].to_numpy()[gidx]
+    beta = adata.var[f'{key}_beta'].to_numpy()[gidx]
+    vu = rho*alpha - beta * uhat / scaling
+    v = adata.layers[f'{key}_velocity'][:,gidx]
+    ax[0].plot(t,uhat/scaling,'.',color='grey',alpha=0.2)
+    ax[1].plot(t,shat,'.',color='grey',alpha=0.2)
+    ax[0].plot(t[plot_indices],u[plot_indices],'o',color='b', label="Raw Count")
+    ax[1].plot(t[plot_indices],s[plot_indices],'o',color='b')
+    ax[0].quiver(t[plot_indices], uhat[plot_indices]/scaling, dt*np.ones((len(plot_indices),)), vu[plot_indices]*dt, angles='xy')
+    ax[1].quiver(t[plot_indices], shat[plot_indices], dt*np.ones((len(plot_indices),)), v[plot_indices]*dt, angles='xy')
+    for i, k in enumerate(plot_indices):
+        if(i==0):
+            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]]/scaling, 'r-o', label='Prediction')
+        else:
+            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]]/scaling, 'r-o')
+        ax[1].plot([t0[k], t[k]], [s0[k], shat[k]], 'r-o')
+        ax[0].plot(t[k]*np.ones((2,)), [u[k], uhat[k]], 'b--')
+        ax[1].plot(t[k]*np.ones((2,)), [s[k], shat[k]], 'b--')
+    
+    ax[0].set_ylabel("U", fontsize=16)
+    ax[1].set_ylabel("S", fontsize=16)
+    fig.suptitle(adata.var_names[gidx], fontsize=30)
+    fig.legend(loc=1, fontsize=18)
+    plt.tight_layout()
+    
+    save_fig(fig, save)
 
+def cellwise_vel_embedding(adata, key, type_name=None, idx=None, embed='umap', save=None):
+    if(f'{key}_velocity_graph' not in adata.uns):
+        print("Please run 'velocity_graph' and 'velocity_embedding' first!")
+        return
+    
+    if(idx is None):
+        if(type_name is None):
+            idx = np.random.choice(X_embed.shape[0])
+        else:
+            cell_labels = adata.obs["clusters"].to_numpy()
+            idx = np.random.choice(np.where(cell_labels==type_name)[0])
+    
+    A = np.array(adata.uns[f"{key}_velocity_graph"].todense())
+    A_neg = np.array(adata.uns[f"{key}_velocity_graph_neg"].todense())
+    v_embed = adata.obsm[f'{key}_velocity_umap']
+    X_embed = adata.obsm[f'X_{embed}']
+    x_embed_1, x_embed_2 = X_embed[:,0], X_embed[:,1]
+    
+    neighbors = np.where((A[idx]>0) | (A_neg[idx]<0))[0]
+    t = adata.obs[f'{key}_time'].to_numpy()
+    
+    fig, ax = plt.subplots(1,2,figsize=(24,9), facecolor='white')
+    ax[0].plot(x_embed_1, x_embed_2, '.', color='grey', alpha=0.25)
+    tmask = t[neighbors] > t[idx]
+    ax[0].plot(x_embed_1[neighbors[~tmask]], x_embed_2[neighbors[~tmask]], 'c.', label="Earlier Neighbors")
+    ax[0].plot(x_embed_1[neighbors[tmask]], x_embed_2[neighbors[tmask]], 'b.', label="Later Neighbors")
+    ax[0].plot(x_embed_1[[idx]], x_embed_2[[idx]], 'ro', label="Target Cell")
+    ax[0].legend(loc=1)
+
+    corr = A[idx, neighbors]+A_neg[idx, neighbors]
+    _plot_heatmap(ax[1], corr, X_embed[neighbors], 'Cosine Similarity', markersize=80)
+    ax[1].quiver(x_embed_1[[idx]], x_embed_2[[idx]], [v_embed[idx,0]], [v_embed[idx,1]], angles='xy')
+    ax[1].plot(x_embed_1[[idx]], x_embed_2[[idx]], 'ks', markersize=10,label="Target Cell")
+    
+    save_fig(fig, save)
+    return idx
+
+def vel_corr_hist(adata, keys, legends=None, save=None):
+    fig, ax = plt.subplots(2,2,figsize=(24,18), facecolor='white')
+    for i,key in enumerate(keys):
+        label = key if legends is None else legends[i]
+        A = np.array(adata.uns[f"{key}_velocity_graph"].todense())
+        A_neg = np.array(adata.uns[f"{key}_velocity_graph_neg"].todense())
+        n_pos_corr, n_neg_corr = np.sum(A>0,1), np.sum(A_neg<0,1)
+        p_corr = n_pos_corr/(n_pos_corr+n_neg_corr+(n_pos_corr+n_neg_corr==0))
+        max_pos_corr = np.max(A,1)
+        min_pos_corr = []
+        for i in range(A.shape[0]):
+            if(np.any(A[i]>0)):
+                min_pos_corr.append(np.min(A[i][A[i]>0]))
+        min_pos_corr = np.array(min_pos_corr)
+        mean_pos_corr = np.stack([np.nanmean(A[i][A[i]>0]) for i in range(A.shape[0])])
+        
+        ax[0,0].hist(p_corr, bins=np.arange(p_corr.min(), p_corr.max(), 0.02), alpha=0.2, label=label)
+        ax[0,0].legend(loc=1, fontsize=16)
+        ax[0,0].set_title('Proportion of Positive Correlations', fontsize=24)
+        
+        ax[0,1].hist(max_pos_corr, bins=np.arange(max_pos_corr.min(), max_pos_corr.max(), 0.02), alpha=0.2, label=label)
+        ax[0,1].set_title('Maximum Positive Correlation', fontsize=24)
+        ax[0,1].legend(loc=1, fontsize=16)
+        
+        ax[1,0].hist(mean_pos_corr, bins=np.arange(np.nanmin(mean_pos_corr), np.nanmax(mean_pos_corr), 0.02), alpha=0.2, label=label)
+        ax[1,0].set_title('Mean Positive Correlation', fontsize=24)
+        ax[1,0].legend(loc=1, fontsize=16)
+        
+        ax[1,1].hist(min_pos_corr, bins=np.arange(min_pos_corr.min(), min_pos_corr.max(), 0.02), alpha=0.2, label=label)
+        ax[1,1].set_title('Minimum Positive Correlation', fontsize=24)
+        ax[1,1].legend(loc=1, fontsize=16)
+    plt.tight_layout()
+    save_fig(fig, save)
+    
 #########################################################################
 # Post Analysis
 #########################################################################
-def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasma', axis_off=True, save="figures/heatmap.png"):
-    fig, ax = plt.subplots(figsize=(8,6))
-    ax.scatter(X_embed[:,0], X_embed[:,1], s=5.0, c=vals, cmap=cmap, edgecolors='none')
+def _plot_heatmap(ax, vals, X_embed, colorbar_name, colorbar_ticklabels=None, markersize=5, cmap='plasma', axis_off=True):
+    ax.scatter(X_embed[:,0], X_embed[:,1], s=markersize, c=vals, cmap=cmap, edgecolors='none')
     vmin = np.quantile(vals, 0.01)
     vmax = np.quantile(vals, 0.99)
     norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
@@ -371,7 +479,7 @@ def _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticklabels, cmap='plasm
     if(axis_off):
         ax.axis("off")
     
-    save_fig(fig, save)
+    return ax
 
 def histeq(x, perc=0.95, Nbin=101):
     x_ub = np.quantile(x, perc)
@@ -411,7 +519,9 @@ def plot_heatmap(vals,
     save : str, optional
         Figure name for saving (including path)
     """
-    _plot_heatmap(vals, X_embed, colorbar_name, colorbar_ticks, axis_off=True, save=save)
+    fig, ax = plt.subplots(figsize=(8,6))
+    ax = _plot_heatmap(ax, vals, X_embed, colorbar_name, colorbar_ticks, axis_off=True)
+    save_fig(fig, save)
 
 def plot_time(t_latent, 
               X_embed, 
@@ -431,7 +541,9 @@ def plot_time(t_latent,
     save : str, optional
         Figure name for saving (including path)
     """
-    _plot_heatmap(t_latent, X_embed, "Latent Time", ['early', 'late'], cmap=cmap, axis_off=True, save=save)
+    fig, ax = plt.subplots(figsize=(8,6))
+    _plot_heatmap(ax, t_latent, X_embed, "Latent Time", ['early', 'late'], cmap=cmap, axis_off=True)
+    save_fig(fig, save)
 
 def plot_time_var(std_t, 
                   X_embed, 
@@ -461,7 +573,10 @@ def plot_time_var(std_t,
     diff_entropy = np.log(std_t/t_norm)+0.5*(1+np.log(2*np.pi))
     if(hist_eq):
         diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
-    _plot_heatmap(diff_entropy, X_embed, "Time Variance", ['low', 'high'], cmap=cmap, axis_off=True, save=save)
+    
+    fig, ax = plt.subplots(figsize=(8,6))
+    ax = _plot_heatmap(ax, diff_entropy, X_embed, "Time Variance", ['low', 'high'], cmap=cmap, axis_off=True)
+    save_fig(fig, save)
 
 def plot_state_var(std_z, 
                    X_embed, 
@@ -491,7 +606,8 @@ def plot_state_var(std_z,
     diff_entropy = np.sum(np.log(std_z/z_norm), 1)+0.5*std_z.shape[1]*(1+np.log(2*np.pi))
     if(hist_eq):
         diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
-    _plot_heatmap(diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True, save=save)
+    _plot_heatmap(diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True)
+    save_fig(fig, save)
 
 def plot_phase_axis(ax,
                     u,
