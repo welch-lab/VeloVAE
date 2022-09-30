@@ -136,7 +136,6 @@ class decoder(nn.Module):
                           beta=torch.exp(self.beta),
                           gamma=torch.exp(self.gamma),
                           t_trans=torch.exp(self.t_trans),
-                          #ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts),
                           u0=torch.exp(self.u0),
                           s0=torch.exp(self.s0),
                           sigma_u = torch.exp(self.sigma_u),
@@ -150,7 +149,6 @@ class decoder(nn.Module):
                       beta=torch.exp(self.beta[:,gidx]),
                       gamma=torch.exp(self.gamma[:,gidx]),
                       t_trans=torch.exp(self.t_trans),
-                      #ts=torch.exp(self.t_trans.view(-1,1))+torch.exp(self.dts[:,gidx]),
                       u0=torch.exp(self.u0[:,gidx]),
                       s0=torch.exp(self.s0[:,gidx]),
                       sigma_u = torch.exp(self.sigma_u[gidx]),
@@ -579,7 +577,6 @@ class BrODE():
             plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_brode.png')
         return
     
-    #ToDo 
     def pred_all(self, data, t, cell_labels, N, G, gene_idx=None):
         # data [N x 2G] : input mRNA count
         # mode : train or test or both
@@ -614,7 +611,6 @@ class BrODE():
                 ll = ll - ((N-B*Nb)/N)*loss
         return Uhat, Shat, ll.cpu().item()
     
-    #ToDo 
     def test(self,
              dataset, 
              testid=0, 
@@ -643,7 +639,6 @@ class BrODE():
                 
         return ll
     
-    #ToDo 
     def save_model(self, file_path, name='brode'):
         """Save the decoder parameters to a .pt file.
         
@@ -657,7 +652,7 @@ class BrODE():
         """
         os.makedirs(file_path, exist_ok=True)
         torch.save(self.decoder.state_dict(), f"{file_path}/{name}.pt")
-    #ToDo 
+    
     def save_anndata(self, adata, key, file_path, file_name=None):
         """Save the ODE parameters and cell time to the anndata object and write it to disk.
         
@@ -684,7 +679,6 @@ class BrODE():
         adata.varm[f"{key}_alpha"] = np.exp(self.decoder.alpha.detach().cpu().numpy()).T
         adata.varm[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy()).T
         adata.varm[f"{key}_gamma"] = np.exp(self.decoder.gamma.detach().cpu().numpy()).T
-        #adata.varm[f"{key}_ts"] = np.exp(self.decoder.dts.detach().cpu().numpy()).T + np.exp(self.decoder.t_trans.detach().cpu().numpy())
         adata.uns[f"{key}_t_trans"] = np.exp(self.decoder.t_trans.detach().cpu().numpy())
         adata.varm[f"{key}_u0"] = np.exp(self.decoder.u0.detach().cpu().numpy()).T
         adata.varm[f"{key}_s0"] = np.exp(self.decoder.s0.detach().cpu().numpy()).T
@@ -705,8 +699,7 @@ class BrODE():
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
         adata.uns[f"{key}_label_dic"] = self.decoder.label_dic
-        #adata.uns[f"{key}_label_dic_rev"] = self.decoder.label_dic_rev
-        
+
         rna_velocity_brode(adata, key)
         
         if(file_name is not None):
