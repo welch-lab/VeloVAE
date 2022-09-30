@@ -127,7 +127,7 @@ class decoder(nn.Module):
                 self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
                 self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
                 self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
-                self.ton = torch.nn.Parameter(torch.ones(adata.n_vars, device=device).float()*(-10))
+                self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
@@ -150,7 +150,7 @@ class decoder(nn.Module):
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+                self.ton = nn.Parameter((torch.ones(G, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
             else:
                 print("Initialization using the steady-state and dynamical models.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
@@ -784,10 +784,10 @@ class VAE(VanillaVAE):
                 u0_plot = u0[self.train_idx,idx]
                 s0_plot = s0[self.train_idx,idx]
                 plot_sig_(t0_plot, 
-                         u0_plot, s0_plot, 
-                         cell_labels=cell_labels_raw[self.train_idx],
-                         title=gene_plot[i], 
-                         save=f"{figure_path}/{gene_plot[i]}-x0.png")
+                          u0_plot, s0_plot, 
+                          cell_labels=cell_labels_raw[self.train_idx],
+                          title=gene_plot[i], 
+                          save=f"{figure_path}/{gene_plot[i]}-x0.png")
         self.n_drop = 0
         param_post = list(self.decoder.net_rho2.parameters())+list(self.decoder.fc_out2.parameters())
         optimizer_post = torch.optim.Adam(param_post, lr=self.config["learning_rate_post"], weight_decay=self.config["lambda_rho"])
@@ -1171,7 +1171,7 @@ class decoder_fullvb(nn.Module):
                 self.alpha = nn.Parameter(torch.normal(0.0, 1.0, size=(2,U.shape[1]), device=device).float())
                 self.beta =  nn.Parameter(torch.normal(0.0, 0.5, size=(2,U.shape[1]), device=device).float())
                 self.gamma = nn.Parameter(torch.normal(0.0, 0.5, size=(2,U.shape[1]), device=device).float())
-                self.ton = torch.nn.Parameter(torch.ones(adata.n_vars, device=device).float()*(-10))
+                self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
@@ -1194,7 +1194,7 @@ class decoder_fullvb(nn.Module):
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+                self.ton = nn.Parameter((torch.ones(G, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
             else:
                 print("Initialization using the steady-state and dynamical models.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
@@ -1214,7 +1214,7 @@ class decoder_fullvb(nn.Module):
                 self.beta = nn.Parameter(torch.tensor(np.stack([np.log(beta), sigma_param*np.ones((G))]), device=device).float())
                 self.gamma = nn.Parameter(torch.tensor(np.stack([np.log(gamma), sigma_param*np.ones((G))]), device=device).float())
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+                self.ton = nn.Parameter((torch.ones(G, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
         
@@ -1590,7 +1590,6 @@ class VAEFullVB(VAE):
         
         adata.layers[f"{key}_rho"] = rho
         
-        #u0, s0, t0 = self.update_x0(adata.layers['Mu'], adata.layers['Ms'], self.config["n_bin"])
         adata.obs[f"{key}_t0"] = self.t0.squeeze()
         adata.layers[f"{key}_u0"] = self.u0
         adata.layers[f"{key}_s0"] = self.s0
