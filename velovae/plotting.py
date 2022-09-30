@@ -138,7 +138,7 @@ def plot_sig(t,
         Cell type annotation, (N,)
     title : str, optional
         Title of the figure
-    save : str
+    save : str, optional
         Figure name for saving (including path)
     """
     D = kwargs['sparsify'] if('sparsify' in kwargs) else 1
@@ -225,6 +225,65 @@ def plot_sig(t,
     return
     
 
+def plot_vel(t, 
+             u, s, 
+             vu, vs, 
+             cell_labels=None,
+             cell_types=None,
+             title="Gene", 
+             save=None, 
+             **kwargs):
+    """Generate a velocity quiver plot for a single gene
+    The first row shows the original data, while the second row overlaps prediction with original data because VeloVAE outputs a point cloud instead of line fitting.
+    
+    ArgumentS
+    ---------
+    
+    t : `numpy array`
+        Cell time, (N,)
+    u,s : `numpy array`
+        Predicted unspliced or spliced counts of a single gene, (N,)
+    vu, vs : `numpy array`
+        RNA velocity of a single gene
+    cell_labels : `numpy array`, optional
+        Cell type annotation in integer, (N,)
+    cell_types : `numpy array`, optional
+        Unique cell types in string format, used as legend in plots
+    title : str, optional
+        Title of the figure
+    save : str, optional
+        Figure name for saving (including path)
+    """
+    fig, ax = plt.subplots(2,1,figsize=(10,12),facecolor='white')
+    ax[0] = plot_vel_axis(ax[0],
+                          t,
+                          u,
+                          vu,
+                          labels=cell_labels,
+                          legends=cell_types,
+                          show_legend=True,
+                          sparsity_correction=True,
+                          color_map=None,
+                          title=title)
+    ax[1] = plot_vel_axis(ax[1],
+                          t,
+                          s,
+                          vs,
+                          labels=cell_labels,
+                          legends=cell_types,
+                          show_legend=False,
+                          sparsity_correction=True,
+                          color_map=None,
+                          title=title)
+    bbox_extra_artist = None
+    if(cell_types is not None):
+        handles, labels = ax[0].get_legend_handles_labels()
+        lgd=fig.legend(handles, labels, fontsize=15, markerscale=5, ncol=4, bbox_to_anchor=(0.0, 1.0, 1.0, 0.25), loc='center')
+        bbox_extra_artist = (lgd,)
+    plt.tight_layout()
+    save_fig(fig, save, bbox_extra_artist)
+    return
+
 def plot_phase(u, s, 
               upred, spred, 
               title, 
@@ -249,7 +308,7 @@ def plot_phase(u, s,
         Cell type annotation
     types : `numpy array`, optional
         Unique cell types
-    save : str
+    save : str, optional
         Figure name for saving (including path)
     """
     fig, ax = plt.subplots(figsize=(6,6),facecolor='white')
@@ -1004,7 +1063,7 @@ def plot_vel_axis(ax,
         indices = sample_quiver_plot(t[torder], dt_sample, x[torder]) if sparsity_correction else sample_quiver_plot(t[torder], dt_sample)
         ax.quiver(t[torder][indices], 
                   x[torder][indices], 
-                  dt*np.ones((len(t))), 
+                  dt*np.ones((len(indices))), 
                   dt*v[torder][indices], 
                   angles='xy', 
                   scale=None, 
@@ -1744,7 +1803,7 @@ def plot_velocity_3d(X_embed,
                      color_map=None,
                      save=None):
     """3D velocity quiver plot. Arrows follow the direction of time to nearby points. This is not stable yet and we suggest not using it for now.
-    .. deprecated:: 3.1
+    .. deprecated:: 1.0
     """
     fig = plt.figure(figsize=(30,15))
     ax = fig.add_subplot(projection='3d')
@@ -1922,8 +1981,7 @@ def plot_trajectory_3d(X_embed,
         x = np.linspace(x_3d[:,0].min(), x_3d[:,0].max(), n_grid)
         y = np.linspace(x_3d[:,1].min(), x_3d[:,1].max(), n_grid)
         z = np.linspace(x_3d[:,2].min(), x_3d[:,2].max(), n_time)
-        #z = np.quantile(x_3d[:,2],[(i+0.5)/n_time for i in range(n_time)])
-        
+
         xgrid, ygrid, zgrid = np.meshgrid(x,y,z)
         xgrid, ygrid, zgrid = xgrid.flatten(), ygrid.flatten(), zgrid.flatten()
         Xgrid = np.stack([xgrid,ygrid,zgrid]).T
