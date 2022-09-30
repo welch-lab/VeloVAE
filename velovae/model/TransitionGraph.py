@@ -266,11 +266,8 @@ def edmond_chu_liu(graph, r):
         if(not i==r):
             adj_list_pruned[parents[i]].append(i)
     
-    #print(adj_list_pruned)
-
     #step 3: cycle detection using BFS
     loop, v_outside = check_loop(adj_list_pruned, n_type)
-    #print(loop, v_outside)
 
     #step 4: recursive call
     mst = np.zeros((n_type, n_type))
@@ -363,7 +360,9 @@ class TransGraph():
             for j, lin in enumerate(lineages):
                 count[i, j] = np.sum((self.cell_labels==i)&(partition_labels==lin))
         self.partition = np.argmax(count, 1)
-        self.n_lineage = len(np.unique(self.partition))
+        self.partition_cluster = np.unique(self.partition)
+        self.n_lineage = len(self.partition_cluster)
+        
         print("Number of partitions: ",len(lineages))
     
     def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01,0.03), k=5, soft_assign=True):
@@ -436,7 +435,7 @@ class TransGraph():
         print("Obtaining the MST in each partition")
         out = np.zeros((self.n_type, self.n_type))
         
-        for l in range(self.n_lineage):
+        for l in self.partition_cluster:
             vs_part = np.where(self.partition==l)[0]
             graph_part = np.log(P[vs_part][:, vs_part])
             adj_list = adj_matrix_to_list(graph_part)
