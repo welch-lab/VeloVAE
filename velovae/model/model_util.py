@@ -240,7 +240,7 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True):
     sigma_s[np.isnan(sigma_s)] = 0.1
     
     #Make sure all genes get the same total relevance score
-    Rscore = ((u>0) & (s>0))*np.ones(u.shape) + ((u==0) & (s==0))*np.ones(u.shape)*0.5 + ((u==0) & (s>0))*np.ones(u.shape)*0.02 + ((u>0) & (s>0))*np.ones(u.shape)*0.1
+    Rscore = ((u>0) & (s>0))*np.ones(u.shape) + ((u==0) & (s==0))*np.ones(u.shape)*0.02 + ((u==0) & (s>0))*np.ones(u.shape)*0.1 + ((u>0) & (s==0))*np.ones(u.shape)*0.1
      
     return params[:,0], params[:,1], params[:,2], params[:,3], Ts, U0, S0, sigma_u, sigma_s, T.T, Rscore
 
@@ -340,7 +340,7 @@ def pred_steady_numpy(ts,alpha,beta,gamma):
     ts_ = ts.squeeze()
     expb, expg = np.exp(-beta*ts_), np.exp(-gamma*ts_)
     u0 = alpha/(beta+eps)*(1.0-expb)
-    s0 = alpha/(gamma+eps)*(1.0-expg)+alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability)+alpha*ts_*expg*unstability
+    s0 = alpha/(gamma+eps)*(1.0-expg)+alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability)-alpha*ts_*expg*unstability
     return u0,s0
     
 def pred_steady(tau_s, alpha, beta, gamma):
@@ -356,7 +356,7 @@ def pred_steady(tau_s, alpha, beta, gamma):
     
     expb, expg = torch.exp(-beta*tau_s), torch.exp(-gamma*tau_s)
     u0 = alpha/(beta+eps)*(torch.tensor([1.0]).to(alpha.device)-expb)
-    s0 = alpha/(gamma+eps)*(torch.tensor([1.0]).to(alpha.device)-expg)+alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability)+alpha*tau_s*expg*unstability
+    s0 = alpha/(gamma+eps)*(torch.tensor([1.0]).to(alpha.device)-expg)+alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability)-alpha*tau_s*expg*unstability
     
     return u0,s0
 
@@ -392,7 +392,7 @@ def ode_numpy(t,alpha,beta,gamma,to,ts,scaling=None, k=10.0):
     assert np.all(~np.isnan(tau_on))
     expb, expg = np.exp(-beta*tau_on), np.exp(-gamma*tau_on)
     uhat_on = alpha/(beta+eps)*(1.0-expb)
-    shat_on = alpha/(gamma+eps)*(1.0-expg)+alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability)+alpha*tau_on*unstability
+    shat_on = alpha/(gamma+eps)*(1.0-expg)+alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability) - alpha*tau_on*unstability
     
     #Repression
     u0_,s0_ = pred_steady_numpy(np.clip(ts-to,0,None),alpha,beta,gamma) #[G]
@@ -424,7 +424,7 @@ def ode(t, alpha, beta, gamma, to, ts, neg_slope=0.0):
     tau_on = F.leaky_relu(t-to, negative_slope=neg_slope)
     expb, expg = torch.exp(-beta*tau_on), torch.exp(-gamma*tau_on)
     uhat_on = alpha/(beta+eps)*(torch.tensor([1.0]).to(alpha.device)-expb)
-    shat_on = alpha/(gamma+eps)*(torch.tensor([1.0]).to(alpha.device)-expg)+ (alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability) + alpha*tau_on*expg * unstability)
+    shat_on = alpha/(gamma+eps)*(torch.tensor([1.0]).to(alpha.device)-expg)+ (alpha/(gamma-beta+eps)*(expg-expb)*(1-unstability) - alpha*tau_on*expg * unstability)
     
     #Repression
     u0_,s0_ = pred_steady(F.relu(ts-to),alpha,beta,gamma)
@@ -489,8 +489,7 @@ def reinit_type_params(U, S, t, ts, cell_labels, cell_types, init_types):
     G = U.shape[1]
     alpha, beta, gamma = np.ones((Ntype,G)), np.ones((Ntype,G)), np.ones((Ntype,G))
     u0, s0 = np.zeros((len(init_types),G)), np.zeros((len(init_types),G))
-    #sigma_u, sigma_s = np.zeros((Ntype,G)), np.zeros((Ntype,G))
-    
+
     for i, type_ in enumerate(cell_types):
         mask_type = cell_labels == type_
         #Determine induction or repression
@@ -886,7 +885,6 @@ def knnx0_alt(U, S, t, z, t_query, z_query, dt, k):
     _z_query = z_query[order_query]
     
     knn = np.ones((Nq,k))*np.nan
-    #knn_orig = np.ones((Nq,k))*np.nan
     D = np.ones((Nq,k))*np.nan
     ptr = 0
     left, right = 0, 0 #pointer in the query sequence
@@ -910,14 +908,12 @@ def knnx0_alt(U, S, t, z, t_query, z_query, dt, k):
             pos_nan = np.where(np.isnan(knn[j]))[0]
             if(len(pos_nan)>0): #there hasn't been k nearest neighbors for j yet
                 knn[j,pos_nan[0]] = i
-                #knn_orig[order_query[j],pos_nan[0]] = order_idx[i]
                 D[j,pos_nan[0]] = dist
             else:
                 idx_largest = np.argmax(D[j])
                 if(dist<D[j,idx_largest]):
                     D[j,idx_largest] = dist
                     knn[j,idx_largest] = i
-                    #knn_orig[order_query[j],idx_largest] = order_idx[i]
         i += 1
     #Calculate initial time and conditions
     for i in range(Nq):
@@ -927,8 +923,7 @@ def knnx0_alt(U, S, t, z, t_query, z_query, dt, k):
         u0[order_query[i]] = _U[knn[i,pos].astype(int)].mean(0)
         s0[order_query[i]] = _S[knn[i,pos].astype(int)].mean(0)
         t0[order_query[i]] = _t[knn[i,pos].astype(int)].mean()
-    #u0 = np.convolve(u0[order_idx], np.ones((k))*(1/k), mode='same')
-    #s0 = np.convolve(s0[order_idx], np.ones((k))*(1/k), mode='same')
+    
     return u0,s0,t0
 
 def knnx0(U, S, t, z, t_query, z_query, dt, k):
@@ -972,11 +967,13 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k):
                 u0[i] = np.mean( U[indices[ind.squeeze()].astype(int)], 0)
                 s0[i] = np.mean( S[indices[ind.squeeze()].astype(int)], 0)
                 t0[i] = np.mean( t[indices[ind.squeeze()].astype(int)] )
+        else:
+            n1 = n1+1
     print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
     print(f"Average Set Size: {len_avg//Nq}")
     return u0,s0,t0
 
-def knnx0_quantile(U, S, t, z, t_query, z_query, dt, k, q=0.5):
+def knnx0_quantile(U, S, t, z, t_query, z_query, dt, k, q=0.95):
     ############################################################
     #Given cell time and state, find KNN for each cell in a time window ahead of
     #it. The KNNs are used to compute the initial condition for the ODE of
@@ -1006,20 +1003,23 @@ def knnx0_quantile(U, S, t, z, t_query, z_query, dt, k, q=0.5):
         len_avg = len_avg+k_
         if(k_>0):
             if(k_<k):
-                u0[i] = np.quantile(U[indices], q, 0)
-                s0[i] = np.quantile(S[indices], q, 0)
+                u0[i] = U[indices].mean(0)
+                s0[i] = S[indices].mean(0)
                 t0[i] = t[indices].mean()
                 n1 = n1+1
             else:
                 knn_model = NearestNeighbors(n_neighbors=k)
                 knn_model.fit(z[indices])
                 dist, ind = knn_model.kneighbors(z_query[i:i+1])
-                u0[i] = np.quantile(U[indices[ind.squeeze()].astype(int)], q, 0)
-                s0[i] = np.quantile(S[indices[ind.squeeze()].astype(int)], q, 0)
+                u0[i] = np.quantile( U[indices[ind.squeeze()].astype(int)], q, 0)
+                s0[i] = np.quantile( S[indices[ind.squeeze()].astype(int)], q, 0)
                 t0[i] = np.mean( t[indices[ind.squeeze()].astype(int)] )
+        else:
+            n1 = n1+1
     print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
     print(f"Average Set Size: {len_avg//Nq}")
     return u0,s0,t0
+
 
 def knnx0_bin(U, 
               S, 
@@ -1091,6 +1091,8 @@ def knnx0_bin(U,
             t0[indices_query[j]] = np.mean( t[ neighbor_idx ] )
     return u0,s0,t0
 
+
+
 def knn_transition_prob(t, 
                         z, 
                         t_query, 
@@ -1108,12 +1110,7 @@ def knn_transition_prob(t,
     P = np.zeros((n_type, n_type))
     t0 = np.zeros((n_type))
     sigma_t = np.zeros((n_type))
-    """
-    knn_all = NearestNeighbors(n_neighbors=1)
-    knn_all.fit(z)
-    dist, ind = knn_all.kneighbors(z)
-    dist_thred = np.quantile(ind, 0.25)
-    """
+    
     for i in range(n_type):
         t0[i] = np.quantile(t[cell_labels==i], 0.01)
         sigma_t[i] = t[cell_labels==i].std()
@@ -1156,6 +1153,7 @@ def knn_transition_prob(t,
     psum[psum==0] = 1
     return P/(psum.reshape(-1,1))
 
+
 ############################################################
 #Other Auxilliary Functions
 ############################################################
@@ -1194,8 +1192,7 @@ def get_gene_index(genes_all, gene_list):
     return gind, gene_list
     
 def convert_time(t):
-    """
-    Convert the time in sec into the format: hour:minute:second
+    """Convert the time in sec into the format: hour:minute:second
     """
     hour = int(t//3600)
     minute = int((t - hour*3600)//60)
@@ -1231,10 +1228,9 @@ def add_cell_cluster(adata, cluster_key, save_key="clusters"):
     
 def count_peak_expression(adata, cluster_key = "clusters"):
     def encodeType(cell_types_raw):
-        """
-        Use integer to encode the cell types
-        Each cell type has one unique integer label.
-        """
+        #Use integer to encode the cell types
+        #Each cell type has one unique integer label.
+        
         #Map cell types to integers 
         label_dic = {}
         label_dic_rev = {}
