@@ -1289,11 +1289,8 @@ class decoder_fullvb(nn.Module):
         return nn.functional.relu(Uhat), nn.functional.relu(Shat)
     
     def eval_model(self, t, z, condition=None, u0=None, s0=None, t0=None, neg_slope=0.0):
-        """
-        < Description >
-        Evaluate the decoder. Here, we use the mean 
-        instead of randomly sample the ODE parameters.
-        """
+        #Evaluate the decoder. Here, we use the mean instead of randomly sample the ODE parameters.
+        
         alpha = self.alpha[0].exp()
         beta = self.beta[0].exp()
         gamma = self.gamma[0].exp()
@@ -1481,7 +1478,7 @@ class VAEFullVB(VAE):
         self.p_log_gamma = torch.tensor([[0.0], [0.5]]).to(self.device)
     
     def eval_model(self, data_in, u0=None, s0=None, t0=None, condition=None):
-        """Evaluate the decoder. Here, we use the mean instead of randomly sample the ODE parameters.
+        """Evaluate the model. Here, we use the mean instead of randomly sample the ODE parameters.
         """
         data_in_scale = torch.cat((data_in[:,:data_in.shape[1]//2]/torch.exp(self.decoder.scaling), data_in[:,data_in.shape[1]//2:]),1)
         mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale)
