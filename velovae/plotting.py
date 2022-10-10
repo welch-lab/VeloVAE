@@ -420,9 +420,13 @@ def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, save=None):
     shat = adata.layers[f'{key}_shat'][:,gidx]
     scaling = adata.var[f'{key}_scaling'].to_numpy()[gidx]
     rho = adata.layers[f'{key}_rho'][:,gidx]
-    alpha = adata.var[f'{key}_alpha'].to_numpy()[gidx]
-    beta = adata.var[f'{key}_beta'].to_numpy()[gidx]
-    vu = rho*alpha - beta * uhat / scaling
+    try:
+        alpha = adata.var[f'{key}_alpha'].to_numpy()[gidx]
+        beta = adata.var[f'{key}_beta'].to_numpy()[gidx]
+    except KeyError:
+        alpha = np.exp(adata.var[f'{key}_logmu_alpha'].to_numpy()[gidx])
+        beta = np.exp(adata.var[f'{key}_logmu_beta'].to_numpy()[gidx])
+    vu = rho * alpha - beta * uhat / scaling
     v = adata.layers[f'{key}_velocity'][:,gidx]
     ax[0].plot(t,uhat/scaling,'.',color='grey',alpha=0.2)
     ax[1].plot(t,shat,'.',color='grey',alpha=0.2)
