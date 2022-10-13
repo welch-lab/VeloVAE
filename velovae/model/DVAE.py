@@ -1240,17 +1240,13 @@ class DVAE(VAE):
         kldz = kl_gaussian(q_zx[0], q_zx[1], p_z[0], p_z[1])
         
         #poisson
-        #try:
-        uhat[torch.isnan(uhat)] = 0
-        shat[torch.isnan(shat)] = 0
+        mask_u = (torch.isnan(uhat) | torch.isinf(uhat)).float()
+        uhat = uhat * (1-mask_u)
+        mask_s = (torch.isnan(shat) | torch.isinf(shat)).float()
+        shat = shat * (1-mask_s)
         
         poisson_u = Poisson(F.relu(uhat)+1e-2)
         poisson_s = Poisson(F.relu(shat)+1e-2)
-        #except ValueError:
-        #    uhat[torch.isnan(uhat)] = 0
-        #    shat[torch.isnan(shat)] = 0
-        #    poisson_u = Poisson(F.relu(uhat)+1e-2)
-        #    poisson_s = Poisson(F.relu(shat)+1e-2)
         
         logp = poisson_u.log_prob(u) + poisson_s.log_prob(s)
         
@@ -2146,8 +2142,11 @@ class DVAEFullVB(DVAE):
                      kl_gaussian(self.decoder.beta[0].view(1,-1), self.decoder.beta[1].exp().view(1,-1), self.p_log_beta[0], self.p_log_beta[1]) + \
                      kl_gaussian(self.decoder.gamma[0].view(1,-1), self.decoder.gamma[1].exp().view(1,-1), self.p_log_gamma[0], self.p_log_gamma[1]) ) / u.shape[0]
         #poisson
-        uhat[torch.isnan(uhat) | torch.isinf(uhat)] = 0
-        shat[torch.isnan(shat) | torch.isinf(shat)] = 0
+        mask_u = (torch.isnan(uhat) | torch.isinf(uhat)).float()
+        uhat = uhat * (1-mask_u)
+        mask_s = (torch.isnan(shat) | torch.isinf(shat)).float()
+        shat = shat * (1-mask_s)
+        
         poisson_u = Poisson(F.relu(uhat)+1e-2)
         poisson_s = Poisson(F.relu(shat)+1e-2)
         
