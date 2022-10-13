@@ -1,6 +1,6 @@
 from .VanillaVAE import VanillaVAE
 from .VAE import VAE,VAEFullVB
-#from .DVAE import DVAE, DVAE_vanilla
+from .DVAE import DVAE, VanillaDVAE, DVAEFullVB
 from .BrODE import BrODE
 from .model_util import ode, ode_numpy
 from .model_util import knnx0, knnx0_alt, knnx0_bin, knn_transition_prob
@@ -27,5 +27,8 @@ __all__ = [
     "SCTimedData",
     "TransGraph",
     "edmond_chu_liu",
-    "sample_genes"
+    "sample_genes",
+    "DVAE",
+    "VanillaDVAE",
+    "DVAEFullVB"
     ]

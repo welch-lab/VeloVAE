@@ -669,7 +669,9 @@ def plot_state_var(std_z,
     diff_entropy = np.sum(np.log(std_z/z_norm), 1)+0.5*std_z.shape[1]*(1+np.log(2*np.pi))
     if(hist_eq):
         diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
-    _plot_heatmap(diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True)
+    
+    fig, ax = plt.subplots(figsize=(8,6))
+    ax = _plot_heatmap(ax, diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True)
     save_fig(fig, save)
 
 def plot_phase_axis(ax,
