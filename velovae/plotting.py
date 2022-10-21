@@ -521,7 +521,32 @@ def vel_corr_hist(adata, keys, legends=None, save=None):
         ax[1,1].legend(loc=1, fontsize=16)
     plt.tight_layout()
     save_fig(fig, save)
+
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+def plot_mtx(K, xlabel=None, ylabel=None, xticklabels=None, yticklabels=None, save=None):
+    fig, ax = plt.subplots(figsize=(K.shape[1] * 0.5, K.shape[0] * 0.5))
+    im = ax.imshow(K, aspect='auto', origin='lower', cmap='plasma')
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    fig.colorbar(im, cax=cax)
+    if(xticklabels is not None):
+        xticks_cur = (ax.get_xticks())
+        xticklabels = np.linspace(np.min(xticklabels),np.max(xticklabels),len(xticks_cur))
+        xticklabels = [f'{x:.2f}' for x in xticklabels]
+        ax.set_xticklabels(xticklabels)
+    if(yticklabels is not None):
+        #yticks_cur = ax.get_yticks()
+        ax.set_yticks(yticklabels)
+        ax.set_yticklabels(yticklabels)
+    if(xlabel is not None):
+        ax.set_xlabel(xlabel, fontsize=24)
+    if(ylabel is not None):
+        ax.set_ylabel(ylabel, fontsize=24)
+    plt.tight_layout()
     
+    save_fig(fig, save)
+
+
 #########################################################################
 # Post Analysis
 #########################################################################
@@ -934,7 +959,7 @@ def plot_phase_grid(Nr,
 
 def sample_scatter_plot(x, down_sample, n_bins=20):
     idx_downsample = []
-    n_sample = len(x)//down_sample
+    n_sample = max(1, len(x)//down_sample)
     if(n_bins>n_sample):
         n_bins = n_sample
     sample_per_bin = n_sample // n_bins
