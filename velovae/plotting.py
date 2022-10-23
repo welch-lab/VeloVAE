@@ -408,14 +408,22 @@ def plot_test_acc(acc, epoch, save=None):
     
     save_fig(fig, save)
 
-def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, save=None):
+
+
+
+def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, u0=None, s0=None, t0=None, save=None):
     fig, ax = plt.subplots(1,2,figsize=(18,6),facecolor='white')
-    t0 = adata.obs[f'{key}_t0'].to_numpy()
+    
     u = np.array(adata.layers["unspliced"][:,gidx].todense()).squeeze()
     s = np.array(adata.layers["spliced"][:,gidx].todense()).squeeze()
-    u0 = adata.layers[f'{key}_u0'][:,gidx]
-    s0 = adata.layers[f'{key}_s0'][:,gidx]
     t = adata.obs[f'{key}_time'].to_numpy()
+    if(u0 is None):
+        u0 = adata.layers[f'{key}_u0'][:,gidx]
+    if(s0 is None):
+        s0 = adata.layers[f'{key}_s0'][:,gidx]
+    if(t0 is None):
+        t0 = adata.obs[f'{key}_t0'].to_numpy()
+    
     uhat = adata.layers[f'{key}_uhat'][:,gidx]
     shat = adata.layers[f'{key}_shat'][:,gidx]
     scaling = adata.var[f'{key}_scaling'].to_numpy()[gidx]
@@ -428,17 +436,18 @@ def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, save=None):
         beta = np.exp(adata.var[f'{key}_logmu_beta'].to_numpy()[gidx])
     vu = rho * alpha - beta * uhat / scaling
     v = adata.layers[f'{key}_velocity'][:,gidx]
-    ax[0].plot(t,uhat/scaling,'.',color='grey',alpha=0.2)
-    ax[1].plot(t,shat,'.',color='grey',alpha=0.2)
+    ax[0].plot(t,uhat/scaling,'.',color='grey',alpha=0.1)
+    ax[1].plot(t,shat,'.',color='grey',alpha=0.1)
     ax[0].plot(t[plot_indices],u[plot_indices],'o',color='b', label="Raw Count")
     ax[1].plot(t[plot_indices],s[plot_indices],'o',color='b')
-    ax[0].quiver(t[plot_indices], uhat[plot_indices]/scaling, dt*np.ones((len(plot_indices),)), vu[plot_indices]*dt, angles='xy')
-    ax[1].quiver(t[plot_indices], shat[plot_indices], dt*np.ones((len(plot_indices),)), v[plot_indices]*dt, angles='xy')
+    if(dt>0):
+        ax[0].quiver(t[plot_indices], uhat[plot_indices]/scaling, dt*np.ones((len(plot_indices),)), vu[plot_indices]*dt, angles='xy')
+        ax[1].quiver(t[plot_indices], shat[plot_indices], dt*np.ones((len(plot_indices),)), v[plot_indices]*dt, angles='xy')
     for i, k in enumerate(plot_indices):
         if(i==0):
-            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]]/scaling, 'r-o', label='Prediction')
+            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]/scaling], 'r-o', label='Prediction')
         else:
-            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]]/scaling, 'r-o')
+            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]/scaling], 'r-o')
         ax[1].plot([t0[k], t[k]], [s0[k], shat[k]], 'r-o')
         ax[0].plot(t[k]*np.ones((2,)), [u[k], uhat[k]], 'b--')
         ax[1].plot(t[k]*np.ones((2,)), [s[k], shat[k]], 'b--')
@@ -556,7 +565,7 @@ def _plot_heatmap(ax, vals, X_embed, colorbar_name, colorbar_ticklabels=None, ma
     vmax = np.quantile(vals, 0.99)
     norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
     sm = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
-    cbar = plt.colorbar(sm)
+    cbar = plt.colorbar(sm, ax=ax)
     cbar.ax.get_yaxis().labelpad = 15
     cbar.ax.set_ylabel(colorbar_name, rotation=270,fontsize=15)
     if(colorbar_ticklabels is not None):
