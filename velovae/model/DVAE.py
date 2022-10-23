@@ -1060,6 +1060,7 @@ class DVAE(VAE):
             "time_overlap":0.5,
             "n_neighbors":10,
             "dt": (0.03,0.06),
+            "knn_adaptive": False,
 
             #Training Parameters
             "n_epochs":1000, 
@@ -1201,13 +1202,13 @@ class DVAE(VAE):
         start = time.time()
         self.set_mode('eval')
         out, elbo = self.pred_all(np.concatenate((U,S),1), self.cell_labels, "both", ["uhat","shat","t","z"], gene_idx=np.array(range(U.shape[1])))
-        t, z = out[4], out[6]
+        t, std_t, z = out[4], out[5], out[6]
         #Clip the time to avoid outliers
         t = np.clip(t, 0, np.quantile(t, 0.99))
         dt = (self.config["dt"][0]*(t.max()-t.min()), self.config["dt"][1]*(t.max()-t.min()))
         scaling_u = np.exp(self.decoder.scaling_u.detach().cpu().numpy())
         #scaling_s = np.exp(self.decoder.scaling_s.detach().cpu().numpy())
-        u0, s0, t0 = knnx0(out[0][self.train_idx]/scaling_u, out[2][self.train_idx], t[self.train_idx], z[self.train_idx], t, z, dt, self.config["n_neighbors"])
+        u0, s0, t0 = knnx0(out[0][self.train_idx]/scaling_u, out[2][self.train_idx], t[self.train_idx], z[self.train_idx], t, z, dt, self.config["n_neighbors"], adaptive=self.config["knn_adaptive"], std_t=std_t)
         print(f"Finished. Actual Time: {convert_time(time.time()-start)}")
         self.set_mode('train')
         return u0, s0, t0.reshape(-1,1)

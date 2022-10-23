@@ -1127,7 +1127,7 @@ def knnx0_alt(U, S, t, z, t_query, z_query, dt, k):
     
     return u0,s0,t0
 
-def knnx0(U, S, t, z, t_query, z_query, dt, k):
+def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=False, std_t=None):
     ############################################################
     #Given cell time and state, find KNN for each cell in a time window ahead of
     #it. The KNNs are used to compute the initial condition for the ODE of
@@ -1142,6 +1142,10 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k):
     #        Time window coefficient
     #8.      k [int]
     #        Number of neighbors
+    #9.      adaptive [bool]
+    #        Whether to use adaptive time window based on time uncertainty
+    #10.     std_t [1D array (N)]
+    #        Posterior standard deviation of cell time
     ############################################################
     N, Nq = len(t), len(t_query)
     u0 = np.zeros((Nq, U.shape[1]))
@@ -1151,7 +1155,11 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k):
     n1 = 0
     len_avg = 0
     for i in range(Nq):
-        t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
+        if(adaptive):
+            dt_r, dt_l = 2*std_t[i], 2*std_t[i] + (dt[1]-dt[0])
+        else:
+            dt_r, dt_l = dt[0], dt[1]
+        t_ub, t_lb = t_query[i] - dt_r, t_query[i] - dt_l
         indices = np.where((t>=t_lb) & (t<t_ub))[0]
         k_ = len(indices)
         len_avg = len_avg+k_
