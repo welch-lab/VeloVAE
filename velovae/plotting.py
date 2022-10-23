@@ -531,7 +531,7 @@ def _plot_heatmap(ax, vals, X_embed, colorbar_name, colorbar_ticklabels=None, ma
     vmax = np.quantile(vals, 0.99)
     norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
     sm = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
-    cbar = plt.colorbar(sm)
+    cbar = plt.colorbar(sm, ax=ax)
     cbar.ax.get_yaxis().labelpad = 15
     cbar.ax.set_ylabel(colorbar_name, rotation=270,fontsize=15)
     if(colorbar_ticklabels is not None):
