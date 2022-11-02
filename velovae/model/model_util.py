@@ -183,31 +183,62 @@ def get_gene_scale(U,S,train_idx=None,mode='scale_u'):
         scaling_s = std_s/std_u
     return scaling_u, scaling_s
 
-def scale_by_cell(U,S,train_idx=None,separate_us_scale=True):
+def compute_scaling_bound(cell_scale):
+    log_scale = np.log(cell_scale)
+    q3, q1 = np.quantile(log_scale,0.75), np.quantile(log_scale,0.25)
+    iqr = q3 - q1
+    ub, lb = q3 + 1.5*iqr, q1 - 1.5*iqr
+    return np.exp(ub), np.exp(lb)
+
+def clip_cell_scale(lu, ls):
+    #Remove extreme values
+    lu_max, lu_min = compute_scaling_bound(lu)
+    ls_max, ls_min = compute_scaling_bound(ls)
+    lu = np.clip(lu, a_min=lu_min, a_max=lu_max)
+    ls = np.clip(ls, a_min=ls_min, a_max=ls_max)
+    return lu, ls
+
+def scale_by_cell(U,S,train_idx=None,separate_us_scale=True, q=50):
     N = U.shape[0]
     nu, ns = U.sum(1, keepdims=True), S.sum(1, keepdims=True)
     if(separate_us_scale):
-        norm_count = (np.median(nu), np.median(ns)) if train_idx is None else (np.median(nu[train_idx]), np.median(ns[train_idx]))
+        norm_count = (np.percentile(nu,q), np.percentile(ns,q)) if train_idx is None else (np.percentile(nu[train_idx],q), np.percentile(ns[train_idx],q))
         lu = nu/norm_count[0]
         ls = ns/norm_count[1]
     else:
-        norm_count = np.median(nu+ns) if train_idx is None else np.median(nu[train_idx]+ns[train_idx])
+        norm_count = np.percentile(nu+ns,q) if train_idx is None else np.percentile(nu[train_idx]+ns[train_idx],q)
         lu = (nu+ns)/norm_count
         ls = lu
+    #Remove extreme values
+    print(f"Detecting zero scaling factors: {np.sum(lu==0)}, {np.sum(ls==0)}")
+    lu[lu==0] = np.min(lu[lu>0])
+    ls[ls==0] = np.min(ls[ls>0])
     return U/lu, S/ls, lu, ls
 
-def get_cell_scale(U,S,train_idx=None,separate_us_scale=True):
+def get_cell_scale(U,S,train_idx=None,separate_us_scale=True, q=0.5):
     N = U.shape[0]
     nu, ns = U.sum(1, keepdims=True), S.sum(1, keepdims=True)
     if(separate_us_scale):
-        norm_count = (np.median(nu), np.median(ns)) if train_idx is None else (np.median(nu[train_idx]), np.median(ns[train_idx]))
+        norm_count = (np.percentile(nu,q), np.percentile(ns,q)) if train_idx is None else (np.percentile(nu[train_idx],q), np.percentile(ns[train_idx],q))
         lu = nu/norm_count[0]
         ls = ns/norm_count[1]
     else:
-        norm_count = np.median(nu+ns) if train_idx is None else np.median(nu[train_idx]+ns[train_idx])
+        norm_count = np.percentile(nu+ns,q) if train_idx is None else np.percentile(nu[train_idx]+ns[train_idx])
         lu = (nu+ns)/norm_count
         ls = lu
+    #Remove extreme values
+    print(f"Detecting zero scaling factors: {np.sum(lu==0)}, {np.sum(ls==0)}")
+    lu[lu==0] = np.min(lu[lu>0])
+    ls[ls==0] = np.min(ls[ls>0])
     return lu, ls
+
+def get_dispersion(U, S, clip_min=1e-3, clip_max=1000):
+    mean_u, mean_s = U.mean(0), S.mean(0)
+    var_u, var_s = U.var(0), S.var(0)
+    dispersion_u, dispersion_s = var_u/mean_u, var_s/mean_s
+    dispersion_u = np.clip(dispersion_u, a_min=clip_min, a_max=clip_max)
+    dispersion_s = np.clip(dispersion_s, a_min=clip_min, a_max=clip_max)
+    return mean_u, mean_s, dispersion_u, dispersion_s
 
 def linreg(u, s):
     q = np.sum(s*s)
@@ -1127,7 +1158,7 @@ def knnx0_alt(U, S, t, z, t_query, z_query, dt, k):
     
     return u0,s0,t0
 
-def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=False, std_t=None):
+def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
     ############################################################
     #Given cell time and state, find KNN for each cell in a time window ahead of
     #it. The KNNs are used to compute the initial condition for the ODE of
@@ -1142,8 +1173,9 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=False, std_t=None):
     #        Time window coefficient
     #8.      k [int]
     #        Number of neighbors
-    #9.      adaptive [bool]
-    #        Whether to use adaptive time window based on time uncertainty
+    #9.      adaptive [float]
+    #        When set to positive value, neighbors will be chosen from 
+    #        [t-adaptive*std_t, t-adaptive*std_t+delta_t]
     #10.     std_t [1D array (N)]
     #        Posterior standard deviation of cell time
     ############################################################
@@ -1155,8 +1187,8 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=False, std_t=None):
     n1 = 0
     len_avg = 0
     for i in range(Nq):
-        if(adaptive):
-            dt_r, dt_l = std_t[i], std_t[i] + (dt[1]-dt[0])
+        if(adaptive>0):
+            dt_r, dt_l = adaptive*std_t[i], adaptive*std_t[i] + (dt[1]-dt[0])
         else:
             dt_r, dt_l = dt[0], dt[1]
         t_ub, t_lb = t_query[i] - dt_r, t_query[i] - dt_l
