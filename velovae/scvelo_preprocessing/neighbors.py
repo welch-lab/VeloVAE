@@ -334,7 +334,7 @@ def neighbors_to_be_recomputed(adata, n_neighbors=None):  # deprecated
 
 
 def get_connectivities(
-    adata, mode="connectivities", n_neighbors=None, recurse_neighbors=False
+    adata, mode="connectivities", n_neighbors=None, recurse_neighbors=False, normalize=True
 ):
     if "neighbors" in adata.uns.keys():
         C = get_neighs(adata, mode)
@@ -350,10 +350,17 @@ def get_connectivities(
             if recurse_neighbors:
                 connectivities += connectivities.dot(connectivities * 0.5)
                 connectivities.data = np.clip(connectivities.data, 0, 1)
-            connectivities = connectivities.multiply(1.0 / connectivities.sum(1))
+            
+            ############################################
+            # Added by Yichen Gu
+            # Get connectivities without weight normalization
+            ############################################
+            if(normalize):
+                connectivities = connectivities.multiply(1.0 / connectivities.sum(1))
         return connectivities.tocsr().astype(np.float32)
     else:
         return None
+
 
 
 def get_csr_from_indices(knn_indices, knn_dists, n_obs, n_neighbors):
