@@ -164,7 +164,7 @@ def post_analysis(adata,
     make_dir(save_path)
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     X_embed = adata.obsm[f"X_{embed}"]
-    cell_labels_raw = adata.obs["clusters"].to_numpy()
+    cell_labels_raw = adata.obs[cluster_key].to_numpy()
     cell_types_raw = np.unique(cell_labels_raw)
     label_dic = {}
     for i, x in enumerate(cell_types_raw):
@@ -203,7 +203,7 @@ def post_analysis(adata,
             Uhat_i, Shat_i = get_pred_velovae_demo(adata, keys[i], genes, method=='FullVB')
             V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
             t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
-            cell_labels_raw = adata.obs["clusters"].to_numpy()
+            cell_labels_raw = adata.obs[cluster_key].to_numpy()
             cell_types_raw = np.unique(cell_labels_raw)
             cell_labels = np.zeros((len(cell_labels_raw)))
             for i in range(len(cell_types_raw)):
@@ -227,7 +227,7 @@ def post_analysis(adata,
         stats_df = DataFrame({}, index=Index(metrics))
         for i, method in enumerate(methods):
             stats_df.insert(i, method, [stats[method][x] for x in metrics])
-        pd.set_option("precision", 4)
+        pd.set_option("display.precision", 4)
         print(stats_df)
     
     print("---   Plotting  Results   ---")
