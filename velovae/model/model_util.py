@@ -223,7 +223,7 @@ def get_cell_scale(U,S,train_idx=None,separate_us_scale=True, q=0.5):
         lu = nu/norm_count[0]
         ls = ns/norm_count[1]
     else:
-        norm_count = np.percentile(nu+ns,q) if train_idx is None else np.percentile(nu[train_idx]+ns[train_idx])
+        norm_count = np.percentile(nu+ns,q) if train_idx is None else np.percentile(nu[train_idx]+ns[train_idx],q)
         lu = (nu+ns)/norm_count
         ls = lu
     #Remove extreme values
