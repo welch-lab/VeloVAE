@@ -8,7 +8,7 @@ from torch.distributions.poisson import Poisson
 import os
 from torch.utils.data import Dataset, DataLoader
 import time
-from velovae.plotting import plot_sig, plot_sig_, plot_time, plot_train_loss, plot_test_loss, plot_vel
+from velovae.plotting import plot_sig, plot_sig_, plot_time, plot_train_loss, plot_test_loss, plot_loss_split, plot_vel
 
 from .VAE import VAE
 from .VAE import encoder as encoder_velovae
@@ -137,9 +137,9 @@ class decoder(nn.Module):
             
             #Library Size
             if(use_raw):
-                U, S = adata.layers['unspliced'].A, adata.layers['spliced'].A
+                U, S = adata.layers['unspliced'].A.astype(float), adata.layers['spliced'].A.astype(float)
             else:
-                U, S = adata.layers["Mu"], adata.layers["Ms"]
+                U, S = adata.layers["Cu"], adata.layers["Cs"]
             
             #Dispersion
             mean_u, mean_s, dispersion_u, dispersion_s = get_dispersion(U[train_idx], S[train_idx])
@@ -299,9 +299,6 @@ class decoder(nn.Module):
         return rho        
 
 
-def logp_exp(x, lamb, eps=1e-6):
-    return torch.log(1-torch.exp(-(lamb+eps)))-lamb*x
-
 class DVAE(VAE):
     """
     Discrete VeloVAE Model
@@ -313,7 +310,7 @@ class DVAE(VAE):
                  dim_cond=0,
                  device='cpu', 
                  hidden_size=(500, 250, 250, 500), 
-                 use_raw=True,
+                 use_raw=False,
                  init_method="steady", 
                  init_key=None,
                  tprior=None, 
@@ -346,14 +343,15 @@ class DVAE(VAE):
             "n_epochs":1000, 
             "n_epochs_post":1000,
             "batch_size":128, 
-            "learning_rate":2e-4, 
-            "learning_rate_ode":5e-4, 
-            "learning_rate_post":2e-4,
+            "learning_rate":1e-3, 
+            "learning_rate_ode":2.5e-3, 
+            "learning_rate_post":1e-3,
             "lambda":1e-3, 
             "lambda_rho":1e-3,
             "kl_t":1.0, 
             "kl_z":1.0, 
             "kl_l":1.0,
+            "reg_vel":0.0,
             "test_iter":None, 
             "save_epoch":100, 
             "n_warmup":5,
@@ -366,7 +364,6 @@ class DVAE(VAE):
             "train_ton":False,
             "train_std":False,
             "weight_sample":False,
-            "reg_vel":False,
             "use_raw":use_raw,
             
             #Normalization Configurations
@@ -375,8 +372,7 @@ class DVAE(VAE):
             "scale_gene_encoder":True,
             "scale_cell_encoder":False,
             "log1p":True,
-            "train_cell_scaling":False,
-            
+
             #Plotting
             "sparsify":1
         }
@@ -453,6 +449,7 @@ class DVAE(VAE):
 
         #Class attributes for training
         self.loss_train, self.loss_test = [],[]
+        self.logp_list, self.kldt_list, self.kldz_list, self.kldparam_list = [],[],[],None
         self.counter = 0 #Count the number of iterations
         self.n_drop = 0 #Count the number of consecutive iterations with little decrease in loss
     
@@ -569,30 +566,7 @@ class DVAE(VAE):
         
         err_rec = torch.mean(logp.sum(1))
         
-        return (- err_rec + self.config["kl_t"]*kldt + self.config["kl_z"]*kldz)
-    
-    def vae_risk_exp(self, 
-                     q_tx, p_t, 
-                     q_zx, p_z, 
-                     u, s, uhat, shat, 
-                     weight=None,
-                     eps=1e-6):
-        kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
-        kldz = kl_gaussian(q_zx[0], q_zx[1], p_z[0], p_z[1])
-        
-        #poisson
-        mask_u = (torch.isnan(uhat) | torch.isinf(uhat)).float()
-        uhat = uhat * (1-mask_u)
-        mask_s = (torch.isnan(shat) | torch.isinf(shat)).float()
-        shat = shat * (1-mask_s)
-        logp = logp_exp(u, 1/uhat)+logp_exp(s, 1/shat)
-        
-        if( weight is not None):
-            logp = logp*weight
-        
-        err_rec = torch.mean(torch.sum(logp,1))
-        
-        return (- err_rec + self.config["kl_t"]*kldt + self.config["kl_z"]*kldz)
+        return err_rec, kldt, kldz, None
         
     
     def vae_risk_nb(self, 
@@ -611,16 +585,14 @@ class DVAE(VAE):
         nb_u = NegativeBinomial((F.relu(uhat)+1e-10)*(1-p_nb_u)/p_nb_u, probs=p_nb_u)
         nb_s = NegativeBinomial((F.relu(shat)+1e-10)*(1-p_nb_s)/p_nb_s, probs=p_nb_s)
         logp = nb_u.log_prob(u) + nb_s.log_prob(s)
-        #u_sample, s_sample = nb_u.sample(), nb_s.sample()
         
         if( weight is not None):
             logp = logp*weight
         err_rec = torch.mean(torch.sum(logp,1))
-        #err_rec = torch.mean((u_sample-u).pow(2) + (s_sample-s).pow(2))
-        
-        return (err_rec + self.config["kl_t"]*kldt + self.config["kl_z"]*kldz )
+
+        return err_rec, kldt, kldz, None
     
-    def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1, reg_vel=False):
+    def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
         B = len(train_loader)
         self.set_mode('train')
         stop_training = False
@@ -664,14 +636,17 @@ class DVAE(VAE):
             mu_tx, std_tx, mu_zx, std_zx, t, z, uhat, shat, rho = self.forward(x_in, lu_scale, ls_scale, u0, s0, t0, condition)
             
             
-            loss = self.vae_risk((mu_tx, std_tx), self.p_t[:,self.train_idx[idx],:],
-                                  (mu_zx, std_zx), self.p_z[:,self.train_idx[idx],:],
-                                  u.int(),
-                                  s.int(), 
-                                  uhat*lu_scale, shat*ls_scale,
-                                  None)
-            if(reg_vel):
-                loss = loss+self.corr_vel(uhat, shat, rho)
+            err_rec, kldt, kldz, kld_param = self.vae_risk((mu_tx, std_tx), self.p_t[:,self.train_idx[idx],:],
+                                                (mu_zx, std_zx), self.p_z[:,self.train_idx[idx],:],
+                                                u.int(),
+                                                s.int(), 
+                                                uhat*lu_scale, shat*ls_scale,
+                                                None)
+            loss = - err_rec + self.config["kl_t"]*kldt + self.config["kl_z"]*kldz
+            if(kld_param is not None):
+                loss = loss + self.config["kl_param"]*kld_param
+            if(self.config['reg_vel']>0):
+                loss = loss+self.config['reg_vel']*self.corr_vel(uhat, shat, rho)
             loss.backward()
             if(K==0):
                 optimizer.step()
@@ -703,9 +678,9 @@ class DVAE(VAE):
         print("--------------------------- Train a VeloVAE ---------------------------")
         #Get data loader
         if(self.config['use_raw']):
-            U, S = adata.layers['unspliced'].A, adata.layers['spliced'].A
+            U, S = adata.layers['unspliced'].A.astype(float), adata.layers['spliced'].A.astype(float)
         else:
-            U, S = adata.layers['Mu'], adata.layers['Ms']
+            U, S = adata.layers['Cu'], adata.layers['Cs']
         X = np.concatenate((U,S), 1)
         
         try:
@@ -748,10 +723,6 @@ class DVAE(VAE):
             self.decoder.scaling_u.requires_grad = True
             self.decoder.scaling_s.requires_grad = True
             param_ode = param_ode+[self.decoder.scaling_u, self.decoder.scaling_s]
-        if(self.config['train_cell_scaling']):
-            self.lu_scale.requires_grad = True
-            self.ls_scale.requires_grad = True
-            param_ode = param_ode+[self.lu_scale, self.ls_scale]
 
         optimizer = torch.optim.Adam(param_nn, lr=self.config["learning_rate"], weight_decay=self.config["lambda"])
         optimizer_ode = torch.optim.Adam(param_ode, lr=self.config["learning_rate_ode"])
@@ -768,18 +739,18 @@ class DVAE(VAE):
         for epoch in range(n_epochs):
             #Train the encoder
             if(self.config["k_alt"] is None):
-                stop_training = self.train_epoch(data_loader, test_set, optimizer, reg_vel=self.config["reg_vel"])
+                stop_training = self.train_epoch(data_loader, test_set, optimizer)
                 
                 if(epoch>=self.config["n_warmup"]):
-                    stop_training_ode = self.train_epoch(data_loader, test_set, optimizer_ode, reg_vel=self.config["reg_vel"])
+                    stop_training_ode = self.train_epoch(data_loader, test_set, optimizer_ode)
                     if(stop_training_ode):
                         print(f"*********       Stage 1: Early Stop Triggered at epoch {epoch+1}.       *********")
                         break
             else:
                 if(epoch>=self.config["n_warmup"]):
-                    stop_training = self.train_epoch(data_loader, test_set, optimizer_ode, optimizer, self.config["k_alt"], reg_vel=self.config["reg_vel"])
+                    stop_training = self.train_epoch(data_loader, test_set, optimizer_ode, optimizer, self.config["k_alt"])
                 else:
-                    stop_training = self.train_epoch(data_loader, test_set, optimizer, None, self.config["k_alt"], reg_vel=self.config["reg_vel"])
+                    stop_training = self.train_epoch(data_loader, test_set, optimizer, None, self.config["k_alt"])
             
             if(plot and (epoch==0 or (epoch+1) % self.config["save_epoch"] == 0)):
                 elbo_train = self.test(train_set,
@@ -831,18 +802,18 @@ class DVAE(VAE):
         optimizer_post = torch.optim.Adam(param_post, lr=self.config["learning_rate_post"], weight_decay=self.config["lambda_rho"])
         for epoch in range(self.config["n_epochs_post"]):
             if(self.config["k_alt"] is None):
-                stop_training = self.train_epoch(data_loader, test_set, optimizer_post, reg_vel=self.config["reg_vel"])
+                stop_training = self.train_epoch(data_loader, test_set, optimizer_post)
                 
                 if(epoch>=self.config["n_warmup"]):
-                    stop_training_ode = self.train_epoch(data_loader, test_set, optimizer_ode, reg_vel=self.config["reg_vel"])
+                    stop_training_ode = self.train_epoch(data_loader, test_set, optimizer_ode)
                     if(stop_training_ode):
                         print(f"*********       Stage 2: Early Stop Triggered at epoch {epoch+n_stage1+1}.       *********")
                         break
             else:
                 if(epoch>=self.config["n_warmup"]):
-                    stop_training = self.train_epoch(data_loader, test_set, optimizer_post, optimizer_ode, self.config["k_alt"], reg_vel=self.config["reg_vel"])
+                    stop_training = self.train_epoch(data_loader, test_set, optimizer_post, optimizer_ode, self.config["k_alt"])
                 else:
-                    stop_training = self.train_epoch(data_loader, test_set, optimizer_post, None, self.config["k_alt"], reg_vel=self.config["reg_vel"])
+                    stop_training = self.train_epoch(data_loader, test_set, optimizer_post, None, self.config["k_alt"])
             
             
             
@@ -884,14 +855,22 @@ class DVAE(VAE):
                                   gene_plot,
                                   True, 
                                   figure_path)
+            self.loss_train.append(elbo_train)
+            self.loss_test.append(elbo_test)
             plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_velovae.png')
             if(self.config["test_iter"]>0):
-                plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_velovae.png')
-        
+                n_skip = len(self.loss_test) // 2
+                iters = [i*self.config["test_iter"] for i in range(n_skip+1,len(self.loss_test)+1)]
+                plot_test_loss(self.loss_test[n_skip:], iters, save=f'{figure_path}/test_loss_velovae.png')
+                if(self.kldparam_list is None):
+                    plot_loss_split(self.logp_list[n_skip:], self.kldt_list[n_skip:], self.kldz_list[n_skip:], None, iters, save=f'{figure_path}/test_loss_split_velovae.png')
+                else:
+                    plot_loss_split(self.logp_list[n_skip:], self.kldt_list[n_skip:], self.kldz_list[n_skip:], self.kldparam_list[n_skip:], iters, save=f'{figure_path}/test_loss_split_fullvb.png')
         if(plot):
             plot_train_loss(self.train_mse, range(1,len(self.train_mse)+1), save=f'{figure_path}/train_mse_velovae.png')
             if(self.config["test_iter"]>0):
-                plot_test_loss(self.test_mse, [i*self.config["test_iter"] for i in range(1,len(self.test_mse)+1)], save=f'{figure_path}/test_mse_velovae.png')
+                iters = [i*self.config["test_iter"] for i in range(1,len(self.test_mse)+1)]
+                plot_test_loss(self.test_mse, iters, save=f'{figure_path}/test_mse_velovae.png')
         return elbo_train, elbo_test, self.train_mse[-1], self.test_mse[-1]
     
     def pred_all(self, data, cell_labels, mode='test', output=["uhat", "shat", "t", "z"], gene_idx=None, continuous=True):
@@ -910,7 +889,10 @@ class DVAE(VAE):
             z_out = np.zeros((N, self.dim_z))
             std_z_out = np.zeros((N, self.dim_z))
         
-        corr = 0
+        logp_total = 0
+        kldt_total = 0
+        kldz_total = 0
+        kldparam_total = 0
         with torch.no_grad():
             B = min(N//5, 1000)
             Nb = N // B
@@ -950,17 +932,22 @@ class DVAE(VAE):
                 u_raw, s_raw = data_in[:,:G], data_in[:,G:]
                 u_sum, s_sum = torch.sum(uhat, 1, keepdim=True), torch.sum(shat, 1, keepdim=True)
                 
-                loss = self.vae_risk((mu_tx, std_tx), p_t,
-                                     (mu_zx, std_zx), p_z,
-                                     u_raw.int(), s_raw.int(), 
-                                     uhat*lu_scale, shat*ls_scale, 
-                                     None)
+                logp, kldt, kldz, kld_param = self.vae_risk((mu_tx, std_tx), p_t,
+                                                            (mu_zx, std_zx), p_z,
+                                                            u_raw.int(), s_raw.int(), 
+                                                            uhat*lu_scale, shat*ls_scale, 
+                                                            None)
+                loss = (- logp + self.config["kl_t"] * kldt + self.config["kl_z"] * kldz).cpu().item()
                 u_sample, s_sample = self.sample_poisson(uhat*lu_scale, shat*ls_scale)
                 
                 mse_batch = np.mean( (u_raw.cpu().numpy() - u_sample.cpu().numpy())**2 + ( s_raw.cpu().numpy() - s_sample.cpu().numpy())**2)
                 elbo = elbo - (B/N)*loss
                 mse = mse + (B/N) * mse_batch
-                #corr = corr + (B/N) * self.corr_vel(uhat*lu_scale, shat*ls_scale, rho).detach().cpu().item()
+                logp_total = logp_total + (B/N) * logp.detach().item()
+                kldt_total = kldt_total + (B/N) * kldt.detach().item()
+                kldz_total = kldz_total + (B/N) * kldz.detach().item()
+                if self.kldparam_list is not None:
+                    kldparam_total = kldparam_total + ((N-B*Nb)/N) * kld_param.detach().item()
                 
                 if("uhat" in output and gene_idx is not None):
                     Uhat[i*B:(i+1)*B] = uhat[:,gene_idx].cpu().numpy()
@@ -1009,16 +996,22 @@ class DVAE(VAE):
                     mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot)
                 u_raw, s_raw = data_in[:,:G], data_in[:,G:]
                 u_sum, s_sum = torch.sum(uhat, 1, keepdim=True), torch.sum(shat, 1, keepdim=True)
-                loss = self.vae_risk((mu_tx, std_tx), p_t,
-                                     (mu_zx, std_zx), p_z,
-                                     u_raw.int(), s_raw.int(), 
-                                     uhat*lu_scale, shat*ls_scale,
-                                     None)
+                logp, kldt, kldz, kld_param = self.vae_risk((mu_tx, std_tx), p_t,
+                                                            (mu_zx, std_zx), p_z,
+                                                            u_raw.int(), s_raw.int(), 
+                                                            uhat*lu_scale, shat*ls_scale,
+                                                            None)
+                loss = (- logp + self.config["kl_t"] * kldt + self.config["kl_z"] * kldz).cpu().item()
                 u_sample, s_sample = self.sample_poisson(uhat*lu_scale, shat*ls_scale)
                 
                 mse_batch = np.mean( (u_raw.cpu().numpy() - u_sample.cpu().numpy())**2 + ( s_raw.cpu().numpy() - s_sample.cpu().numpy())**2)
                 elbo = elbo - ((N-B*Nb)/N)*loss
                 mse = mse + ((N-B*Nb)/N)*mse_batch
+                logp_total = logp_total + ((N-B*Nb)/N) * logp.detach().item()
+                kldt_total = kldt_total + ((N-B*Nb)/N) * kldt.detach().item()
+                kldz_total = kldz_total + ((N-B*Nb)/N) * kldz.detach().item()
+                if self.kldparam_list is not None:
+                    kldparam_total = kldparam_total + ((N-B*Nb)/N) * kld_param.detach().item()
 
                 if("uhat" in output and gene_idx is not None):
                     Uhat[Nb*B:] = uhat[:,gene_idx].cpu().numpy()
@@ -1032,6 +1025,12 @@ class DVAE(VAE):
                 if("z" in output):
                     z_out[Nb*B:] = mu_zx.cpu().numpy()
                     std_z_out[Nb*B:] = std_zx.cpu().numpy()
+        if(mode=="test"):
+            self.logp_list.append(logp_total)
+            self.kldt_list.append(kldt_total)
+            self.kldz_list.append(kldz_total)
+            if self.kldparam_list is not None:
+                self.kldparam_list.append(kldparam_total)
          
         out = []
         if("uhat" in output):
@@ -1051,7 +1050,7 @@ class DVAE(VAE):
             #out.append(corr)
             out.append(mse)
             
-        return out, elbo.cpu().item()
+        return out, elbo
     
     def pred_rho(self, z, G):
         N = z.shape[0]
@@ -1172,7 +1171,10 @@ class DVAE(VAE):
         adata.var[f"{key}_scaling_u"] = self.decoder.scaling_u.exp().detach().cpu().numpy()
         adata.var[f"{key}_scaling_s"] = self.decoder.scaling_s.exp().detach().cpu().numpy()
         
-        U,S = np.array(adata.layers['unspliced'].todense()), np.array(adata.layers['spliced'].todense())
+        if(self.config["use_raw"]):
+            U,S = np.array(adata.layers['unspliced'].todense()), np.array(adata.layers['spliced'].todense())
+        else:
+            U,S = adata.layers["Cu"], adata.layers["Cs"]
         X = np.concatenate((U,S),1)
 
         out, elbo = self.pred_all(X, self.cell_labels, "both", gene_idx=np.array(range(adata.n_vars)))
@@ -1316,9 +1318,9 @@ class decoder_fullvb(decoder):
     def eval_model(self, t, z, condition=None, u0=None, s0=None, t0=None, neg_slope=0.0):
         #Evaluate the decoder. Here, we use the mean instead of randomly sample the ODE parameters.
         
-        alpha = (self.alpha[0] + 0.5*(self.alpha[1]).exp().pow(2)).exp()
-        beta = (self.beta[0] + 0.5*(self.beta[1]).exp().pow(2)).exp()
-        gamma = (self.gamma[0] + 0.5*(self.gamma[1]).exp().pow(2)).exp()
+        alpha = self.alpha[0].exp()
+        beta = self.beta[0].exp()
+        gamma = self.gamma[0].exp()
         if(u0 is None or s0 is None or t0 is None):
             if(condition is None):
                 rho = torch.sigmoid(self.fc_out1(self.net_rho(z)))
@@ -1342,12 +1344,13 @@ class DVAEFullVB(DVAE):
                  dim_cond=0,
                  device='cpu', 
                  hidden_size=(500, 250, 250, 500), 
-                 use_raw=True,
+                 use_raw=False,
                  init_method="steady", 
                  init_key=None,
                  tprior=None, 
                  init_type=None,
                  init_ton_zero=True,
+                 add_noise=True,
                  time_distribution="gaussian",
                  count_distribution="Poisson",
                  std_z_prior=0.01,
@@ -1356,9 +1359,8 @@ class DVAEFullVB(DVAE):
                      'beta':(1.0,1.0),
                      'gamma':(1.0,1.0)
                  },
-                 scale_cell=True,
+                 scale_cell=False,
                  separate_us_scale=True,
-                 add_noise=True,
                  checkpoints=[None, None]):
         
         self.config = {
@@ -1389,6 +1391,7 @@ class DVAEFullVB(DVAE):
             "kl_t":1.0, 
             "kl_z":1.0, 
             "kl_param":1.0,
+            "reg_vel":0.0,
             "test_iter":None, 
             "save_epoch":100, 
             "n_warmup":5,
@@ -1401,7 +1404,6 @@ class DVAEFullVB(DVAE):
             "train_ton":False,
             "train_std":False,
             "weight_sample":False,
-            "reg_vel":False,
             "use_raw":use_raw,
             
             #Normalization Configurations
@@ -1453,9 +1455,11 @@ class DVAEFullVB(DVAE):
         self.u0 = None
         self.s0 = None
         self.t0 = None
-        self.lu_scale = torch.tensor(adata.obs['library_scale_u'].to_numpy()).unsqueeze(-1).float().to(self.device)
-        self.ls_scale = torch.tensor(adata.obs['library_scale_s'].to_numpy()).unsqueeze(-1).float().to(self.device)
-        print(f"Mean library scale: {self.lu_scale.detach().cpu().numpy().mean()}, {self.ls_scale.detach().cpu().numpy().mean()}")
+        self.lu_scale = torch.tensor(np.log(adata.obs['library_scale_u'].to_numpy())).unsqueeze(-1).float().to(self.device)
+        self.ls_scale = torch.tensor(np.log(adata.obs['library_scale_s'].to_numpy())).unsqueeze(-1).float().to(self.device)
+        
+        print(f"Library scale (U): Max={np.exp(self.lu_scale.detach().cpu().numpy().max()):.2f}, Min={np.exp(self.lu_scale.detach().cpu().numpy().min()):.2f}, Mean={np.exp(self.lu_scale.detach().cpu().numpy().mean()):.2f}")
+        print(f"Library scale (S): Max={np.exp(self.ls_scale.detach().cpu().numpy().max()):.2f}, Min={np.exp(self.ls_scale.detach().cpu().numpy().min()):.2f}, Mean={np.exp(self.ls_scale.detach().cpu().numpy().mean()):.2f}")
         
         #Determine Count Distribution
         dispersion_u = adata.var["dispersion_u"].to_numpy()
@@ -1485,6 +1489,7 @@ class DVAEFullVB(DVAE):
         
         #Class attributes for training
         self.loss_train, self.loss_test = [],[]
+        self.logp_list, self.kldt_list, self.kldz_list, self.kldparam_list = [],[],[],[]
         self.counter = 0 #Count the number of iterations
         self.n_drop = 0 #Count the number of consecutive iterations with little decrease in loss
         
@@ -1517,7 +1522,7 @@ class DVAEFullVB(DVAE):
                          q_zx, p_z, 
                          u, s, uhat, shat,
                          weight=None,
-                         eps=1e-6):
+                         eps=1e-2):
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
         kldz = kl_gaussian(q_zx[0], q_zx[1], p_z[0], p_z[1])
         kld_param = (kl_gaussian(self.decoder.alpha[0].view(1,-1), self.decoder.alpha[1].exp().view(1,-1), self.p_log_alpha[0], self.p_log_alpha[1]) + \
@@ -1529,8 +1534,8 @@ class DVAEFullVB(DVAE):
         mask_s = (torch.isnan(shat) | torch.isinf(shat)).float()
         shat = shat * (1-mask_s)
         
-        poisson_u = Poisson(F.relu(uhat)+1e-2)
-        poisson_s = Poisson(F.relu(shat)+1e-2)
+        poisson_u = Poisson(F.relu(uhat)+eps)
+        poisson_s = Poisson(F.relu(shat)+eps)
         
         
         logp = poisson_u.log_prob(u) + poisson_s.log_prob(s)
@@ -1540,7 +1545,33 @@ class DVAEFullVB(DVAE):
         
         err_rec = torch.mean(torch.sum(logp,1))
         
-        return (- err_rec + self.config["kl_t"]*kldt + self.config["kl_z"]*kldz + self.config["kl_param"]*kld_param)
+        return err_rec, kldt, kldz, kld_param
+    
+    def vae_risk_nb(self, 
+                    q_tx, p_t, 
+                    q_zx, p_z, 
+                    u, s, uhat, shat, 
+                    weight=None,
+                    eps=1e-10):
+        #This is the negative ELBO.
+        kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
+        kldz = kl_gaussian(q_zx[0], q_zx[1], p_z[0], p_z[1])
+        kld_param = (kl_gaussian(self.decoder.alpha[0].view(1,-1), self.decoder.alpha[1].exp().view(1,-1), self.p_log_alpha[0], self.p_log_alpha[1]) + \
+                     kl_gaussian(self.decoder.beta[0].view(1,-1), self.decoder.beta[1].exp().view(1,-1), self.p_log_beta[0], self.p_log_beta[1]) + \
+                     kl_gaussian(self.decoder.gamma[0].view(1,-1), self.decoder.gamma[1].exp().view(1,-1), self.p_log_gamma[0], self.p_log_gamma[1])) / u.shape[0]
+        
+        #NB
+        p_nb_u = torch.sigmoid(self.eta_u+torch.log(F.relu(uhat)+eps))
+        p_nb_s = torch.sigmoid(self.eta_s+torch.log(F.relu(shat)+eps))
+        nb_u = NegativeBinomial((F.relu(uhat)+eps)*(1-p_nb_u)/p_nb_u, probs=p_nb_u)
+        nb_s = NegativeBinomial((F.relu(shat)+eps)*(1-p_nb_s)/p_nb_s, probs=p_nb_s)
+        logp = nb_u.log_prob(u) + nb_s.log_prob(s)
+        
+        if( weight is not None):
+            logp = logp*weight
+        err_rec = torch.mean(torch.sum(logp,1))
+        
+        return err_rec, kldt, kldz, kld_param 
     
     def get_mean_param(self, gene_indices=None):
         mu_logalpha = self.decoder.alpha[0].detach().cpu().numpy()
@@ -1573,7 +1604,10 @@ class DVAEFullVB(DVAE):
         adata.var[f"{key}_ton"] = self.decoder.ton.exp().detach().cpu().numpy()
         adata.var[f"{key}_scaling"] = self.decoder.scaling_u.exp().detach().cpu().numpy()
         
-        U,S = np.array(adata.layers['unspliced'].todense()), np.array(adata.layers['spliced'].todense())
+        if(self.config["use_raw"]):
+            U,S = np.array(adata.layers['unspliced'].todense()), np.array(adata.layers['spliced'].todense())
+        else:
+            U,S = adata.layers["Cu"], adata.layers["Cs"]
         X = np.concatenate((U,S),1)
 
         out, elbo = self.pred_all(X, self.cell_labels, "both", gene_idx=np.array(range(adata.n_vars)))
@@ -1623,23 +1657,28 @@ class DVAEFullVB(DVAE):
 
 
 
-
-
-class decoderBasic(nn.Module):
+class decoder_basic(nn.Module):
     def __init__(self, 
                  adata, 
                  tmax,
                  train_idx,
+                 dim_z, 
+                 dim_cond=0,
+                 N1=250, 
+                 N2=500, 
                  p=98, 
-                 scale_gene=True,
+                 use_raw=True,
+                 init_ton_zero=False,
                  scale_cell=False,
                  separate_us_scale=True,
+                 add_noise=False,
                  device=torch.device('cpu'), 
                  init_method="steady", 
                  init_key=None, 
+                 init_type=None,
                  checkpoint=None):
-        super(decoderBasic,self).__init__()
-        G = adata.n_vars
+        super(decoder,self).__init__()
+        
         if(checkpoint is not None):
             self.alpha = nn.Parameter(torch.empty(G, device=device).float())
             self.beta = nn.Parameter(torch.empty(G, device=device).float())
@@ -1647,48 +1686,56 @@ class decoderBasic(nn.Module):
             self.scaling_u = nn.Parameter(torch.empty(G, device=device).float())
             self.scaling_s = nn.Parameter(torch.empty(G, device=device).float())
             self.ton = nn.Parameter(torch.empty(G, device=device).float())
-            
+            self.toff = nn.Parameter(torch.empty(G, device=device).float())
+            self.u0 = nn.Parameter(torch.empty(G, device=device).float())
+            self.s0 = nn.Parameter(torch.empty(G, device=device).float())
             self.load_state_dict(torch.load(checkpoint, map_location=device))
         else:
-            U, S = np.array(adata.layers['unspliced'].todense()), np.array(adata.layers['spliced'].todense())
+            self.init_weights()
             
             #Library Size
+            if(use_raw):
+                U, S = adata.layers['unspliced'].A.astype(float), adata.layers['spliced'].A.astype(float)
+            else:
+                U, S = adata.layers["Cu"], adata.layers["Cs"]
+            
+            #Dispersion
+            mean_u, mean_s, dispersion_u, dispersion_s = get_dispersion(U[train_idx], S[train_idx])
+            adata.var["mean_u"] = mean_u
+            adata.var["mean_s"] = mean_s
+            adata.var["dispersion_u"] = dispersion_u
+            adata.var["dispersion_s"] = dispersion_s
             
             if(scale_cell):
-                U, S, lu, ls = scale_by_cell(U, S, train_idx, separate_us_scale)
+                U, S, lu, ls = scale_by_cell(U, S, train_idx, separate_us_scale, 50)
                 adata.obs["library_scale_u"] = lu
                 adata.obs["library_scale_s"] = ls
             else:
-                lu, ls = np.ones((adata.n_obs)),np.ones((adata.n_obs))
+                lu, ls = get_cell_scale(U, S, train_idx, separate_us_scale, 50)
                 adata.obs["library_scale_u"] = lu
                 adata.obs["library_scale_s"] = ls
-            #Genewise scaling
-            if(scale_gene):
-                U, S, scaling_u, scaling_s = scale_by_gene(U,S,train_idx)
-            else:
-                scaling_u, scaling_s = np.ones((G)), np.ones((G))
             
             U = U[train_idx]
             S = S[train_idx]
-            noise = np.abs(np.random.normal(size=(len(train_idx), 2*G))*1e-3)
-            X = np.concatenate((U,S),1) + noise
+            
+            X = np.concatenate((U,S),1)
+            if(add_noise):
+                noise = np.exp(np.random.normal(size=(len(train_idx), 2*G))*1e-3)
+                X = X + noise
+            
 
-            #Dynamical Model Parameters
             if(init_method == "random"):
                 print("Random Initialization.")
-                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params_(X,p,fit_scaling=True, scaling_u=scaling_u)
-                
+                #alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
+                scaling, scaling_s = get_gene_scale(U,S,None)
                 self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
                 self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
                 self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
-                self.ton = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+                self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
                 self.toff = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float()+self.ton.detach())
-                #self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
             elif(init_method == "tprior"):
                 print("Initialization using prior time.")
-                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params_(X,p,fit_scaling=True, scaling_u=scaling_u)
+                alpha, beta, gamma, scaling, toff, u0, s0, T = init_params_raw(X,p,fit_scaling=True)
                 t_prior = adata.obs[init_key].to_numpy()
                 t_prior = t_prior[train_idx]
                 std_t = (np.std(t_prior)+1e-3)*0.2
@@ -1696,22 +1743,20 @@ class decoderBasic(nn.Module):
                 self.t_init -= self.t_init.min()
                 self.t_init = self.t_init
                 self.t_init = self.t_init/self.t_init.max()*tmax
-                toff = get_ts_global(self.t_init, U/scaling, S, 95)
-                alpha, beta, gamma, ton = reinit_params(U/scaling, S, self.t_init, toff)
+                toff = get_ts_global(self.t_init, U, S, 95)
+                alpha, beta, gamma, ton = reinit_params(U, S, self.t_init, toff)
                 
                 self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
                 self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
                 self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
-                #self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.ton = nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
-                self.toff = nn.Parameter(torch.tensor(np.log(toff+1e-10), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+                self.toff = nn.Parameter(torch.tensor(np.log(toff+1e-10), device=device).float())            
             else:
                 print("Initialization using the steady-state and dynamical models.")
-                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params_(X,p,fit_scaling=True, scaling_u=scaling_u)
+                alpha, beta, gamma, scaling, toff, u0, s0, T = init_params_raw(X,p,fit_scaling=True)
+                
                 if(init_key is not None):
-                    t_init = adata.obs['init_key'].to_numpy()
+                    self.t_init = adata.obs[init_key].to_numpy()[train_idx]
                 else:
                     T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
                     T_eq = np.zeros(T.shape)
@@ -1719,27 +1764,46 @@ class decoderBasic(nn.Module):
                     for i in range(T.shape[1]):
                         T_eq[:, i] = hist_equal(T[:, i], tmax, 0.9, Nbin)
                     self.t_init = np.quantile(T_eq,0.5,1)
-                toff = get_ts_global(self.t_init, U/scaling, S, 95)
-                alpha, beta, gamma,ton = reinit_params(U/scaling, S, self.t_init, toff)
-            
+                toff = get_ts_global(self.t_init, U, S, 95)
+                alpha, beta, gamma, ton = reinit_params(U, S, self.t_init, toff)
+                
                 self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
                 self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
                 self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
-                #self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.ton = nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
                 self.toff = nn.Parameter(torch.tensor(np.log(toff+1e-10), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                
+            
+            
+            self.scaling_u = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
+            #self.scaling_s = nn.Parameter(torch.tensor(np.log(scaling_s), device=device).float())
+            self.scaling_s = nn.Parameter(torch.zeros(G,device=device).float())
+            
+        
+        if(init_type is None):  
+            self.u0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
+            self.s0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
+        elif(init_type == "random"):
+            rv_u = stats.gamma(1.0, 0, 4.0)
+            rv_s = stats.gamma(1.0, 0, 4.0)
+            r_u_gamma = rv_u.rvs(size=(G))
+            r_s_gamma = rv_s.rvs(size=(G))
+            r_u_bern = stats.bernoulli(0.02).rvs(size=(G))
+            r_s_bern = stats.bernoulli(0.02).rvs(size=(G))
+            u_top = np.quantile(U, 0.99, 0)
+            s_top = np.quantile(S, 0.99, 0)
+            
+            u0, s0 = u_top*r_u_gamma*r_u_bern, s_top*r_s_gamma*r_s_bern
+            self.u0 = nn.Parameter(torch.tensor(np.log(u0+1e-10), device=device).float())
+            self.s0 = nn.Parameter(torch.tensor(np.log(s0+1e-10), device=device).float())
+        else: #use the mean count of the initial type
+            cell_labels = adata.obs["clusters"].to_numpy()[train_idx]
+            cell_mask = cell_labels==init_type
+            self.u0 = nn.Parameter(torch.tensor(np.log(U[cell_mask]/lu[cell_mask].reshape(-1,1)/scaling_u.exp().mean(0)+1e-10), device=device).float())
+            self.s0 = nn.Parameter(torch.tensor(np.log(S[cell_mask]/ls[cell_mask].reshape(-1,1)/scaling_s.exp().mean(0)+1e-10), device=device).float())
 
-        #self.scaling.requires_grad = False
-        self.sigma_u.requires_grad = False
-        self.sigma_s.requires_grad = False
-        plot_time(self.t_init, adata.obsm["X_umap"][train_idx],save="figures/tinit.png")
-        self.scaling_u = nn.Parameter(torch.tensor(np.log(scaling_u), device=device).float())
-        self.scaling_s = nn.Parameter(torch.tensor(np.log(scaling_s), device=device).float())
         self.scaling_u.requires_grad = False
         self.scaling_s.requires_grad = False
-            
     
     def forward(self, t, neg_slope=0.0):
         Uhat, Shat = ode(t, torch.exp(self.alpha), torch.exp(self.beta), torch.exp(self.gamma), torch.exp(self.ton), torch.exp(self.toff), neg_slope=neg_slope)
@@ -1943,7 +2007,9 @@ class VanillaDVAE(VanillaVAE):
             poisson_u = Poisson(F.relu(uhat)+1e-2)
             poisson_s = Poisson(F.relu(shat)+1e-2)
         
-        logp = poisson_u.log_prob(u) + poisson_s.log_prob(s)
+        weight_u = (u==0).float()*0.05 + (u>0).float()
+        weight_s = (s==0).float()*0.05 + (s>0).float()
+        logp = poisson_u.log_prob(u) * weight_u + poisson_s.log_prob(s) * weight_s
         
         if( weight is not None):
             logp = logp*weight
