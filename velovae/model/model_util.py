@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from .scvelo_util import mRNA, vectorize, tau_inv, R_squared, test_bimodality, leastsq_NxN
 from sklearn.neighbors import NearestNeighbors
 import pynndescent
+from tqdm import tqdm
 
 """
 Dynamical Model
@@ -323,7 +324,8 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True):
     Ts = np.zeros((ngene))
     U0, S0 = np.zeros((ngene)), np.zeros((ngene)) #Steady-1 State
     
-    for i in range(ngene):
+    print('Estimating ODE parameters...')
+    for i in tqdm(range(ngene)):
         si, ui = s[:,i], u[:,i]
         sfilt, ufilt = si[(si>0) & (ui>0)], ui[(si>0) & (ui>0)] #Use only nonzero data points
         if(len(sfilt)>3 and len(ufilt)>3):
@@ -347,7 +349,8 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True):
     velocity_genes = (r2>min_r2) & (gamma>0.01) & (np.max(s > 0, 0) > 0) & (np.max(u > 0, 0) > 0)
     
     dist_u, dist_s = np.zeros(u.shape),np.zeros(s.shape)
-    for i in range(ngene):
+    print('Estimating the variance...')
+    for i in tqdm(range(ngene)):
         upred, spred = scv_pred_single(T[i],params[i,0],params[i,1],params[i,2],Ts[i],params[i,3]) #upred has the original scale
         dist_u[:,i] = u[:,i] - upred
         dist_s[:,i] = s[:,i] - spred
@@ -458,7 +461,7 @@ def init_params_raw(data, percent, fit_offset=False, fit_scaling=True):
     Ts = np.zeros((ngene))
     U0, S0 = np.zeros((ngene)), np.zeros((ngene)) #Steady-1 State
     
-    for i in range(ngene):
+    for i in tqdm(range(ngene)):
         si, ui = s[:,i], u[:,i]
         sfilt, ufilt = si[(si>0) & (ui>0)], ui[(si>0) & (ui>0)] #Use only nonzero data points
         if(len(sfilt)>3 and len(ufilt)>3):
@@ -538,11 +541,11 @@ def reinit_gene(u,s,t,ts):
     return alpha,beta,gamma,t0
     
 def reinit_params(U, S, t, ts):
-    #Reinitialize the regular ODE parameters based on estimated global latent time.
+    print('Reinitialize the regular ODE parameters based on estimated global latent time.')
     
     G = U.shape[1]
     alpha, beta, gamma, ton = np.zeros((G)), np.zeros((G)), np.zeros((G)), np.zeros((G))
-    for i in range(G):
+    for i in tqdm(range(G)):
         alpha_g, beta_g, gamma_g, ton_g = reinit_gene(U[:,i], S[:,i], t, ts[i])
         alpha[i] = alpha_g
         beta[i] = beta_g
@@ -1186,7 +1189,7 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
     
     n1 = 0
     len_avg = 0
-    for i in range(Nq):
+    for i in tqdm(range(Nq)):
         if(adaptive>0):
             dt_r, dt_l = adaptive*std_t[i], adaptive*std_t[i] + (dt[1]-dt[0])
         else:
