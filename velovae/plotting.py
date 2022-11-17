@@ -236,7 +236,7 @@ def plot_vel(t,
     """Generate a velocity quiver plot for a single gene
     The first row shows the original data, while the second row overlaps prediction with original data because VeloVAE outputs a point cloud instead of line fitting.
     
-    ArgumentS
+    Argument
     ---------
     
     t : `numpy array`
@@ -387,6 +387,21 @@ def plot_train_loss(loss, iters, save=None):
     ax.set_title("Training Loss")
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Loss")
+    
+    save_fig(fig, save)
+
+def plot_loss_split(likelihood, kldt, kldz, kldparam, iters, save=None):
+    fig, ax = plt.subplots(figsize=(12,6), facecolor='white')
+    colors = get_colors(4)
+    ax.plot(iters, likelihood, '.-', color=colors[0], label="Likelihood")
+    ax.plot(iters, kldt, '.-', color=colors[1], label="KL Time")
+    if(kldz is not None):
+        ax.plot(iters, kldz, '.-', color=colors[2], label="KL State")
+    if(kldparam is not None):
+        ax.plot(iters, kldparam, '.-', color=colors[3], label="KL Rates")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Loss")
+    ax.legend(loc=0, fontsize=12)
     
     save_fig(fig, save)
 
