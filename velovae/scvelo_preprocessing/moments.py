@@ -60,6 +60,7 @@ def moments(
     if n_neighbors is not None and n_neighbors > get_n_neighs(adata):
         if use_rep is None:
             use_rep = "X_pca"
+        print(f"Computing the KNN graph based on {use_rep}")
         neighbors(
             adata, n_neighbors=n_neighbors, use_rep=use_rep, n_pcs=n_pcs, method=method
         )
@@ -160,17 +161,17 @@ def discrete_moments(
     if "spliced" not in adata.layers.keys() or "unspliced" not in adata.layers.keys():
         logg.warn("Skipping moments, because un/spliced counts were not found.")
     else:
-        logg.info(f"computing moments based on {mode}", r=True)
+        logg.info(f"computing discrete moments based on {mode}", r=True)
         connectivities = get_connectivities(
             adata, mode, n_neighbors=n_neighbors, recurse_neighbors=False, normalize=False
         )
 
-        adata.layers["Ms"] = (
+        adata.layers["Cs"] = (
             csr_matrix.dot(connectivities, csr_matrix(adata.layers["spliced"]))
             .astype(int)
             .A
         )
-        adata.layers["Mu"] = (
+        adata.layers["Cu"] = (
             csr_matrix.dot(connectivities, csr_matrix(adata.layers["unspliced"]))
             .astype(int)
             .A
@@ -182,7 +183,7 @@ def discrete_moments(
         )
         logg.hint(
             "added \n"
-            "    'Ms' and 'Mu', moments of un/spliced abundances (adata.layers)"
+            "    'Cs' and 'Cu', aggregated counts of un/spliced abundances (adata.layers)"
         )
     return adata if copy else None
 
