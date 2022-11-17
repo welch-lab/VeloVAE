@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.stats import spearmanr
+from scipy.special import loggamma
 from sklearn.metrics.pairwise import pairwise_distances
 from ..model.model_util import pred_su_numpy, ode_numpy, ode_br_numpy, scv_pred, scv_pred_single, optimal_transport_duality_gap
 
@@ -11,6 +12,9 @@ def get_mae(U,S,Uhat,Shat):
     
 def time_corr(t1, t2):
     return spearmanr(t1,t2)
+
+def poisson_log_likelihood(x, mu):
+    return -mu+x*np.log(mu)-loggamma(x+1)
 
 def cell_state(adata, method, key, gene_indices=None):
     if(gene_indices is None):
