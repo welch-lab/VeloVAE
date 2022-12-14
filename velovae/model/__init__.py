@@ -1,9 +1,9 @@
 from .VanillaVAE import VanillaVAE
 from .VAE import VAE,VAEFullVB
-from .DVAE import DVAE, VanillaDVAE, DVAEFullVB
+from .DVAE import DVAE, DVAEFullVB
 from .BrODE import BrODE
 from .model_util import ode, ode_numpy
-from .model_util import knnx0, knnx0_alt, knnx0_bin, knn_transition_prob
+from .model_util import knnx0, knnx0_bin, knn_transition_prob
 from .model_util import encode_type, str2int, int2str, sample_genes
 from .velocity import rna_velocity_vanillavae, rna_velocity_vae, rna_velocity_brode
 from .TrainingData import SCData, SCTimedData
@@ -20,7 +20,6 @@ __all__ = [
     "ode",
     "ode_numpy",
     "knnx0",
-    "knnx0_alt",
     "knnx0_bin",
     "knn_transition_prob",
     "SCData",
@@ -29,6 +28,5 @@ __all__ = [
     "edmond_chu_liu",
     "sample_genes",
     "DVAE",
-    "VanillaDVAE",
     "DVAEFullVB"
     ]
