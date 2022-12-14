@@ -596,7 +596,7 @@ class VanillaVAE():
                                        False,
                                        gind, 
                                        gene_plot,
-                                       True, 
+                                       plot, 
                                        figure_path)
                 self.set_mode('train')
                 elbo_test = self.loss_test[-1] if len(self.loss_test)>0 else -np.inf
@@ -610,23 +610,25 @@ class VanillaVAE():
                 
                 
         print(f"*********              Finished. Total Time = {convert_time(time.time()-start)}             *********")
+        elbo_train = self.test(train_set,
+                               Xembed[self.train_idx],
+                               "final-train", 
+                               False,
+                               gind, 
+                               gene_plot,
+                               True, 
+                               figure_path)
+        elbo_test = self.test(test_set,
+                              Xembed[self.test_idx],
+                              "final-test", 
+                              True,
+                              gind, 
+                              gene_plot,
+                              True, 
+                              figure_path)
+        self.loss_train.append(elbo_train)
+        self.loss_test.append(elbo_test)
         if(plot):
-            elbo_train = self.test(train_set,
-                                   Xembed[self.train_idx],
-                                   "final-train", 
-                                   False,
-                                   gind, 
-                                   gene_plot,
-                                   True, 
-                                   figure_path)
-            elbo_test = self.test(test_set,
-                                  Xembed[self.test_idx],
-                                  "final-test", 
-                                  True,
-                                  gind, 
-                                  gene_plot,
-                                  True, 
-                                  figure_path)
             plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_vanilla.png')
             if(self.config["test_iter"]>0):
                 plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_vanilla.png')
