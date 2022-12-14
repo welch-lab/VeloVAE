@@ -6,9 +6,8 @@ import pynndescent
 from sklearn.preprocessing import normalize
 from .model_util import ode_numpy, ode_br_numpy, pred_su_numpy
 
-def rna_velocity_vanillavae(adata, key, use_raw=False, use_scv_genes=False, k=10):
-    """Compute the velocity based on:
-    ds/dt = beta * u - gamma * s
+def rna_velocity_vanillavae(adata, key, use_raw=False, use_scv_genes=False, k=10, return_copy=False):
+    """Compute the velocity based on: du/dt = alpha - beta * u, ds/dt = beta * u - gamma * s
     
     Arguments
     ---------
@@ -20,10 +19,12 @@ def rna_velocity_vanillavae(adata, key, use_raw=False, use_scv_genes=False, k=10
     use_scv_genes : bool, optional
         whether to compute velocity only for genes scVelo fits
     
-    Returns
+    Returns (only if `return_copy`=True)
     -------
+    Vu : `numpy array`
+        velocity of u
     V : `numpy array`
-        velocity
+        velocity of s
     U : `numpy array`
         predicted u values
     S : `numpy array`
@@ -50,15 +51,20 @@ def rna_velocity_vanillavae(adata, key, use_raw=False, use_scv_genes=False, k=10
     
     soft_coeff = 1/(1+np.exp(-(t.reshape(-1,1) - ton)*k)) #smooth transition at the switch-on time
     
+    Vu = (alpha * ((t.reshape(-1,1)>=ton) & (t.reshape(-1,1)<=toff)) - beta * U)
     V = (beta * U - gamma * S)*soft_coeff
+    
+    adata.layers[f"{key}_velocity_u"] = Vu
     adata.layers[f"{key}_velocity"] = V
     if(use_scv_genes):
         gene_mask = np.isnan(adata.var['fit_scaling'].to_numpy())
+        Vu[:, gene_mask] = np.nan
         V[:, gene_mask] = np.nan
-    return V, U, S
+    if(return_copy):
+        return Vu, V, U, S
 
-def rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False, full_vb=False):
-    """Compute the velocity based on: ds/dt = beta * u - gamma * s
+def rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, sigma=None, approx=False, full_vb=False, return_copy=False):
+    """Compute the velocity based on: du/dt = rho * alpha - beta * u, ds/dt = beta * u - gamma * s
     
     Arguments
     ---------
@@ -76,15 +82,16 @@ def rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, sigma=None,
     full_vb : bool, optional
         Whether the model is full VB
     
-    Returns
+    Returns (only if `return_copy`=True)
     -------
+    Vu : `numpy array`
+        velocity of u
     V : `numpy array`
-        velocity
+        velocity of s
     U : `numpy array`
         predicted u values
     S : `numpy array`
         predicted s values
-    
     """
     alpha = np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy()) if full_vb else adata.var[f"{key}_alpha"].to_numpy()
     rho = adata.layers[f"{key}_rho"]
@@ -109,16 +116,21 @@ def rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, sigma=None,
             adata.layers["Shat"] = S
     if(approx):
         V = (S - S0)/((t - t0).reshape(-1,1))
+        Vu = (U - U0)/((t - t0).reshape(-1,1))
     else:
         V = (beta * U - gamma * S)
+        Vu = rho * alpha - beta * U
     if(sigma is not None):
         time_order = np.argsort(t)
         V[time_order] = gaussian_filter1d(V[time_order], sigma, axis=0, mode="nearest")
+        Vu[time_order] = gaussian_filter1d(Vu[time_order], sigma, axis=0, mode="nearest")
     adata.layers[f"{key}_velocity"] = V
+    adata.layers[f"{key}_velocity_u"] = Vu
     if(use_scv_genes):
         gene_mask = np.isnan(adata.var['fit_scaling'].to_numpy())
         V[:, gene_mask] = np.nan
-    return V, U, S
+    if(return_copy):
+        return Vu, V, U, S
 
 def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
     """Compute the velocity based on: ds/dt = beta * u - gamma * s where
