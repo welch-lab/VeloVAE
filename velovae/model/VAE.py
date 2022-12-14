@@ -10,7 +10,7 @@ import time
 from velovae.plotting import plot_sig, plot_sig_, plot_time, plot_train_loss, plot_test_loss
 
 from .model_util import hist_equal, init_params, get_ts_global, reinit_params, convert_time, get_gene_index, optimal_transport_duality_gap
-from .model_util import pred_su, ode, ode_numpy, knnx0, knnx0_alt, knnx0_bin
+from .model_util import pred_su, ode, ode_numpy, knnx0, knnx0_bin
 from .TransitionGraph import encode_type
 from .TrainingData import SCData
 from .VanillaVAE import VanillaVAE, kl_gaussian, kl_uniform
@@ -765,14 +765,14 @@ class VAE(VanillaVAE):
                 else:
                     stop_training = self.train_epoch(data_loader, test_set, optimizer, None, self.config["k_alt"])
             
-            if(plot and (epoch==0 or (epoch+1) % self.config["save_epoch"] == 0)):
+            if(epoch==0 or (epoch+1) % self.config["save_epoch"] == 0):
                 elbo_train = self.test(train_set,
                                        Xembed[self.train_idx],
                                        f"train{epoch+1}", 
                                        False,
                                        gind, 
                                        gene_plot,
-                                       True, 
+                                       plot, 
                                        figure_path)
                 self.set_mode('train')
                 elbo_test = self.loss_test[-1] if len(self.loss_test)>0 else -np.inf
@@ -828,14 +828,14 @@ class VAE(VanillaVAE):
             
             
             
-            if(plot and (epoch==0 or (epoch+n_stage1+1) % self.config["save_epoch"] == 0)):
+            if(epoch==0 or (epoch+n_stage1+1) % self.config["save_epoch"] == 0):
                 elbo_train = self.test(train_set,
                                        Xembed[self.train_idx],
                                        f"train{epoch+n_stage1+1}", 
                                        False,
                                        gind, 
                                        gene_plot,
-                                       True, 
+                                       plot, 
                                        figure_path)
                 self.decoder.train()
                 elbo_test = self.loss_test[-1] if len(self.loss_test)>n_test1 else -np.inf
@@ -846,24 +846,26 @@ class VAE(VanillaVAE):
                 break
         
         print(f"*********              Finished. Total Time = {convert_time(time.time()-start)}             *********")
+        elbo_train = self.test(train_set,
+                               Xembed[self.train_idx],
+                               "final-train", 
+                               False,
+                               gind, 
+                               gene_plot,
+                               True, 
+                               figure_path)
+        elbo_test = self.test(test_set,
+                              Xembed[self.test_idx],
+                              "final-test", 
+                              True,
+                              gind, 
+                              gene_plot,
+                              True, 
+                              figure_path)
+        self.loss_train.append(elbo_train)
+        self.loss_test.append(elbo_test)
         #Plot final results
         if(plot):
-            elbo_train = self.test(train_set,
-                                   Xembed[self.train_idx],
-                                   "final-train", 
-                                   False,
-                                   gind, 
-                                   gene_plot,
-                                   True, 
-                                   figure_path)
-            elbo_test = self.test(test_set,
-                                  Xembed[self.test_idx],
-                                  "final-test", 
-                                  True,
-                                  gind, 
-                                  gene_plot,
-                                  True, 
-                                  figure_path)
             plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_velovae.png')
             if(self.config["test_iter"]>0):
                 plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_velovae.png')
@@ -1107,7 +1109,6 @@ class VAE(VanillaVAE):
         
         adata.layers[f"{key}_rho"] = rho
         
-        #u0, s0, t0 = self.update_x0(adata.layers['Mu'], adata.layers['Ms'], self.config["n_bin"])
         adata.obs[f"{key}_t0"] = self.t0.squeeze()
         adata.layers[f"{key}_u0"] = self.u0
         adata.layers[f"{key}_s0"] = self.s0
