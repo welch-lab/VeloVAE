@@ -1103,64 +1103,6 @@ def optimal_transport_duality_gap_ts(C, G, lambda1, lambda2, epsilon, batch_size
 ############################################################
 #  KNN-Related Functions
 ############################################################
-def knnx0_alt(U, S, t, z, t_query, z_query, dt, k):
-    N, Nq = len(t), len(t_query)
-    u0 = np.zeros((Nq, U.shape[1]))
-    s0 = np.zeros((Nq, S.shape[1]))
-    t0 = np.ones((Nq))*(t.min() - dt[0])
-    
-    order_idx = np.argsort(t)
-    _t = t[order_idx]
-    _z = z[order_idx]
-    _U = U[order_idx]
-    _S = S[order_idx]
-    
-    order_query = np.argsort(t_query)
-    _t_query = t_query[order_query]
-    _z_query = z_query[order_query]
-    
-    knn = np.ones((Nq,k))*np.nan
-    D = np.ones((Nq,k))*np.nan
-    ptr = 0
-    left, right = 0, 0 #pointer in the query sequence
-    i = 0
-    while(left<Nq and i<N): #i as initial point x0
-        #Update left, right
-        if(_t[i]+dt[0]>=_t_query[-1]):
-            break;
-        for l in range(left, Nq):
-            if(_t_query[l]>=_t[i]+dt[0]):
-                left = l
-                break
-        for l in range(right, Nq):
-            if(_t_query[l]>=_t[i]+dt[1]):
-                right = l
-                break
-        
-        #Update KNN
-        for j in range(left, right): #j is the set of cell with i in the range [tj-dt,tj-dt/2]
-            dist = np.linalg.norm(_z[i]-_z_query[j])
-            pos_nan = np.where(np.isnan(knn[j]))[0]
-            if(len(pos_nan)>0): #there hasn't been k nearest neighbors for j yet
-                knn[j,pos_nan[0]] = i
-                D[j,pos_nan[0]] = dist
-            else:
-                idx_largest = np.argmax(D[j])
-                if(dist<D[j,idx_largest]):
-                    D[j,idx_largest] = dist
-                    knn[j,idx_largest] = i
-        i += 1
-    #Calculate initial time and conditions
-    for i in range(Nq):
-        if(np.all(np.isnan(knn[i]))):
-            continue
-        pos = np.where(~np.isnan(knn[i]))[0]
-        u0[order_query[i]] = _U[knn[i,pos].astype(int)].mean(0)
-        s0[order_query[i]] = _S[knn[i,pos].astype(int)].mean(0)
-        t0[order_query[i]] = _t[knn[i,pos].astype(int)].mean()
-    
-    return u0,s0,t0
-
 def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
     ############################################################
     #Given cell time and state, find KNN for each cell in a time window ahead of
@@ -1216,6 +1158,52 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
     print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
     print(f"Average Set Size: {len_avg//Nq}")
     return u0,s0,t0
+
+def knnx0_index(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
+    ############################################################
+    #Same functionality as knnx0, but returns the neighbor index
+    ############################################################
+    N, Nq = len(t), len(t_query)
+    neighbor_index = []
+    
+    n1 = 0
+    len_avg = 0
+    for i in tqdm(range(Nq)):
+        if(adaptive>0):
+            dt_r, dt_l = adaptive*std_t[i], adaptive*std_t[i] + (dt[1]-dt[0])
+        else:
+            dt_r, dt_l = dt[0], dt[1]
+        t_ub, t_lb = t_query[i] - dt_r, t_query[i] - dt_l
+        indices = np.where((t>=t_lb) & (t<t_ub))[0]
+        k_ = len(indices)
+        len_avg = len_avg+k_
+        if(k_>0):
+            if(k_<k):
+                neighbor_index.append(indices)
+            else:
+                knn_model = NearestNeighbors(n_neighbors=k)
+                knn_model.fit(z[indices])
+                dist, ind = knn_model.kneighbors(z_query[i:i+1])
+                neighbor_index.append(indices[ind.squeeze()].astype(int))
+        else:
+            neighbor_index.append([])
+            n1 = n1+1
+    print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
+    print(f"Average Set Size: {len_avg//Nq}")
+    return neighbor_index
+
+def get_x0(U, S, t, neighbor_index):
+    N = len(neighbor_index)
+    u0 = np.zeros((N, U.shape[1]))
+    s0 = np.zeros((N, S.shape[1]))
+    t0 = np.ones((N))*(t.min() - (t.max()-t.min())*1e-2)
+    
+    for i in range(N):
+        if(len(neighbor_index[i])>0):
+            u0[i] = U[neighbor_index[i]].mean(0)
+            s0[i] = S[neighbor_index[i]].mean(0)
+            t0[i] = t[neighbor_index[i]].mean()
+    return u0, s0, t0
 
 def knnx0_quantile(U, S, t, z, t_query, z_query, dt, k, q=0.95):
     ############################################################
