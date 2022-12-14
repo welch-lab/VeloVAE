@@ -131,8 +131,8 @@ def preprocess(adata,
                cluster_key="clusters",
                tkey=None,
                selection_method="scv",
-               min_count_per_cell=20,
-               min_genes_expressed=20,
+               min_count_per_cell=None,
+               min_genes_expressed=None,
                min_shared_count=10,
                min_shared_cells=10,
                min_counts_s=None,
@@ -150,6 +150,7 @@ def preprocess(adata,
                resolution=1.0,
                compute_umap=False,
                umap_min_dist=0.5,
+               keep_raw=False,
                **kwargs):
     """Run the entire preprocessing pipeline using scanpy
     
@@ -185,9 +186,17 @@ def preprocess(adata,
     """
     #Preprocessing
     #1. Cell, Gene filtering and data normalization
+    if(min_count_per_cell is None):
+        min_count_per_cell = n_gene * 0.5
+    if(min_genes_expressed is None):
+        min_genes_expressed = n_gene // 50
     scanpy.pp.filter_cells(adata, min_counts=min_count_per_cell)
     scanpy.pp.filter_cells(adata, min_genes=min_genes_expressed)
     
+    if(keep_raw):
+        gene_names_all = np.array(adata.var_names)
+        U_raw = adata.layers["unspliced"]
+        S_raw = adata.layers["spliced"]
     
     if(n_gene > 0):
         flavor = kwargs["flavor"] if "flavor" in kwargs else "seurat" 
@@ -218,6 +227,7 @@ def preprocess(adata,
                          max_cells_u=max_cells_u,
                          retain_genes=genes_retain)
             normalize_per_cell(adata)
+            log1p(adata)
             if(adata.n_vars > n_gene):
                 filter_genes_dispersion(adata, 
                                         n_top_genes=n_gene, 
@@ -232,7 +242,6 @@ def preprocess(adata,
                                  n_top_genes=n_gene, 
                                  retain_genes=genes_retain,
                                  flavor=flavor)
-            scanpy.pp.pca(adata)
     elif(genes_retain is not None):
         gene_subset = np.zeros(adata.n_vars, dtype=bool)
         for i in range(len(genes_retain)):
@@ -247,6 +256,12 @@ def preprocess(adata,
     #2. KNN Averaging
     #remove_duplicate_cells(adata)
     moments(adata, n_pcs=npc, n_neighbors=n_neighbors)
+    
+    if(keep_raw):
+        print("Keep raw unspliced/spliced count data.")
+        gene_idx = np.array([np.where(gene_names_all==x)[0][0] for x in adata.var_names])
+        adata.layers["unspliced"] = U_raw[:,gene_idx].astype(int)
+        adata.layers["spliced"] = S_raw[:,gene_idx].astype(int)
     
     #3. Obtain cell clusters
     if(perform_clustering):
