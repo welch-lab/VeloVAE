@@ -133,7 +133,7 @@ def preprocess(adata,
                selection_method="scv",
                min_count_per_cell=None,
                min_genes_expressed=None,
-               min_shared_count=10,
+               min_shared_counts=10,
                min_shared_cells=10,
                min_counts_s=None,
                min_cells_s=None,
@@ -150,7 +150,7 @@ def preprocess(adata,
                resolution=1.0,
                compute_umap=False,
                umap_min_dist=0.5,
-               keep_raw=False,
+               keep_raw=True,
                **kwargs):
     """Run the entire preprocessing pipeline using scanpy
     
@@ -186,12 +186,15 @@ def preprocess(adata,
     """
     #Preprocessing
     #1. Cell, Gene filtering and data normalization
+    n_cell = adata.n_obs
     if(min_count_per_cell is None):
         min_count_per_cell = n_gene * 0.5
     if(min_genes_expressed is None):
         min_genes_expressed = n_gene // 50
     scanpy.pp.filter_cells(adata, min_counts=min_count_per_cell)
     scanpy.pp.filter_cells(adata, min_genes=min_genes_expressed)
+    if(n_cell - adata.n_obs > 0):
+        print(f"Filtered out {n_cell - adata.n_obs} cells with low counts.")
     
     if(keep_raw):
         gene_names_all = np.array(adata.var_names)
@@ -236,7 +239,7 @@ def preprocess(adata,
             rank_gene_selection(adata, cluster_key, **kwargs)
         else: 
             filter_and_normalize(adata, 
-                                 min_shared_counts=min_shared_count, 
+                                 min_shared_counts=min_shared_counts, 
                                  min_shared_cells = min_shared_cells,  
                                  min_counts_u = min_counts_u,  
                                  n_top_genes=n_gene, 
