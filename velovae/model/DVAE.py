@@ -317,6 +317,7 @@ class DVAE(VAE):
                  separate_us_scale=True,
                  checkpoints=[None, None]):
         
+        
         self.config = {
             #Model Parameters
             "dim_z":dim_z,
@@ -507,7 +508,7 @@ class DVAE(VAE):
             return mu_t, std_t, mu_z, std_z, u_out, s_out, rho
         return mu_t, std_t, mu_z, std_z, uhat, shat, rho
     
-    def update_x0(self, U, S, gind, gene_plot, path):
+    def update_x0(self, U, S):
         start = time.time()
         self.set_mode('eval')
         out, elbo = self.pred_all(np.concatenate((U,S),1), self.cell_labels, "both", ["uhat","shat","t","z"], gene_idx=np.array(range(U.shape[1])))
@@ -528,7 +529,7 @@ class DVAE(VAE):
                                             adaptive=self.config["knn_adaptive"], 
                                             std_t=std_t)
         u0, s0, t0 = get_x0(out[0][self.train_idx]/scaling, out[2][self.train_idx], t[self.train_idx], self.neighbor_idx)
-        #print(f"Finished. Actual Time: {convert_time(time.time()-start)}")
+        
         self.set_mode('train')
         return u0, s0, t0.reshape(-1,1)
     
@@ -638,9 +639,9 @@ class DVAE(VAE):
             u = xbatch[:,:xbatch.shape[1]//2]
             s = xbatch[:,xbatch.shape[1]//2:]
             
-            u0 = self.u0[self.train_idx[idx]] if self.use_knn else None
-            s0 = self.s0[self.train_idx[idx]] if self.use_knn else None
-            t0 = self.t0[self.train_idx[idx]] if self.use_knn else None
+            u0 = torch.tensor(self.u0[self.train_idx[idx]], device=self.device, requires_grad = True) if self.use_knn else None
+            s0 = torch.tensor(self.s0[self.train_idx[idx]], device=self.device, requires_grad = True) if self.use_knn else None
+            t0 = torch.tensor(self.t0[self.train_idx[idx]], device=self.device, requires_grad = True) if self.use_knn else None
             lu_scale = self.lu_scale[self.train_idx[idx]].exp()
             ls_scale = self.ls_scale[self.train_idx[idx]].exp()
             
@@ -772,7 +773,7 @@ class DVAE(VAE):
                 else:
                     stop_training = self.train_epoch(data_loader, test_set, optimizer, None, self.config["k_alt"])
             
-            if(epoch==0 or (epoch+1) % self.config["save_epoch"] == 0):
+            if(plot and (epoch==0 or (epoch+1) % self.config["save_epoch"] == 0)):
                 elbo_train = self.test(train_set,
                                        Xembed[self.train_idx],
                                        f"train{epoch+1}", 
@@ -793,33 +794,17 @@ class DVAE(VAE):
         n_test1 = len(self.loss_test)
         
         print("*********                      Stage  2                       *********")
-        u0, s0, t0 = self.update_x0(U, S, gind, gene_plot, figure_path)
-        self.u0 = torch.tensor(u0, dtype=float, device=self.device)
-        self.s0 = torch.tensor(s0, dtype=float, device=self.device)
-        self.t0 = torch.tensor(t0, dtype=float, device=self.device)
-        self.u0.requires_grad = False
-        self.s0.requires_grad = False
-        self.t0.requires_grad = False
+        u0, s0, t0 = self.update_x0(U, S)
+        self.u0 = u0
+        self.s0 = s0
+        self.t0 = t0
         
         self.use_knn = True
         self.decoder.init_weights()
-        #Plot the initial conditions
-        if(plot):
-            plot_time(t0.squeeze(), Xembed, save=f"{figure_path}/t0.png")
-            for i in range(len(gind)):
-                idx = gind[i]
-                t0_plot = t0[self.train_idx].squeeze()
-                u0_plot = u0[self.train_idx,idx]
-                s0_plot = s0[self.train_idx,idx]
-                plot_sig_(t0_plot, 
-                         u0_plot, s0_plot, 
-                         cell_labels=cell_labels_raw[self.train_idx],
-                         title=gene_plot[i], 
-                         save=f"{figure_path}/{gene_plot[i]}-x0.png")
         self.n_drop = 0
         
-        param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma] 
-        optimizer_ode = torch.optim.Adam(param_ode, lr=self.config["learning_rate_ode"])
+        #param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma] 
+        #optimizer_ode = torch.optim.Adam(param_ode, lr=self.config["learning_rate_ode"])
         param_post = list(self.decoder.net_rho2.parameters())+list(self.decoder.fc_out2.parameters())
         optimizer_post = torch.optim.Adam(param_post, lr=self.config["learning_rate_post"], weight_decay=self.config["lambda_rho"])
         for epoch in range(self.config["n_epochs_post"]):
@@ -838,15 +823,12 @@ class DVAE(VAE):
                     stop_training = self.train_epoch(data_loader, test_set, optimizer_post, None, self.config["k_alt"])
             
             if((epoch+1) % self.config["x0_epoch"] == 0):
-                u0, s0, t0 = self.update_x0(U, S, gind, gene_plot, figure_path)
-                self.u0 = torch.tensor(u0, dtype=float, device=self.device)
-                self.s0 = torch.tensor(s0, dtype=float, device=self.device)
-                self.t0 = torch.tensor(t0, dtype=float, device=self.device)
-                self.u0.requires_grad = False
-                self.s0.requires_grad = False
-                self.t0.requires_grad = False
+                u0, s0, t0 = self.update_x0(U, S)
+                self.u0 = u0
+                self.s0 = s0
+                self.t0 = t0
             
-            if(epoch==0 or (epoch+n_stage1+1) % self.config["save_epoch"] == 0):
+            if(plot and (epoch==0 or (epoch+n_stage1+1) % self.config["save_epoch"] == 0)):
                 elbo_train = self.test(train_set,
                                        Xembed[self.train_idx],
                                        f"train{epoch+n_stage1+1}", 
@@ -896,6 +878,7 @@ class DVAE(VAE):
             if(self.config["test_iter"]>0):
                 iters = [i*self.config["test_iter"] for i in range(1,len(self.test_mse)+1)]
                 plot_test_loss(self.test_mse, iters, save=f'{figure_path}/test_mse_velovae.png')
+        
         print(f"*********              Finished. Total Time = {convert_time(time.time()-start)}             *********")
         print(f"Final: Train ELBO = {elbo_train:.3f},           Test ELBO = {elbo_test:.3f}")
         print(f"       Training MSE = {self.train_mse[-1]:.3f}, Test MSE = {self.test_mse[-1]:.3f}")
@@ -928,9 +911,9 @@ class DVAE(VAE):
             for i in range(Nb):
                 data_in = torch.tensor(data[i*B:(i+1)*B]).float().to(self.device)
                 if(mode=="test"):
-                    u0 = self.u0[self.test_idx[i*B:(i+1)*B]] if self.use_knn else None
-                    s0 = self.s0[self.test_idx[i*B:(i+1)*B]] if self.use_knn else None
-                    t0 = self.t0[self.test_idx[i*B:(i+1)*B]] if self.use_knn else None
+                    u0 = torch.tensor(self.u0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    s0 = torch.tensor(self.s0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    t0 = torch.tensor(self.t0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.test_idx[i*B:(i+1)*B]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.test_idx[i*B:(i+1)*B],:]
                     p_z = self.p_z[:,self.test_idx[i*B:(i+1)*B],:]
@@ -938,9 +921,9 @@ class DVAE(VAE):
                     ls_scale = self.ls_scale[self.test_idx[i*B:(i+1)*B],:].exp()
                     mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot, continuous)
                 elif(mode=="train"):
-                    u0 = self.u0[self.train_idx[i*B:(i+1)*B]] if self.use_knn else None
-                    s0 = self.s0[self.train_idx[i*B:(i+1)*B]] if self.use_knn else None
-                    t0 = self.t0[self.train_idx[i*B:(i+1)*B]] if self.use_knn else None
+                    u0 = torch.tensor(self.u0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    s0 = torch.tensor(self.s0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    t0 = torch.tensor(self.t0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.train_idx[i*B:(i+1)*B]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.train_idx[i*B:(i+1)*B],:]
                     p_z = self.p_z[:,self.train_idx[i*B:(i+1)*B],:]
@@ -948,9 +931,9 @@ class DVAE(VAE):
                     ls_scale = self.ls_scale[self.train_idx[i*B:(i+1)*B],:].exp()
                     mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot, continuous)
                 else:
-                    u0 = self.u0[i*B:(i+1)*B] if self.use_knn else None
-                    s0 = self.s0[i*B:(i+1)*B] if self.use_knn else None
-                    t0 = self.t0[i*B:(i+1)*B] if self.use_knn else None
+                    u0 = torch.tensor(self.u0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if self.use_knn else None
+                    s0 = torch.tensor(self.s0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if self.use_knn else None
+                    t0 = torch.tensor(self.t0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if self.use_knn else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[i*B:(i+1)*B], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,i*B:(i+1)*B,:]
                     p_z = self.p_z[:,i*B:(i+1)*B,:]
@@ -996,9 +979,9 @@ class DVAE(VAE):
             if(N > B*Nb):
                 data_in = torch.tensor(data[Nb*B:]).float().to(self.device)
                 if(mode=="test"):
-                    u0 = self.u0[self.test_idx[Nb*B:]] if self.use_knn else None
-                    s0 = self.s0[self.test_idx[Nb*B:]] if self.use_knn else None
-                    t0 = self.t0[self.test_idx[Nb*B:]] if self.use_knn else None
+                    u0 = torch.tensor(self.u0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    s0 = torch.tensor(self.s0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    t0 = torch.tensor(self.t0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.test_idx[Nb*B:]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.test_idx[Nb*B:],:]
                     p_z = self.p_z[:,self.test_idx[Nb*B:],:]
@@ -1006,9 +989,9 @@ class DVAE(VAE):
                     ls_scale = self.ls_scale[self.test_idx[Nb*B:],:].exp()
                     mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot)
                 elif(mode=="train"):
-                    u0 = self.u0[self.train_idx[Nb*B:]] if self.use_knn else None
-                    s0 = self.s0[self.train_idx[Nb*B:]] if self.use_knn else None
-                    t0 = self.t0[self.train_idx[Nb*B:]] if self.use_knn else None
+                    u0 = torch.tensor(self.u0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    s0 = torch.tensor(self.s0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    t0 = torch.tensor(self.t0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.train_idx[Nb*B:]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.train_idx[Nb*B:],:]
                     p_z = self.p_z[:,self.train_idx[Nb*B:],:]
@@ -1016,9 +999,9 @@ class DVAE(VAE):
                     ls_scale = self.ls_scale[self.train_idx[Nb*B:],:].exp()
                     mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot)
                 else:
-                    u0 = self.u0[Nb*B:] if self.use_knn else None
-                    s0 = self.s0[Nb*B:] if self.use_knn else None
-                    t0 = self.t0[Nb*B:] if self.use_knn else None
+                    u0 = torch.tensor(self.u0[Nb*B:], dtype=torch.float, device=self.device) if self.use_knn else None
+                    s0 = torch.tensor(self.s0[Nb*B:], dtype=torch.float, device=self.device) if self.use_knn else None
+                    t0 = torch.tensor(self.t0[Nb*B:], dtype=torch.float, device=self.device) if self.use_knn else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[Nb*B:], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,Nb*B:,:]
                     p_z = self.p_z[:,Nb*B:,:]
@@ -1363,6 +1346,8 @@ class DVAEFullVB(DVAE):
                  separate_us_scale=True,
                  checkpoints=[None, None]):
         
+        t_start = time.time()
+        self.timer = 0
         self.config = {
             #Model Parameters
             "dim_z":dim_z,
@@ -1387,7 +1372,7 @@ class DVAEFullVB(DVAE):
             "learning_rate_ode":None, 
             "learning_rate_post":None,
             "lambda":1e-3, 
-            "lambda_rho":1e-3,
+            "lambda_rho":0.1,
             "kl_t":1.0, 
             "kl_z":1.0, 
             "kl_param":1.0,
@@ -1499,7 +1484,7 @@ class DVAEFullVB(DVAE):
         self.p_log_beta = torch.tensor([[rate_prior['beta'][0]], [rate_prior['beta'][1]]]).to(self.device)
         self.p_log_gamma = torch.tensor([[rate_prior['gamma'][0]], [rate_prior['gamma'][1]]]).to(self.device)
         
-        self.vae_risk = self.vae_risk_poisson
+        self.timer = time.time() - t_start
 
     def eval_model(self, data_in, lu_scale, ls_scale, u0=None, s0=None, t0=None, condition=None, continuous=True):
         data_in_scale = data_in
@@ -1643,10 +1628,8 @@ class DVAEFullVB(DVAE):
 
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
+        adata.uns[f"{key}_train_time"] = self.timer
         
-        #beta_mean = np.exp(adata.var[f"{key}_logmu_beta"].to_numpy())
-        #gamma_mean = np.exp(adata.var[f"{key}_logmu_gamma"].to_numpy())
-        #adata.layers[f"{key}_velocity"] = beta_mean * Uhat / adata.var[f"{key}_scaling"].to_numpy() - gamma_mean * Shat 
         rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, full_vb=True)
         
         if(file_name is not None):
