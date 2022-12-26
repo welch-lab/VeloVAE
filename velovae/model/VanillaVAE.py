@@ -209,11 +209,8 @@ class VanillaVAE():
         checkpoints : string list
             Contains the path to saved encoder and decoder models. Should be a .pt file.
         """
-        #Extract Input Data
-        try:
-            U,S = adata.layers['Mu'], adata.layers['Ms']
-        except KeyError:
-            print('Unspliced/Spliced count matrices not found in the layers! Exit the program...')
+        t_start = time.time()
+        self.timer = 0
         
         #Default Training Configuration
         self.config = {
@@ -274,6 +271,8 @@ class VanillaVAE():
         self.loss_train, self.loss_test = [], []
         self.counter = 0 #Count the number of iterations
         self.n_drop = 0 #Count the number of consecutive epochs with negative/low ELBO gain
+        
+        self.timer = time.time() - t_start
         
     def get_prior(self, adata, time_distribution, tmax, tprior=None):
         """Compute the parameters of time prior distribution
@@ -607,16 +606,14 @@ class VanillaVAE():
             if(stop_training):
                 print(f"********* Early Stop Triggered at epoch {epoch+1}. *********")
                 break
-                
-                
-        print(f"*********              Finished. Total Time = {convert_time(time.time()-start)}             *********")
+        
         elbo_train = self.test(train_set,
                                Xembed[self.train_idx],
                                "final-train", 
                                False,
                                gind, 
                                gene_plot,
-                               True, 
+                               plot, 
                                figure_path)
         elbo_test = self.test(test_set,
                               Xembed[self.test_idx],
@@ -624,7 +621,7 @@ class VanillaVAE():
                               True,
                               gind, 
                               gene_plot,
-                              True, 
+                              plot, 
                               figure_path)
         self.loss_train.append(elbo_train)
         self.loss_test.append(elbo_test)
@@ -632,6 +629,10 @@ class VanillaVAE():
             plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_vanilla.png')
             if(self.config["test_iter"]>0):
                 plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_vanilla.png')
+        
+        self.timer = self.timer + (time.time()-start)
+        print(f"*********              Finished. Total Time = {convert_time(self.timer)}             *********")
+        print(f"Final: Train ELBO = {elbo_train:.3f},           Test ELBO = {elbo_test:.3f}")
         return
     
     def pred_all(self, data, mode='test', output=["uhat", "shat", "t"], gene_idx=None):
@@ -826,6 +827,7 @@ class VanillaVAE():
         
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
+        adata.uns[f"{key}_train_time"] = self.timer
         
         rna_velocity_vanillavae(adata, key)
         
