@@ -129,6 +129,7 @@ class decoder(nn.Module):
                 self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
                 self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
                 self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
+                #self.toff = torch.nn.Parameter(np.log(tmax/2)+torch.ones(G, device=device).float()*(-10))
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
@@ -153,6 +154,7 @@ class decoder(nn.Module):
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
                 self.ton = nn.Parameter((torch.ones(G, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
+                #self.toff = nn.Parameter(torch.tensor(np.log(self.toff_init+1e-10)))
             else:
                 print("Initialization using the steady-state and dynamical models.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
@@ -176,6 +178,7 @@ class decoder(nn.Module):
                 self.gamma = nn.Parameter(torch.tensor(np.log(self.gamma_init), device=device).float())
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
+                #self.toff = nn.Parameter(torch.tensor(np.log(self.toff_init+1e-10)))
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
         
@@ -354,7 +357,7 @@ class VAE(VanillaVAE):
             "k_alt":1, 
             "train_scaling":False, 
             "train_std":False, 
-            "train_ton":True,
+            "train_ton":(init_method != 'tprior'),
             "train_x0":False,
             "weight_sample":False,
             "vel_continuity_loss":False,
@@ -1184,7 +1187,7 @@ class VAE(VanillaVAE):
 
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
-        adata.uns[f"{key}_train_time"] = self.timer
+        adata.uns[f"{key}_run_time"] = self.timer
         
         rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False)
         
@@ -1267,6 +1270,7 @@ class decoder_fullvb(nn.Module):
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                self.t_init = None
             elif(init_method == "tprior"):
                 print("Initialization using prior time.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
@@ -1521,7 +1525,7 @@ class VAEFullVB(VAE):
             "k_alt":1, 
             "train_scaling":False, 
             "train_std":False, 
-            "train_ton":True,
+            "train_ton":(init_method != 'tprior'),
             "train_x0":False,
             "weight_sample":False,
             "vel_continuity_loss":False,
@@ -1708,7 +1712,7 @@ class VAEFullVB(VAE):
 
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
-        adata.uns[f"{key}_train_time"] = self.timer
+        adata.uns[f"{key}_run_time"] = self.timer
         
         rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, full_vb=True)
         
