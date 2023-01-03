@@ -188,8 +188,7 @@ def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n
         #Sample multiple times
         mse_train, mae_train, mse_test, mae_test = 0,0,0,0
         np.random.seed(seed)
-        print(np.mean((U[:,gene_mask]-Uhat[:,gene_mask])**2+(S[:,gene_mask]-Shat[:,gene_mask])**2))
-        print(np.mean(np.abs(U[:,gene_mask]-Uhat[:,gene_mask])+np.abs(S[:,gene_mask]-Shat[:,gene_mask])))
+        
         for i in range(n_sample):
             U_sample = poisson.rvs(Uhat)
             S_sample = poisson.rvs(Shat)
@@ -403,10 +402,10 @@ def transition_prob_util(x_embed, t, cell_labels, nbin=20, epsilon = 0.05, batch
 def get_pred_utv(adata, B=5000):
     idx_t = np.where(~np.isnan(adata.layers['fit_t'][0]))[0][0]
     t = adata.layers['fit_t'][:,idx_t].reshape(-1,1)
-    o = adata.var['fit_offset0'].values
-    a0 = adata.var['fit_a0'].values
-    t0 = adata.var['fit_t0'].values
-    h0 = adata.var['fit_h0'].values
+    o = adata.var['fit_offset'].values
+    a0 = adata.var['fit_a'].values
+    t0 = adata.var['fit_t'].values
+    h0 = adata.var['fit_h'].values
     i = adata.var['fit_intercept'].values
     gamma = adata.var['fit_gamma'].values
     beta = adata.var['fit_beta'].values
@@ -519,7 +518,7 @@ def _loss_dv(
     l: int = 2,
     *args,
     **kwargs,
-) -> torch.Tensor:
+):
     batch_size, genes = current_state.shape
     if n_spliced is not None:
         genes = n_spliced
@@ -555,6 +554,8 @@ def _loss_dv(
     return loss.detach().cpu().item()
 
 def get_err_dv(adata, gene_mask):
+    if(gene_mask is None):
+        gene_mask = np.array(range(adata.n_vars))
     nn_t_idx = get_neighbor_idx(adata)
     mse_u = _loss_dv(torch.tensor(adata.layers['velocity_unspliced'][:,gene_mask]), 
                                  torch.tensor(adata.layers['Mu'][:,gene_mask]), 
@@ -587,7 +588,7 @@ def get_err_dv(adata, gene_mask):
 #Pyro-Velocity: Probabilistic RNA Velocity inference from single-cell data. 
 #bioRxiv.
 ##########################################################################
-def get_err_pv(adata, key, gene_mask, discrete=False):
+def get_err_pv(adata, key, gene_mask, discrete=True):
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
     if(discrete):
         U, S = adata.layers['unspliced'].A, adata.layers['spliced'].A
@@ -745,10 +746,10 @@ def cross_boundary_correctness(
     
     scores = {}
     all_scores = {}
-    
+    x_emb_name = x_emb
     if(x_emb in adata.obsm):
         x_emb = adata.obsm[x_emb]
-        if x_emb == "X_umap":
+        if x_emb_name == "X_umap":
             v_emb = adata.obsm['{}_umap'.format(k_velocity)]
         else:
             v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(k_velocity)][0]]
@@ -770,9 +771,9 @@ def cross_boundary_correctness(
 
             position_dif = x_emb[nodes] - x_pos
             dir_scores = cosine_similarity(position_dif, x_vel.reshape(1,-1)).flatten()
-            type_score.append(np.mean(dir_scores))
+            type_score.append(np.nanmean(dir_scores))
         
-        scores[(u, v)] = np.mean(type_score)
+        scores[(u, v)] = np.nanmean(type_score)
         all_scores[(u, v)] = type_score
         
     if return_raw:
@@ -820,3 +821,63 @@ def inner_cluster_coh(adata, k_cluster, k_velocity, return_raw=False):
         return all_scores
     
     return scores, np.mean([sc for sc in scores.values()])
+
+##########################################################################
+# End of Reference
+##########################################################################
+
+# New performance metric based on the idea of CBDir
+def branch_fit_score(adata, k_cluster, k_velocity, branches, x_emb="X_umap"):
+    cell_labels = adata.obs[k_cluster].to_numpy()
+    x_emb_name = x_emb
+    if(x_emb in adata.obsm):
+        x_emb = adata.obsm[x_emb]
+        if x_emb_name == "X_umap":
+            v_emb = adata.obsm['{}_umap'.format(k_velocity)]
+        else:
+            v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(k_velocity)][0]]
+    else:
+        x_emb = adata.layers[x_emb]
+        v_emb = adata.layers[k_velocity]
+    
+    all_boundary_nodes = {}
+    for u in branches:
+        sel = adata.obs[k_cluster] == u
+        nbs = adata.uns['neighbors']['indices'][sel] # [n * 30]
+        for v in branches[u]:
+            boundary_nodes = map(lambda nodes:keep_type(adata, nodes, v, k_cluster), nbs) #cells of type v that are neighbors of type u
+            indices = np.concatenate([x for x in boundary_nodes]).astype(int)
+            all_boundary_nodes[v] = indices
+    
+    for u in branches:
+        sel = adata.obs[k_cluster] == u
+        nbs = adata.uns['neighbors']['indices'][sel] # [n * 30]
+        branch_score = []
+        for v in branches[u]:       
+            boundary_nodes = map(lambda nodes:keep_type(adata, nodes, v, k_cluster), nbs)
+            x_points = x_emb[sel]
+            x_velocities = v_emb[sel]
+            
+            type_score = []
+            weights = []
+            for x_pos, x_vel, nodes in zip(x_points, x_velocities, boundary_nodes):
+                if len(nodes) == 0: continue
+                #check if the cell has the most transition to type v
+                weights.append(np.sum(cell_labels[nodes]==v))
+                
+                # cosine similarity with desired neighbor
+                position_dif = x_emb[nodes] - x_pos
+                dir_scores = cosine_similarity(position_dif, x_vel.reshape(1,-1)).flatten()
+                theta_1 = np.nanmean(np.arccos(dir_scores))/np.pi
+                
+                # cosine similarity with other branches
+                dir_scores = np.array([])
+                for w in branches[u]:
+                    if(w==v):
+                        continue
+                    position_dif = x_emb[all_boundary_nodes[w]] - x_pos
+                    dir_scores = np.concatenate((dir_scores, cosine_similarity(position_dif, x_vel.reshape(1,-1)).flatten()))
+                theta_2 = np.nanmean(np.arccos(dir_scores))/np.pi
+                type_score.append(theta_2-theta_1)
+            branch_score.append(np.sum(np.array(type_score)*np.array(weights))/np.sum(weights))
+    return branch_score, np.mean(branch_score)
