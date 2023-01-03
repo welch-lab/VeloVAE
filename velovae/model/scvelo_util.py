@@ -28,9 +28,10 @@ def prod_sum_obs(A, B):
         return np.einsum("ij, ij -> j", A, B) if A.ndim > 1 else (A * B).sum()
 
 def R_squared(residual, total):
+    #Clipping added by GYC: remove warning
     r2 = np.ones(residual.shape[1]) - prod_sum_obs(
         residual, residual
-    ) / prod_sum_obs(total, total)
+    ) / np.clip(prod_sum_obs(total, total), a_min=1e-6, a_max=None)
     r2[np.isnan(r2)] = 0
     return r2
 
@@ -146,6 +147,7 @@ def unspliced(tau, u0, alpha, beta):
 def spliced(tau, s0, u0, alpha, beta, gamma):
     c = (alpha - u0 * beta) * inv(gamma - beta)
     expu, exps = exp(-beta * tau), exp(-gamma * tau)
+    
     return s0 * exps + alpha / gamma * (1 - exps) + c * (exps - expu)
 
 
@@ -154,6 +156,7 @@ def mRNA(tau, u0, s0, alpha, beta, gamma):
     expus = (alpha - u0 * beta) * inv(gamma - beta) * (exps - expu)
     u = u0 * expu + alpha / beta * (1 - expu)
     s = s0 * exps + alpha / gamma * (1 - exps) + expus
+    
     return u, s
 
 def vectorize(t, t_, alpha, beta, gamma=None, alpha_=0, u0=0, s0=0, sorted=False):
