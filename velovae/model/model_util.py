@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from .scvelo_util import mRNA, vectorize, tau_inv, R_squared, test_bimodality, leastsq_NxN
 from sklearn.neighbors import NearestNeighbors
 import pynndescent
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 """
 Dynamical Model
@@ -56,6 +56,9 @@ def scv_pred(adata, key, glist=None):
 		st[:,i] = s_g
     
 	return ut, st
+"""
+End of Reference
+"""
 
 ############################################################
 #Shared among all VAEs
@@ -114,6 +117,23 @@ def pred_su(tau, u0, s0, alpha, beta, gamma):
     
     upred = u0*expb+alpha/beta*(1-expb)
     spred = s0*expg+alpha/gamma*(1-expg)+(alpha-beta*u0)/(gamma-beta+eps)*(expg-expb)*(1-unstability)-(alpha-beta*u0)*tau*expg*unstability
+    return nn.functional.relu(upred), nn.functional.relu(spred)
+
+def pred_su_back(tau, u1, s1, alpha, beta, gamma):
+    ############################################################
+    #(PyTorch Version)
+    #Analytical solution of the ODE
+    #tau: [B x 1] or [B x 1 x 1] time duration starting from the switch-on time of each gene.
+    #u0, s0: [G] or [N type x G] initial conditions
+    #alpha, beta, gamma: [G] or [N type x G] generation, splicing and degradation rates
+    ############################################################
+    
+    expb, expg = torch.exp(beta*tau), torch.exp(gamma*tau)
+    eps = 1e-6
+    unstability = (torch.abs(beta-gamma) < eps).long()
+    
+    upred = u1*expb-alpha/beta*(expb-1)
+    spred = s1*expg-alpha/gamma*(expg-1)-(alpha-beta*u1)/(gamma-beta+eps)*(expb-expg)*(1-unstability)+(alpha-beta*u1)*expb*tau*unstability
     return nn.functional.relu(upred), nn.functional.relu(spred)
 
 """
@@ -234,7 +254,7 @@ def get_cell_scale(U,S,train_idx=None,separate_us_scale=True, q=0.5):
     return lu, ls
 
 def get_dispersion(U, S, clip_min=1e-3, clip_max=1000):
-    mean_u, mean_s = U.mean(0), S.mean(0)
+    mean_u, mean_s = np.clip(U.mean(0),1e-6,None), np.clip(S.mean(0), 1e-6, None)
     var_u, var_s = U.var(0), S.var(0)
     dispersion_u, dispersion_s = var_u/mean_u, var_s/mean_s
     dispersion_u = np.clip(dispersion_u, a_min=clip_min, a_max=clip_max)
@@ -264,7 +284,6 @@ def init_gene(s,u,percent,fit_scaling=False,Ntype=None):
     mask = mask_s & mask_u
     if(not np.any(mask)):
         mask = mask_s
-    
     
     #Initialize alpha, beta and gamma
     beta = 1
@@ -304,7 +323,7 @@ def init_gene(s,u,percent,fit_scaling=False,Ntype=None):
     
     return alpha, beta, gamma, t_latent, u0_, s0_, t_, scaling
     
-def init_params(data, percent,fit_offset=False,fit_scaling=True):
+def init_params(data, percent,fit_offset=False,fit_scaling=True, eps=1e-3):
     #Adopted from SCVELO
     #Use the steady-state model to estimate alpha, beta,
     #gamma and the latent time
@@ -319,7 +338,7 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True):
     
     params = np.ones((ngene,4)) #four parameters: alpha, beta, gamma, scaling
     params[:,0] = np.random.rand((ngene))*np.max(u,0)
-    params[:,2] = np.random.rand((ngene))*np.max(u,0)/(np.max(s,0)+1e-10)
+    params[:,2] = np.clip(np.random.rand((ngene))*np.max(u,0)/(np.max(s,0)+1e-10), eps, None)
     T = np.zeros((ngene, len(s)))
     Ts = np.zeros((ngene))
     U0, S0 = np.zeros((ngene)), np.zeros((ngene)) #Steady-1 State
@@ -330,7 +349,7 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True):
         sfilt, ufilt = si[(si>0) & (ui>0)], ui[(si>0) & (ui>0)] #Use only nonzero data points
         if(len(sfilt)>3 and len(ufilt)>3):
             alpha, beta, gamma, t, u0_, s0_, ts, scaling = init_gene(sfilt,ufilt,percent,fit_scaling)
-            params[i,:] = np.array([alpha,beta,gamma,scaling])
+            params[i,:] = np.array([alpha,beta,np.clip(gamma, eps, None),scaling])
             T[i, (si>0) & (ui>0)] = t
             U0[i] = u0_
             S0[i] = s0_
@@ -342,14 +361,17 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True):
     #Filter out genes
     min_r2 = 0.01
     offset, gamma = leastsq_NxN(s,u,fit_offset,perc=[100-percent,percent])
+    gamma = np.clip(gamma, eps, None)
     residual = u-gamma*s
     if(fit_offset):
         residual -= offset
+    
     r2 = R_squared(residual, total=u-u.mean(0))
     velocity_genes = (r2>min_r2) & (gamma>0.01) & (np.max(s > 0, 0) > 0) & (np.max(u > 0, 0) > 0)
     
     dist_u, dist_s = np.zeros(u.shape),np.zeros(s.shape)
     print('Estimating the variance...')
+    assert np.all(params[:,2]>0)
     for i in tqdm(range(ngene)):
         upred, spred = scv_pred_single(T[i],params[i,0],params[i,1],params[i,2],Ts[i],params[i,3]) #upred has the original scale
         dist_u[:,i] = u[:,i] - upred
@@ -362,7 +384,7 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True):
     
     #Make sure all genes get the same total relevance score
     Rscore = ((u>0) & (s>0))*np.ones(u.shape) + ((u==0) & (s==0))*np.ones(u.shape)*0.02 + ((u==0) & (s>0))*np.ones(u.shape)*0.1 + ((u>0) & (s==0))*np.ones(u.shape)*0.1
-     
+    
     return params[:,0], params[:,1], params[:,2], params[:,3], Ts, U0, S0, sigma_u, sigma_s, T.T, Rscore
 
 """
@@ -441,7 +463,7 @@ def init_gene_raw(s,u,percent,fit_scaling=False,poisson_model=True,kde=True):
     
     return alpha, beta, gamma, t_latent, u0_, s0_, t_, scaling
     
-def init_params_raw(data, percent, fit_offset=False, fit_scaling=True):
+def init_params_raw(data, percent, fit_offset=False, fit_scaling=True, eps=1e-3):
     #Adopted from SCVELO
     #Use the steady-state model to estimate alpha, beta,
     #gamma and the latent time
@@ -456,7 +478,7 @@ def init_params_raw(data, percent, fit_offset=False, fit_scaling=True):
     
     params = np.ones((ngene,4)) #four parameters: alpha, beta, gamma, scaling
     params[:,0] = np.random.rand((ngene))*np.max(u,0)
-    params[:,2] = np.random.rand((ngene))*np.max(u,0)/(np.max(s,0)+1e-10)
+    params[:,2] = np.clip(np.random.rand((ngene))*np.max(u,0)/(np.max(s,0)+1e-10), eps, None)
     T = np.zeros((ngene, len(s)))
     Ts = np.zeros((ngene))
     U0, S0 = np.zeros((ngene)), np.zeros((ngene)) #Steady-1 State
@@ -466,7 +488,7 @@ def init_params_raw(data, percent, fit_offset=False, fit_scaling=True):
         sfilt, ufilt = si[(si>0) & (ui>0)], ui[(si>0) & (ui>0)] #Use only nonzero data points
         if(len(sfilt)>3 and len(ufilt)>3):
             alpha, beta, gamma, t, u0_, s0_, ts, scaling = init_gene_raw(si,ui,percent,fit_scaling)
-            params[i,:] = np.array([alpha,beta,gamma,scaling])
+            params[i,:] = np.array([alpha,beta,np.clip(gamma,eps,None),scaling])
             T[i] = t
             U0[i] = u0_
             S0[i] = s0_
@@ -486,23 +508,30 @@ Reinitialization based on the global time
 """
 def get_ts_global(tgl, U, S, perc):
     #Initialize the transition time in the original ODE model.
-    
     tsgl = np.zeros((U.shape[1]))
     for i in range(U.shape[1]):
         u,s = U[:,i],S[:,i]
         zero_mask = (u>0) & (s>0)
         mask_u, mask_s = u>=np.percentile(u,perc),s>=np.percentile(s,perc)
-        tsgl[i] = np.median(tgl[mask_u & mask_s & zero_mask])
-        if(np.isnan(tsgl[i])):
-            tsgl[i] = np.median(tgl[(mask_u | mask_s) & zero_mask])
+        mask = mask_u & mask_s & zero_mask
+        if(not np.any(mask)):
+            mask = (mask_u | mask_s) & zero_mask
+        # edge case: all u or all s are zero
+        if(not np.any(mask)):
+            mask = (mask_u | mask_s) & ((u>0) | (s>0))
+        # edge case: all u and all s are zero
+        if(not np.any(mask)):
+            mask = np.ones((len(u))).astype(bool)
+        tsgl[i] = np.median(tgl[mask])
         if(np.isnan(tsgl[i])):
             tsgl[i] = np.median(tgl)
+        
     assert not np.any(np.isnan(tsgl))
     return tsgl
 
 
 
-def reinit_gene(u,s,t,ts):
+def reinit_gene(u,s,t,ts,eps=1e-6):
     #Applied to the regular ODE 
     #Initialize the ODE parameters (alpha,beta,gamma,t_on) from
     #input data and estimated global cell time.
@@ -510,6 +539,7 @@ def reinit_gene(u,s,t,ts):
     #u1, u2: picked from induction
     mask1_u = u>np.quantile(u,0.95)
     mask1_s = s>np.quantile(s,0.95)
+    assert(np.any(mask1_u | mask1_s))
     u1, s1 = np.median(u[mask1_u | mask1_s]), np.median(s[mask1_s | mask1_u])
     
     if(u1 == 0 or np.isnan(u1)):
@@ -525,17 +555,23 @@ def reinit_gene(u,s,t,ts):
     
     mask2_u = (u>=u1*0.49)&(u<=u1*0.51)&(t<=ts) 
     mask2_s = (s>=s1*0.49)&(s<=s1*0.51)&(t<=ts) 
-    if(np.any(mask2_u) or np.any(mask2_s)):
+    if(np.any(mask2_u)):
         t2 = np.median(t[mask2_u | mask2_s])
-        u2, s2 = np.median(u[mask2_u]), np.median(s[mask2_s])
-        t0 = max(0,np.log((u1-u2)/(u1*np.exp(-t2)-u2*np.exp(-t1))))
+        u2 = np.median(u[mask2_u])
+        t0 = np.log(np.clip((u1-u2)/(u1*np.exp(-t2)-u2*np.exp(-t1)+eps),a_min=1.0,a_max=None))
     else:
         t0 = 0
     beta = 1
     alpha = u1/(1-np.exp(t0-t1)) if u1>0 else 0.1*np.random.rand()
     if(alpha <= 0 or np.isnan(alpha) or np.isinf(alpha)):
         alpha = u1
-    gamma = alpha/np.quantile(s,0.95)
+    
+    p = 0.95
+    s_inf = np.quantile(s,p)
+    while(s_inf==0 and p<=1.0):
+        p = p + 0.01
+        s_inf = np.quantile(s,p)
+    gamma = alpha/np.clip(s_inf, a_min=eps, a_max=None)
     if(gamma <= 0 or np.isnan(gamma) or np.isinf(gamma)):
         gamma = 2.0
     return alpha,beta,gamma,t0
@@ -744,12 +780,26 @@ def reinit_type_params(U, S, t, ts, cell_labels, cell_types, init_types):
         U_type, S_type = U[(cell_labels==type_)], S[(cell_labels==type_)]
         
         for g in range(G):
-            u_low = np.min(U_type[:,g])
-            s_low = np.min(S_type[:,g])
-            u_high = np.quantile(U_type[:,g],0.95)
-            s_high = np.quantile(S_type[:,g],0.95)
-            mask_high =  (U_type[:,g]>u_high) | (S_type[:,g]>s_high)
-            mask_low = (U_type[:,g]<u_low) | (S_type[:,g]<s_low)
+            p_low, p_high = 0.05, 0.95
+            u_low = np.quantile(U_type[:,g], p_low)
+            s_low = np.quantile(S_type[:,g], p_low)
+            u_high = np.quantile(U_type[:,g], p_high)
+            s_high = np.quantile(S_type[:,g], p_high)
+            
+            #edge cases
+            while((u_high==0 or s_high==0) and p_high<1.0):
+                p_high += 0.01
+                u_high = np.quantile(U_type[:,g], p_high)
+                s_high = np.quantile(S_type[:,g], p_high)
+            if(u_high==0):
+                gamma[type_, g] = 0.01
+                continue
+            elif(s_high==0):
+                gamma[type_, g] = 1.0
+                continue
+            
+            mask_high =  (U_type[:,g]>=u_high) | (S_type[:,g]>=s_high)
+            mask_low = (U_type[:,g]<=u_low) | (S_type[:,g]<=s_low)
             mask_q = mask_high | mask_low
             u_q = U_type[mask_q,g]
             s_q = S_type[mask_q,g]
@@ -1103,7 +1153,7 @@ def optimal_transport_duality_gap_ts(C, G, lambda1, lambda2, epsilon, batch_size
 ############################################################
 #  KNN-Related Functions
 ############################################################
-def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
+def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None, forward=False):
     ############################################################
     #Given cell time and state, find KNN for each cell in a time window ahead of
     #it. The KNNs are used to compute the initial condition for the ODE of
@@ -1123,6 +1173,8 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
     #        [t-adaptive*std_t, t-adaptive*std_t+delta_t]
     #10.     std_t [1D array (N)]
     #        Posterior standard deviation of cell time
+    #11.     forward [bool]
+    #        Whether to look for ancestors or descendants
     ############################################################
     N, Nq = len(t), len(t_query)
     u0 = np.zeros((Nq, U.shape[1]))
@@ -1131,12 +1183,17 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
     
     n1 = 0
     len_avg = 0
+    t_98 = np.quantile(t,0.98)
+    u_end, s_end = U[t>=t_98].mean(0), S[t>=t_98].mean(0)
     for i in tqdm(range(Nq)):
         if(adaptive>0):
             dt_r, dt_l = adaptive*std_t[i], adaptive*std_t[i] + (dt[1]-dt[0])
         else:
             dt_r, dt_l = dt[0], dt[1]
-        t_ub, t_lb = t_query[i] - dt_r, t_query[i] - dt_l
+        if(forward):
+            t_ub, t_lb = t_query[i] + dt_l, t_query[i] + dt_r
+        else:
+            t_ub, t_lb = t_query[i] - dt_r, t_query[i] - dt_l
         indices = np.where((t>=t_lb) & (t<t_ub))[0]
         k_ = len(indices)
         len_avg = len_avg+k_
@@ -1154,6 +1211,10 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
                 s0[i] = np.mean( S[indices[ind.squeeze()].astype(int)], 0)
                 t0[i] = np.mean( t[indices[ind.squeeze()].astype(int)] )
         else:
+            if(forward):
+                u0[i] = u_end
+                s0[i] = s_end
+                t0[i] = t_98 + (t_98-t.min())* 0.01
             n1 = n1+1
     print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
     print(f"Average Set Size: {len_avg//Nq}")
@@ -1264,7 +1325,8 @@ def knnx0_bin(U,
               n_graph=10, 
               pruning_degree_multiplier=1.5, 
               diversify_prob=1.0, 
-              max_bin_size=10000):
+              max_bin_size=10000,
+              forward=False):
     ############################################################
     #Same functionality as knnx0, but with a different algorithm. Instead of computing
     #a KNN graph for each cell, we divide the time line into several bins and compute
@@ -1294,7 +1356,11 @@ def knnx0_bin(U,
     t0[indices_query] = tmin
     
     for i in range(n_graph):
-        t_ub, t_lb = tmin+(i+1)*delta_t, tmin+i*delta_t
+        if(forward):
+            t_ub, t_lb = tmin+(i+1)*delta_t, tmin+i*delta_t
+        else:
+            t_ub, t_lb = tmin+(i+2)*delta_t, tmin+(i+1)*delta_t
+        
         indices = np.where((t>=t_lb) & (t<t_ub))[0]
         if(len(indices) > max_bin_size):
             indices = np.random.choice(indices, max_bin_size, replace=False)
@@ -1305,7 +1371,11 @@ def knnx0_bin(U,
             k = max(1, len(indices)//20)
         knn_model = pynndescent.NNDescent(z[indices], n_neighbors=k+1, pruning_degree_multiplier=pruning_degree_multiplier, diversify_prob=diversify_prob)
         #The query points are in the next time interval
-        indices_query = np.where((t_query>=t_ub) & (t_query<t_ub+delta_t))[0] if i<n_graph-1 else np.where(t_query>=t_ub)[0]
+        if(forward):
+            indices_query = np.where((t_query>=t_ub) & (t_query<t_ub+delta_t))[0] if i>0 else np.where(t_query<=t_lb)[0]
+        else:
+            indices_query = np.where((t_query>=t_ub) & (t_query<t_ub+delta_t))[0] if i<n_graph-1 else np.where(t_query>=t_ub)[0]
+        
         if(len(indices_query)==0):
             continue
         try:
@@ -1347,7 +1417,7 @@ def knn_transition_prob(t,
         t0[i] = np.quantile(t[cell_labels==i], 0.01)
         sigma_t[i] = t[cell_labels==i].std()
     if(soft_assign):
-        A = csr_matrix((N, N))
+        A = np.empty((N, N))
         for i in range(Nq):
             t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
             indices = np.where((t>=t_lb) & (t<t_ub))[0]
@@ -1364,7 +1434,7 @@ def knn_transition_prob(t,
             for j in range(n_type):
                 P[i,j] = A[cell_labels==i][:,cell_labels==j].sum()
     else:
-        A = csr_matrix((N, n_type))
+        A = np.empty((N, n_type))
         for i in range(Nq):
             t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
             indices = np.where((t>=t_lb) & (t<t_ub))[0]
