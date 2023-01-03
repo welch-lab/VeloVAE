@@ -54,9 +54,11 @@ def get_metric(adata,
         mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_dv(adata, gene_mask)
     elif('PyroVelocity' in method):
         if('err' in adata.uns):
-            mse_train, mse_test, mae_train, mae_test, logp_train, logp_test  = adata.uns['err']
+            mse_train, mse_test, mae_train, mae_test, logp_train, logp_test  = adata.uns['err']['MSE Train'], adata.uns['err']['MSE Test'],\
+                                                                               adata.uns['err']['MAE Train'], adata.uns['err']['MAE Test'],\
+                                                                               adata.uns['err']['LL Train'], adata.uns['err']['LL Test']
         else:
-            mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_pv(adata, key, gene_mask, 'Discrete' in method)
+            mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_pv(adata, key, gene_mask, not 'Continuous' in method)
     elif(method=='VeloVI'):
         mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_velovi(adata, key, gene_mask)
     
@@ -108,7 +110,7 @@ def get_metric(adata,
     if(len(cluster_edges)>0):
         _, mean_cbdir = cross_boundary_correctness(adata, cluster_key, vkey, cluster_edges, x_emb=f"X_{embed}")
         stats[f'Cross-Boundary Direction Correctness (embed)'] = mean_cbdir
-        _, mean_cbdir = cross_boundary_correctness(adata, cluster_key, vkey, cluster_edges, x_emb='Ms')
+        _, mean_cbdir = cross_boundary_correctness(adata, cluster_key, vkey, cluster_edges, x_emb="Ms")
         stats['Cross-Boundary Direction Correctness'] = mean_cbdir
     _, mean_iccoh = inner_cluster_coh(adata, cluster_key, vkey)
     stats['In-Cluster Coherence'] = mean_iccoh
@@ -136,6 +138,7 @@ def post_analysis(adata,
                   test_id,
                   methods, 
                   keys, 
+                  scv_key=None,
                   compute_metrics=True,
                   raw_count=False,
                   genes=[], 
@@ -210,9 +213,24 @@ def post_analysis(adata,
     
     #Get gene indices
     if(len(genes)>0):
-        gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
+        gene_indices = []
+        gene_rm = []
+        for gene in genes:
+            idx = np.where(adata.var_names==gene)[0]
+            if(len(idx)>0):
+                gene_indices.append(idx[0])
+            else:
+                print(f"Warning: gene name {gene} not found in AnnData. Removed.")
+                gene_rm.append(gene)
+        for gene in gene_rm:
+            genes.remove(gene)
+        
+        if(len(gene_indices)==0):
+            print("Warning: No gene names found. Randomly select genes...")
+            gene_indices = np.random.choice(adata.n_vars, grid_size[0]*grid_size[1], replace=False).astype(int)
+            genes = adata.var_names[gene_indices].to_numpy()
     else:
-        print("Warning: No gene names are provided. Randomly select a gene...")
+        print("Warning: No gene names are provided. Randomly select genes...")
         gene_indices = np.random.choice(adata.n_vars, grid_size[0]*grid_size[1], replace=False).astype(int)
         genes = adata.var_names[gene_indices].to_numpy()
         print(genes)
@@ -224,8 +242,6 @@ def post_analysis(adata,
     That, Yhat = {},{}
     
     scv_idx = np.where(np.array(methods)=='scVelo')[0]
-    #scv_key = keys[scv_idx[0]] if(len(scv_idx)>0) else None
-    scv_key = 'velocity_genes'
     vkeys = []
     for i, method in enumerate(methods):
         vkey = 'velocity' if method in ['scVelo','UniTVelo','DeepVelo'] else f'{keys[i]}_velocity'
@@ -240,10 +256,11 @@ def post_analysis(adata,
                                  vkeys[i], 
                                  cluster_key, 
                                  scv_key, 
-                                 (scv_key is not None),
+                                 (scv_key in adata.var),
                                  cluster_edges,
                                  embed)
-            stats[method] = stats_i
+            method_ = f"{method} ({keys[i]})" if method in stats else method# avoid duplicate methods with different keys
+            stats[method_] = stats_i
         #Compute prediction for the purpose of plotting (a fixed number of plots)
         if('phase' in plot_type or 'signal' in plot_type or 'all' in plot_type):
             #Integer-encoded cell type
@@ -280,7 +297,7 @@ def post_analysis(adata,
                 Uhat_i = adata.layers["Mu"][:,gene_indices]+adata.layers["velocity_unspliced"][:,gene_indices]
                 Shat_i = adata.layers["Mu"][:,gene_indices]+V[method]
                 Yhat[method] = None
-            elif(method in ["PyroVelocity","Discrete PyroVelocity"]):
+            elif(method in ["PyroVelocity","Continuous PyroVelocity"]):
                 t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
                 Uhat_i, Shat_i = adata.layers[f'{keys[i]}_u'][:,gene_indices], adata.layers[f'{keys[i]}_s'][:,gene_indices]
                 V[method] = adata.layers[f"{keys[i]}_velocity"][:,gene_indices]
@@ -299,16 +316,9 @@ def post_analysis(adata,
     if(compute_metrics):
         print("---     Computing Peformance Metrics     ---")
         print(f"Dataset Size: {adata.n_obs} cells, {adata.n_vars} genes")
-        for method in stats:
-            metrics = list(stats[method].keys())
-            break
-        stats_df = DataFrame({}, index=Index(metrics))
-        for i, method in enumerate(methods):
-            if(method in stats_df):
-                stats_df.insert(i, f"{method} (keys[i])", [stats[method][x] for x in metrics])
-            stats_df.insert(i, method, [stats[method][x] for x in metrics])
+        
+        stats_df = pd.DataFrame(stats)
         pd.set_option("display.precision", 3)
-        print(stats_df)
     
     print("---   Plotting  Results   ---")
     if('cluster' in plot_type or "all" in plot_type):
@@ -410,6 +420,7 @@ def post_analysis(adata,
                                           palette=colors,
                                           legend_fontsize=15,
                                           dpi=150,
+                                          show=False,
                                           save=f'{save_path}/{test_id}_{keys[i]}_stream.png')
         except ImportError:
             print('Please install scVelo in order to generate stream plots')
