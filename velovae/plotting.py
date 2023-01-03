@@ -2244,13 +2244,24 @@ def plot_transition_graph(adata,
     ig.plot(g, 
             layout=layout,
             vertex_color=colors,
-            vertex_size=20,
+            vertex_size=0.5,
             edge_width=2,
             target=ax)
-        
+    
     ax.axis("off")
     
-    save_fig(fig, save)
+    #Get legends
+    _fig, _ax = plt.subplots()
+    handles = []
+    for i in range(len(colors)):
+         handles.append(_ax.plot([],[], marker='o', color=colors[i], label=node_name[i])[0])
+    plt.close(_fig)
+    labels = node_name
+    legend = _fig.legend(handles, labels, loc=3, framealpha=1, frameon=False)
+    
+    lgd=fig.legend(handles, labels, fontsize=15, markerscale=2, ncol=1, bbox_to_anchor=(0.2, 0.95), loc='upper right')
+
+    save_fig(fig, save, (lgd,))
     
     return
 
