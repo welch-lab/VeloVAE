@@ -30,7 +30,7 @@ class decoder(nn.Module):
                  device=torch.device('cpu'), 
                  p=98,
                  checkpoint = None,
-                 graph_param = None):
+                 **kwargs):
         super(decoder,self).__init__()
         
         U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
@@ -47,13 +47,14 @@ class decoder(nn.Module):
         self.Ntype = len(cell_types_int)
         
         #Transition Graph
-        partition_k = graph_param['partition_k'] if 'partition_k' in graph_param else 5
-        partition_res = graph_param['partition_res'] if 'partition_res' in graph_param else 0.005
+        partition_k = kwargs['partition_k'] if 'partition_k' in kwargs else 5
+        partition_res = kwargs['partition_res'] if 'partition_res' in kwargs else 0.005
         tgraph = TransGraph(adata, tkey, embed_key, cluster_key, train_idx, k=partition_k, res=partition_res)
-        if(graph_param is None):
-            w = tgraph.compute_transition_deterministic(adata)
-        else:
-            w = tgraph.compute_transition_deterministic(adata, graph_param['n_par'], graph_param['dt'], graph_param['k'])
+        
+        n_par= kwargs['n_par'] if 'n_par' in kwargs else 2
+        dt = kwargs['dt'] if 'dt' in kwargs else (0.01,0.05)
+        k = kwargs['k'] if 'k' in kwargs else 5
+        w = tgraph.compute_transition_deterministic(adata, n_par, dt, k)
         
         self.w = torch.tensor(w, device=device)
         self.par = torch.argmax(self.w, 1)
@@ -166,7 +167,7 @@ class decoder(nn.Module):
                              max_iter = 2000, 
                              q = 0.01):
         """
-        .. deprecated:: 1.0
+        .. deprecated:: 0.1.0
         """
         dt = (t.max()-t.min())/nbin
         
@@ -217,7 +218,7 @@ class BrODE():
                  param_key=None,
                  device='cpu', 
                  checkpoint=None,
-                 graph_param=None):
+                 graph_param={}):
         """High-level ODE model for RNA velocity with branching structure.
         
         Arguments
@@ -249,12 +250,14 @@ class BrODE():
                 This is different from partition_k. When we pick the time window, KNN
                 is computed to choose the most likely parents from the cells in the window.
         """
+        t_start = time.time()
+        self.timer = 0
         try:
-            U,S = adata.layers['Mu'], adata.layers['Ms']
-            cell_labels_raw = adata.obs["clusters"].to_numpy()
+            cell_labels_raw = adata.obs[cluster_key].to_numpy()
             self.cell_types_raw = np.unique(cell_labels_raw)
         except KeyError:
-            print('Please run the preprocessing step!')
+            print('Cluster key not found!')
+            return
         
         #Training Configuration
         self.config = {
@@ -291,12 +294,14 @@ class BrODE():
                                param_key,
                                device=self.device, 
                                checkpoint=checkpoint,
-                               graph_param=graph_param)
+                               **graph_param)
         
         #class attributes for training
         self.loss_train, self.loss_test = [], []
         self.counter = 0 #Count the number of iterations
         self.n_drop = 0 #Count the number of consecutive epochs with negative/low ELBO gain
+        
+        self.timer = time.time() - t_start
     
     def set_device(self, device):
         if('cuda' in device):
@@ -470,8 +475,7 @@ class BrODE():
               config={}, 
               plot=False, 
               gene_plot=[], 
-              figure_path="figures", 
-              embed="umap"):
+              figure_path="figures"):
         """Train the model.
         
         Arguments
@@ -506,10 +510,7 @@ class BrODE():
         #Get data loader
         X = np.concatenate((adata.layers['Mu'], adata.layers['Ms']), 1)
         X = X.astype(float)
-        try:
-            Xembed = adata.obsm[f"X_{embed}"]
-        except KeyError:
-            print("Embedding not found! Please run the corresponding preprocessing step!")
+        
         cell_labels_raw = adata.obs[cluster_key].to_numpy() if cluster_key in adata.obs else np.array(['Unknown' for i in range(adata.n_obs)])
         cell_labels = str2int(cell_labels_raw, self.decoder.label_dic)
         t = adata.obs[tkey].to_numpy()
@@ -571,10 +572,13 @@ class BrODE():
                 print(f"*********           Early Stop Triggered at epoch {epoch+1}.            *********")
                 break
         
-        print(f"*********              Finished. Total Time = {convert_time(time.time()-start)}             *********")
-        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_brode.png')
-        if(self.config["test_iter"]>0):
-            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_brode.png')
+        if(plot):
+            plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_brode.png')
+            if(self.config["test_iter"]>0):
+                plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_brode.png')
+        
+        self.timer = self.timer + (time.time()-start)
+        print(f"*********              Finished. Total Time = {convert_time(self.timer)}             *********")
         return
     
     def pred_all(self, data, t, cell_labels, N, G, gene_idx=None):
@@ -699,6 +703,7 @@ class BrODE():
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
         adata.uns[f"{key}_label_dic"] = self.decoder.label_dic
+        adata.uns[f"{key}_run_time"] = self.timer
 
         rna_velocity_brode(adata, key)
         

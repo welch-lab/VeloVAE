@@ -236,7 +236,7 @@ def plot_vel(t,
     """Generate a velocity quiver plot for a single gene
     The first row shows the original data, while the second row overlaps prediction with original data because VeloVAE outputs a point cloud instead of line fitting.
     
-    ArgumentS
+    Argument
     ---------
     
     t : `numpy array`
@@ -390,6 +390,21 @@ def plot_train_loss(loss, iters, save=None):
     
     save_fig(fig, save)
 
+def plot_loss_split(likelihood, kldt, kldz, kldparam, iters, save=None):
+    fig, ax = plt.subplots(figsize=(12,6), facecolor='white')
+    colors = get_colors(4)
+    ax.plot(iters, likelihood, '.-', color=colors[0], label="Likelihood")
+    ax.plot(iters, kldt, '.-', color=colors[1], label="KL Time")
+    if(kldz is not None):
+        ax.plot(iters, kldz, '.-', color=colors[2], label="KL State")
+    if(kldparam is not None):
+        ax.plot(iters, kldparam, '.-', color=colors[3], label="KL Rates")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Loss")
+    ax.legend(loc=0, fontsize=12)
+    
+    save_fig(fig, save)
+
 def plot_test_loss(loss, iters, save=None):
     fig, ax = plt.subplots(facecolor='white')
     ax.plot(iters, loss, '.-')
@@ -408,14 +423,22 @@ def plot_test_acc(acc, epoch, save=None):
     
     save_fig(fig, save)
 
-def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, save=None):
+
+
+
+def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, u0=None, s0=None, t0=None, save=None):
     fig, ax = plt.subplots(1,2,figsize=(18,6),facecolor='white')
-    t0 = adata.obs[f'{key}_t0'].to_numpy()
+    
     u = np.array(adata.layers["unspliced"][:,gidx].todense()).squeeze()
     s = np.array(adata.layers["spliced"][:,gidx].todense()).squeeze()
-    u0 = adata.layers[f'{key}_u0'][:,gidx]
-    s0 = adata.layers[f'{key}_s0'][:,gidx]
     t = adata.obs[f'{key}_time'].to_numpy()
+    if(u0 is None):
+        u0 = adata.layers[f'{key}_u0'][:,gidx]
+    if(s0 is None):
+        s0 = adata.layers[f'{key}_s0'][:,gidx]
+    if(t0 is None):
+        t0 = adata.obs[f'{key}_t0'].to_numpy()
+    
     uhat = adata.layers[f'{key}_uhat'][:,gidx]
     shat = adata.layers[f'{key}_shat'][:,gidx]
     scaling = adata.var[f'{key}_scaling'].to_numpy()[gidx]
@@ -428,20 +451,21 @@ def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, save=None):
         beta = np.exp(adata.var[f'{key}_logmu_beta'].to_numpy()[gidx])
     vu = rho * alpha - beta * uhat / scaling
     v = adata.layers[f'{key}_velocity'][:,gidx]
-    ax[0].plot(t,uhat/scaling,'.',color='grey',alpha=0.2)
-    ax[1].plot(t,shat,'.',color='grey',alpha=0.2)
+    ax[0].plot(t,uhat/scaling,'.',color='grey',alpha=0.1)
+    ax[1].plot(t,shat,'.',color='grey',alpha=0.1)
     ax[0].plot(t[plot_indices],u[plot_indices],'o',color='b', label="Raw Count")
     ax[1].plot(t[plot_indices],s[plot_indices],'o',color='b')
-    ax[0].quiver(t[plot_indices], uhat[plot_indices]/scaling, dt*np.ones((len(plot_indices),)), vu[plot_indices]*dt, angles='xy')
-    ax[1].quiver(t[plot_indices], shat[plot_indices], dt*np.ones((len(plot_indices),)), v[plot_indices]*dt, angles='xy')
+    if(dt>0):
+        ax[0].quiver(t[plot_indices], uhat[plot_indices]/scaling, dt*np.ones((len(plot_indices),)), vu[plot_indices]*dt, angles='xy')
+        ax[1].quiver(t[plot_indices], shat[plot_indices], dt*np.ones((len(plot_indices),)), v[plot_indices]*dt, angles='xy')
     for i, k in enumerate(plot_indices):
         if(i==0):
-            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]]/scaling, 'r-o', label='Prediction')
+            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]/scaling], 'r-o', label='Prediction')
         else:
-            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]]/scaling, 'r-o')
+            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]/scaling], 'r-o')
         ax[1].plot([t0[k], t[k]], [s0[k], shat[k]], 'r-o')
-        ax[0].plot(t[k]*np.ones((2,)), [u[k], uhat[k]], 'b--')
-        ax[1].plot(t[k]*np.ones((2,)), [s[k], shat[k]], 'b--')
+        ax[0].plot(t[k]*np.ones((2,)), [min(u[k], uhat[k]/scaling), max(u[k], uhat[k]/scaling)], 'b--')
+        ax[1].plot(t[k]*np.ones((2,)), [min(s[k], shat[k]), max(s[k], shat[k])], 'b--')
     
     ax[0].set_ylabel("U", fontsize=16)
     ax[1].set_ylabel("S", fontsize=16)
@@ -521,7 +545,32 @@ def vel_corr_hist(adata, keys, legends=None, save=None):
         ax[1,1].legend(loc=1, fontsize=16)
     plt.tight_layout()
     save_fig(fig, save)
+
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+def plot_mtx(K, xlabel=None, ylabel=None, xticklabels=None, yticklabels=None, save=None):
+    fig, ax = plt.subplots(figsize=(K.shape[1] * 0.5, K.shape[0] * 0.5))
+    im = ax.imshow(K, aspect='auto', origin='lower', cmap='plasma')
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    fig.colorbar(im, cax=cax)
+    if(xticklabels is not None):
+        xticks_cur = (ax.get_xticks())
+        xticklabels = np.linspace(np.min(xticklabels),np.max(xticklabels),len(xticks_cur))
+        xticklabels = [f'{x:.2f}' for x in xticklabels]
+        ax.set_xticklabels(xticklabels)
+    if(yticklabels is not None):
+        #yticks_cur = ax.get_yticks()
+        ax.set_yticks(yticklabels)
+        ax.set_yticklabels(yticklabels)
+    if(xlabel is not None):
+        ax.set_xlabel(xlabel, fontsize=24)
+    if(ylabel is not None):
+        ax.set_ylabel(ylabel, fontsize=24)
+    plt.tight_layout()
     
+    save_fig(fig, save)
+
+
 #########################################################################
 # Post Analysis
 #########################################################################
@@ -669,7 +718,9 @@ def plot_state_var(std_z,
     diff_entropy = np.sum(np.log(std_z/z_norm), 1)+0.5*std_z.shape[1]*(1+np.log(2*np.pi))
     if(hist_eq):
         diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
-    _plot_heatmap(diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True)
+    
+    fig, ax = plt.subplots(figsize=(8,6))
+    ax = _plot_heatmap(ax, diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True)
     save_fig(fig, save)
 
 def plot_phase_axis(ax,
@@ -793,30 +844,34 @@ def plot_phase_grid(Nr,
     for l in range(Nfig):
         fig_phase, ax_phase = plt.subplots(Nr, M*Nc, figsize=(W*M*Nc+1.0,H*Nr),facecolor='white')
         if(Nr==1 and M*Nc==1): #Single Gene, Single Method
-            labels = Labels[methods[0]] if Labels[methods[0]].ndim==1 else Labels[methods[0]][:,l]
+            labels = Labels[methods[0]] 
+            if labels is not None:
+                if labels.ndim==2:
+                    labels = labels[:,l]
             title = f"{gene_list[l]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l]} ({methods[0]})"
-            plot_phase_axis(ax_phase, 
-                            U[:,l], 
-                            S[:,l], 
-                            '.', 
-                            alpha, 
-                            D, 
-                            labels, 
-                            Legends[methods[0]], 
-                            title, 
-                            color_map=color_map)
+            ax_phase = plot_phase_axis(ax_phase, 
+                                       U[:,l], 
+                                       S[:,l], 
+                                       '.', 
+                                       alpha, 
+                                       D, 
+                                       labels, 
+                                       Legends[methods[0]], 
+                                       title, 
+                                       show_legend=True,
+                                       color_map=color_map)
             try:
-                plot_phase_axis(ax_phase, 
-                                Uhat[methods[0]][:,l], 
-                                Shat[methods[0]][:,l], 
-                                '.', 
-                                1.0, 
-                                1, 
-                                Labels_demo[methods[0]], 
-                                Legends[methods[0]], 
-                                title, 
-                                show_legend=True, 
-                                color_map=color_map)
+                ax_phase = plot_phase_axis(ax_phase, 
+                                           Uhat[methods[0]][:,l], 
+                                           Shat[methods[0]][:,l], 
+                                           '.', 
+                                           1.0, 
+                                           1, 
+                                           Labels_demo[methods[0]], 
+                                           Legends[methods[0]], 
+                                           title, 
+                                           show_legend=False, 
+                                           color_map=color_map)
             except (KeyError, TypeError):
                 print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                 pass
@@ -825,30 +880,34 @@ def plot_phase_grid(Nr,
         elif(Nr==1): #Single Gene, Multiple Method
             for j in range(min(Nc, len(gene_list)-l*Nc)): #gene
                 for k, method in enumerate(methods):  #method
-                    labels = Labels[method] if Labels[method].ndim==1 else Labels[method][:,l*Nc+j]
+                    labels = Labels[method] 
+                    if(labels is not None):
+                        if labels.ndim==2: 
+                            labels = labels[:,l*Nc+j]
                     title = f"{gene_list[l*Nc+j]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l*Nc+j]} ({method})"
-                    plot_phase_axis(ax_phase[M*j+k], 
-                                    U[:,l*Nc+j], 
-                                    S[:,l*Nc+j], 
-                                    '.', 
-                                    alpha, 
-                                    D, 
-                                    labels, 
-                                    Legends[method], 
-                                    title, 
-                                    color_map=color_map)
+                    ax_phase[M*j+k] = plot_phase_axis(ax_phase[M*j+k], 
+                                                      U[:,l*Nc+j], 
+                                                      S[:,l*Nc+j], 
+                                                      '.', 
+                                                      alpha, 
+                                                      D, 
+                                                      labels, 
+                                                      Legends[method], 
+                                                      title, 
+                                                      show_legend=True,
+                                                      color_map=color_map)
                     try:
-                        plot_phase_axis(ax_phase[M*j+k], 
-                                        Uhat[method][:,l*Nc+j], 
-                                        Shat[method][:,l*Nc+j], 
-                                        '.', 
-                                        1.0, 
-                                        1, 
-                                        Labels_demo[method], 
-                                        Legends[method], 
-                                        title, 
-                                        show_legend=True, 
-                                        color_map=color_map)
+                        ax_phase[M*j+k] = plot_phase_axis(ax_phase[M*j+k], 
+                                                          Uhat[method][:,l*Nc+j], 
+                                                          Shat[method][:,l*Nc+j], 
+                                                          '.', 
+                                                          1.0, 
+                                                          1, 
+                                                          Labels_demo[method], 
+                                                          Legends[method], 
+                                                          title, 
+                                                          show_legend=False, 
+                                                          color_map=color_map)
                     except (KeyError, TypeError):
                         print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                         pass
@@ -856,20 +915,34 @@ def plot_phase_grid(Nr,
                     ax_phase[M*j+k].set_ylabel("U", fontsize=label_fontsize)
         elif(M*Nc==1): #Multiple Gene, Single Method
             for i in range(min(Nr, len(gene_list)-l*Nr)):
-                labels = Labels[methods[0]] if Labels[methods[0]].ndim==1 else Labels[methods[0]][:,l*Nr+i]
+                labels = Labels[methods[0]] 
+                if(labels is not None):
+                    if labels.ndim==2:
+                        labels = labels[:,l*Nr+i]
                 title = f"{gene_list[l*Nr+i]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[l*Nr+i]} ({methods[0]})"
-                plot_phase_axis(ax_phase[i], 
-                                U[:,l*Nr+i], 
-                                S[:,l*Nr+i], 
-                                '.',  
-                                alpha, 
-                                D, 
-                                labels, 
-                                Legends[methods[0]], 
-                                title, 
-                                color_map=color_map)
+                ax_phase[i] = plot_phase_axis(ax_phase[i], 
+                                              U[:,l*Nr+i], 
+                                              S[:,l*Nr+i], 
+                                              '.',  
+                                              alpha, 
+                                              D, 
+                                              labels, 
+                                              Legends[methods[0]], 
+                                              title, 
+                                              show_legend=True,
+                                              color_map=color_map)
                 try:
-                    plot_phase_axis(ax_phase[i], Uhat[methods[0]][:,l*Nr+i], Shat[methods[0]][:,l*Nr+i], '.', 1.0, 1, Labels_demo[methods[0]], Legends[methods[0]], title, show_legend=True, color_map=color_map)
+                    ax_phase[i] = plot_phase_axis(ax_phase[i], 
+                                                  Uhat[methods[0]][:,l*Nr+i], 
+                                                  Shat[methods[0]][:,l*Nr+i], 
+                                                  '.', 
+                                                  1.0, 
+                                                  1, 
+                                                  Labels_demo[methods[0]], 
+                                                  Legends[methods[0]], 
+                                                  title, 
+                                                  show_legend=False, 
+                                                  color_map=color_map)
                 except (KeyError, TypeError):
                     print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                     pass
@@ -883,37 +956,42 @@ def plot_phase_grid(Nr,
                         break
                     u, s = U[:,idx], S[:,idx]
                     for k, method in enumerate(methods): 
-                        labels = Labels[method] if Labels[method].ndim==1 else Labels[method][:,idx]
+                        labels = Labels[method] 
+                        if(labels is not None):
+                            if labels.ndim==2:
+                                labels = labels[:,idx]
                         title = f"{gene_list[idx]} (VeloVAE)" if methods[0]=="FullVB" else f"{gene_list[idx]} ({method})"
-                        plot_phase_axis(ax_phase[i,M*j+k], 
-                                        U[:,idx], 
-                                        S[:,idx], 
-                                        '.', 
-                                        alpha, 
-                                        D, 
-                                        labels, 
-                                        Legends[method], 
-                                        title, 
-                                        color_map=color_map)
+                        ax_phase[i,M*j+k] = plot_phase_axis(ax_phase[i,M*j+k], 
+                                                            U[:,idx], 
+                                                            S[:,idx], 
+                                                            '.', 
+                                                            alpha, 
+                                                            D, 
+                                                            labels, 
+                                                            Legends[method], 
+                                                            title, 
+                                                            show_legend=True,
+                                                            color_map=color_map)
                         try:
-                            plot_phase_axis(ax_phase[i,M*j+k], 
-                                            Uhat[method][:,idx], 
-                                            Shat[method][:,idx], 
-                                            '.', 
-                                            1.0, 
-                                            1, 
-                                            Labels_demo[method], 
-                                            Legends[method], 
-                                            title, 
-                                            show_legend=True, 
-                                            color_map=color_map)
+                            ax_phase[i,M*j+k] = plot_phase_axis(ax_phase[i,M*j+k], 
+                                                                Uhat[method][:,idx], 
+                                                                Shat[method][:,idx], 
+                                                                '.', 
+                                                                1.0, 
+                                                                1, 
+                                                                Labels_demo[method], 
+                                                                Legends[method], 
+                                                                title, 
+                                                                show_legend=False, 
+                                                                color_map=color_map)
                         except (KeyError, TypeError):
                             print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                             pass
                         ax_phase[i,M*j+k].set_xlabel("S", fontsize=label_fontsize)
                         ax_phase[i,M*j+k].set_ylabel("U", fontsize=label_fontsize)
-
-        if(ax_phase.ndim==1):
+        if(Nr==1 and M*Nc==1):
+            handles, labels = ax_phase.get_legend_handles_labels()
+        elif(ax_phase.ndim==1):
             handles, labels = ax_phase[0].get_legend_handles_labels()
         else:
             handles, labels = ax_phase[0,0].get_legend_handles_labels()
@@ -921,7 +999,7 @@ def plot_phase_grid(Nr,
         
         l_indent = 1 - 0.02/Nr
         if(legend_fontsize is None):
-            legend_fontsize = min(int(8*Nr), 300*Nr/len(Legends[methods[0]]))
+            legend_fontsize = min(int(10*Nr), 300*Nr/len(Legends[methods[0]]))
         lgd = fig_phase.legend(handles, labels, fontsize=legend_fontsize, markerscale=5.0, bbox_to_anchor=(-0.03/Nc,l_indent), loc='upper right')
         
         fig_phase.subplots_adjust(hspace=0.3, wspace=0.12)
@@ -932,7 +1010,7 @@ def plot_phase_grid(Nr,
 
 def sample_scatter_plot(x, down_sample, n_bins=20):
     idx_downsample = []
-    n_sample = len(x)//down_sample
+    n_sample = max(1, len(x)//down_sample)
     if(n_bins>n_sample):
         n_bins = n_sample
     sample_per_bin = n_sample // n_bins
@@ -1221,12 +1299,18 @@ def plot_sig_grid(Nr,
                 line_s = plot_sig_axis(ax_sig[3*i+1], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', alpha, down_sample, color_map=color_map)
                 
                 try:
-                    if methods[0]=='VeloVAE' or methods[0]=='FullVB':
+                    if ('VeloVAE' in methods[0]) or ('FullVB' in methods[0]) or (methods[0] in ['DeepVelo','Discrete PyroVelocity','PyroVelocity','VeloVI']):
                         K = min(10, max(len(that)//5000, 1))
-                        if(frac>0 and frac<1):
-                            plot_sig_loess_axis(ax_sig[3*i], that[::K], Uhat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
-                            plot_sig_loess_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
-                        plot_vel_axis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]], sparsity_correction=sparsity_correction, color_map=color_map)
+                        if('Discrete' in methods[0]):
+                            plot_sig_pred_axis(ax_sig[3*i], that[::K], Uhat[methods[0]][:,idx][::K])
+                            plot_sig_pred_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:,idx][::K])
+                            plot_sig_axis(ax_sig[3*i+2], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', 0.1, down_sample, color_map=color_map)
+                            plot_vel_axis(ax_sig[3*i+2], t, Shat[methods[0]][:,idx], V[methods[0]][:,idx], None, None, sparsity_correction=sparsity_correction, color_map=color_map)
+                        else:
+                            if(frac>0 and frac<1):
+                                plot_sig_loess_axis(ax_sig[3*i], that[::K], Uhat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
+                                plot_sig_loess_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:,idx][::K], Labels_demo[methods[0]][::K], Legends[methods[0]], frac=frac)
+                            plot_vel_axis(ax_sig[3*i+2], t, S[:,idx], V[methods[0]][:,idx], Labels[methods[0]], Legends[methods[0]], sparsity_correction=sparsity_correction, color_map=color_map)
                     else:
                         plot_sig_pred_axis(ax_sig[3*i], that, Uhat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
                         plot_sig_pred_axis(ax_sig[3*i+1], that, Shat[methods[0]][:,idx], Labels_demo[methods[0]], Legends[methods[0]], '-', 1.0, 1)
@@ -1277,12 +1361,18 @@ def plot_sig_grid(Nr,
                         if(len(Legends[method])>len(legends)):
                             legends = Legends[method]
                         try:
-                            if method=='VeloVAE' or method=='FullVB':
+                            if ('VeloVAE' in method) or ('FullVB' in method) or (methods[0] in ['DeepVelo','Discrete PyroVelocity','PyroVelocity','VeloVI']):
                                 K = min(10, max(len(that)//5000, 1))
-                                if(frac>0 and frac<1):
-                                    plot_sig_loess_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
-                                    plot_sig_loess_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
-                                plot_vel_axis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method], sparsity_correction=sparsity_correction, color_map=color_map)
+                                if('Discrete' in method):
+                                    plot_sig_pred_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:,idx][::K])
+                                    plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:,idx][::K])
+                                    plot_sig_axis(ax_sig[3*i+2, M*j+k], t, S[:,idx], Labels[method], Legends[method], '.', 0.1, down_sample, color_map=color_map)
+                                    plot_vel_axis(ax_sig[3*i+2, M*j+k], t, Shat[method][:,idx], V[method][:,idx], None, None, sparsity_correction=sparsity_correction, color_map=color_map)
+                                else:
+                                    if(frac>0 and frac<1):
+                                        plot_sig_loess_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
+                                        plot_sig_loess_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:,idx][::K], Labels_demo[method][::K], Legends[method], frac=frac)
+                                    plot_vel_axis(ax_sig[3*i+2, M*j+k], t, S[:,idx], V[method][:,idx], Labels[method], Legends[method], sparsity_correction=sparsity_correction, color_map=color_map)
                             else:
                                 plot_sig_pred_axis(ax_sig[3*i, M*j+k], that, Uhat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
                                 plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that, Shat[method][:,idx], Labels_demo[method], Legends[method], '-', 1.0, 1)
@@ -2154,13 +2244,24 @@ def plot_transition_graph(adata,
     ig.plot(g, 
             layout=layout,
             vertex_color=colors,
-            vertex_size=20,
+            vertex_size=0.5,
             edge_width=2,
             target=ax)
-        
+    
     ax.axis("off")
     
-    save_fig(fig, save)
+    #Get legends
+    _fig, _ax = plt.subplots()
+    handles = []
+    for i in range(len(colors)):
+         handles.append(_ax.plot([],[], marker='o', color=colors[i], label=node_name[i])[0])
+    plt.close(_fig)
+    labels = node_name
+    legend = _fig.legend(handles, labels, loc=3, framealpha=1, frameon=False)
+    
+    lgd=fig.legend(handles, labels, fontsize=15, markerscale=2, ncol=1, bbox_to_anchor=(0.2, 0.95), loc='upper right')
+
+    save_fig(fig, save, (lgd,))
     
     return
 

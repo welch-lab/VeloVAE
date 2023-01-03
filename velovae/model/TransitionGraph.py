@@ -365,7 +365,7 @@ class TransGraph():
         
         print("Number of partitions: ",len(lineages))
     
-    def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01,0.03), k=5, soft_assign=True):
+    def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01,0.05), k=5, soft_assign=True):
         """Compute a type-to-type transition based a cell-to-cell transition matrix
         
         Arguments
@@ -409,9 +409,9 @@ class TransGraph():
                                     [dt[0]*range_t, dt[1]*range_t], 
                                     k,
                                     soft_assign)
+        
         psum = P_raw.sum(1)
         P_raw = P_raw/psum.reshape(-1,1)
-        
         P = np.zeros(P_raw.shape)
         for i in range(P.shape[0]):
             idx_sort = np.flip(np.argsort(P_raw[i]))
@@ -426,9 +426,11 @@ class TransGraph():
             for j in range(P.shape[1]): #Prevents disconnected parts in the same partition
                 if(t_init[j]<t_init[i]):
                     P[i,j] += 1e-3
-            
+        
         psum = P.sum(1)
+        psum[psum==0] = 1
         P = P/psum.reshape(-1,1)
+        
         self.w = P
         
         #For each partition, get the MST
@@ -437,10 +439,13 @@ class TransGraph():
         
         for l in self.partition_cluster:
             vs_part = np.where(self.partition==l)[0]
-            graph_part = np.log(P[vs_part][:, vs_part])
-            adj_list = adj_matrix_to_list(graph_part)
+            mask = (P[vs_part][:, vs_part]==0)
+            graph_part = np.log(P[vs_part][:, vs_part]+1e-10)
+            graph_part[mask] = -np.inf
             root = vs_part[np.argmin(t_init[vs_part])]
             root = np.where(vs_part==root)[0][0]
+            graph_part[root, root] = 1.0 
+            adj_list = adj_matrix_to_list(graph_part)
             
             if(check_connected(adj_list, root, len(vs_part))):
                 mst_part = edmond_chu_liu(graph_part, root)
@@ -450,14 +455,15 @@ class TransGraph():
                 psum = P_part.sum(1)
                 P_part = P_part/psum.reshape(-1,1)
                 self.w[vs_part][:, vs_part] = P_part
-                
-                graph_part = np.log(P_part)
-                adj_list = adj_matrix_to_list(graph_part)
+                mask = (P_part==0)
+                graph_part = np.log(P_part+1e-10)
+                graph_part[mask] = -np.inf
+                graph_part[root, root] = 0.0 
+                #adj_list = adj_matrix_to_list(graph_part)
                 #if(not check_connected(adj_list, root, len(vs_part))):
                 #    print("Warning: the full graph is disconnected! Using the fully-connected graph instead.")
                 
                 mst_part = edmond_chu_liu(graph_part, root)
-                
             
             for i,x in enumerate(vs_part):
                 for j,y in enumerate(vs_part):

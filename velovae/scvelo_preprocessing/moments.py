@@ -60,6 +60,7 @@ def moments(
     if n_neighbors is not None and n_neighbors > get_n_neighs(adata):
         if use_rep is None:
             use_rep = "X_pca"
+        print(f"Computing the KNN graph based on {use_rep}")
         neighbors(
             adata, n_neighbors=n_neighbors, use_rep=use_rep, n_pcs=n_pcs, method=method
         )
@@ -91,6 +92,98 @@ def moments(
         logg.hint(
             "added \n"
             "    'Ms' and 'Mu', moments of un/spliced abundances (adata.layers)"
+        )
+    return adata if copy else None
+    
+###############################################
+# Added by Yichen Gu
+###############################################
+def discrete_moments(
+    data,
+    n_neighbors=30,
+    n_pcs=None,
+    mode="connectivities",
+    method="umap",
+    use_rep=None,
+    copy=False,
+):
+    """Computes moments for velocity estimation.
+
+    This is the similar to the original moments function except that we will 
+    aggregate the count over KNN to account for sparsity in unspliced count and
+    the output will still be integer counts.
+
+    Arguments
+    ---------
+    data: :class:`~anndata.AnnData`
+        Annotated data matrix.
+    n_neighbors: `int` (default: 30)
+        Number of neighbors to use.
+    n_pcs: `int` (default: None)
+        Number of principal components to use.
+        If not specified, the full space is used of a pre-computed PCA,
+        or 30 components are used when PCA is computed internally.
+    mode: `'connectivities'` or `'distances'`  (default: `'connectivities'`)
+        Distance metric to use for moment computation.
+    method : {{'umap', 'hnsw', 'sklearn', `None`}}  (default: `'umap'`)
+        Method to compute neighbors, only differs in runtime.
+        Connectivities are computed with adaptive kernel width as proposed in
+        Haghverdi et al. 2016 (https://doi.org/10.1038/nmeth.3971).
+    use_rep : `None`, `'X'` or any key for `.obsm` (default: None)
+        Use the indicated representation. If `None`, the representation is chosen
+        automatically: for .n_vars < 50, .X is used, otherwise ‘X_pca’ is used.
+    copy: `bool` (default: `False`)
+        Return a copy instead of writing to adata.
+
+    Returns
+    -------
+    Returns or updates `adata` with the attributes
+    Ms: `.layers`
+        dense matrix with first order moments of spliced counts.
+    Mu: `.layers`
+        dense matrix with first order moments of unspliced counts.
+    """
+    adata = data.copy() if copy else data
+
+    layers = [layer for layer in {"spliced", "unspliced"} if layer in adata.layers]
+    #Removed count normalization
+    #if any([not_yet_normalized(adata.layers[layer]) for layer in layers]):
+    #    normalize_per_cell(adata)
+
+    if n_neighbors is not None and n_neighbors > get_n_neighs(adata):
+        if use_rep is None:
+            use_rep = "X_pca"
+        neighbors(
+            adata, n_neighbors=n_neighbors, use_rep=use_rep, n_pcs=n_pcs, method=method
+        )
+    verify_neighbors(adata)
+
+    if "spliced" not in adata.layers.keys() or "unspliced" not in adata.layers.keys():
+        logg.warn("Skipping moments, because un/spliced counts were not found.")
+    else:
+        logg.info(f"computing discrete moments based on {mode}", r=True)
+        connectivities = get_connectivities(
+            adata, mode, n_neighbors=n_neighbors, recurse_neighbors=False, normalize=False
+        )
+
+        adata.layers["Cs"] = (
+            csr_matrix.dot(connectivities, csr_matrix(adata.layers["spliced"]))
+            .astype(int)
+            .A
+        )
+        adata.layers["Cu"] = (
+            csr_matrix.dot(connectivities, csr_matrix(adata.layers["unspliced"]))
+            .astype(int)
+            .A
+        )
+        # if renormalize: normalize_per_cell(adata, layers={'Ms', 'Mu'}, enforce=True)
+
+        logg.info(
+            "    finished", time=True, end=" " if settings.verbosity > 2 else "\n"
+        )
+        logg.hint(
+            "added \n"
+            "    'Cs' and 'Cu', aggregated counts of un/spliced abundances (adata.layers)"
         )
     return adata if copy else None
 

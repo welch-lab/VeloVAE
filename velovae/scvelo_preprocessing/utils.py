@@ -839,6 +839,63 @@ def filter_and_normalize(
     return adata if copy else None
 
 
+###########################################################
+#Added by Yichen Gu
+###########################################################
+def filter_without_normalize(
+    data,
+    min_counts=None,
+    min_counts_u=None,
+    min_cells=None,
+    min_cells_u=None,
+    min_shared_counts=None,
+    min_shared_cells=None,
+    n_top_genes=None,
+    retain_genes=None,
+    flavor="seurat",
+    log=True,
+    copy=False,
+    **kwargs,
+):
+    adata = data.copy() if copy else data
+
+    if "spliced" not in adata.layers.keys() or "unspliced" not in adata.layers.keys():
+        logg.warn("Could not find spliced / unspliced counts.")
+
+    filter_genes(
+        adata,
+        min_counts=min_counts,
+        min_counts_u=min_counts_u,
+        min_cells=min_cells,
+        min_cells_u=min_cells_u,
+        min_shared_counts=min_shared_counts,
+        min_shared_cells=min_shared_cells,
+        retain_genes=retain_genes,
+    )
+
+    if n_top_genes is not None:
+        filter_genes_dispersion(
+            adata, n_top_genes=n_top_genes, retain_genes=retain_genes, flavor=flavor
+        )
+
+    log_advised = (
+        np.allclose(adata.X[:10].sum(), adata.layers["spliced"][:10].sum())
+        if "spliced" in adata.layers.keys()
+        else True
+    )
+
+    if log and log_advised:
+        log1p(adata)
+    if log and log_advised:
+        logg.info("Logarithmized X.")
+    elif log and not log_advised:
+        logg.warn("Did not modify X as it looks preprocessed already.")
+    elif log_advised and not log:
+        logg.warn("Consider logarithmizing X with `scv.pp.log1p` for better results.")
+
+    return adata if copy else None
+
+
 def recipe_velocity(
     adata,
     min_counts=3,
