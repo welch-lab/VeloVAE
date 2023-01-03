@@ -572,9 +572,10 @@ class BrODE():
                 print(f"*********           Early Stop Triggered at epoch {epoch+1}.            *********")
                 break
         
-        plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_brode.png')
-        if(self.config["test_iter"]>0):
-            plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_brode.png')
+        if(plot):
+            plot_train_loss(self.loss_train, range(1,len(self.loss_train)+1), save=f'{figure_path}/train_loss_brode.png')
+            if(self.config["test_iter"]>0):
+                plot_test_loss(self.loss_test, [i*self.config["test_iter"] for i in range(1,len(self.loss_test)+1)], save=f'{figure_path}/test_loss_brode.png')
         
         self.timer = self.timer + (time.time()-start)
         print(f"*********              Finished. Total Time = {convert_time(self.timer)}             *********")
@@ -702,7 +703,7 @@ class BrODE():
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
         adata.uns[f"{key}_label_dic"] = self.decoder.label_dic
-        adata.uns[f"{key}_train_time"] = self.timer
+        adata.uns[f"{key}_run_time"] = self.timer
 
         rna_velocity_brode(adata, key)
         

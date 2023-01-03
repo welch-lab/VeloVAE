@@ -146,6 +146,7 @@ class decoder(nn.Module):
                 for i in range(T.shape[1]):
                     T_eq[:, i] = hist_equal(T[:, i], tmax, 0.9, Nbin)
                 self.t_init = np.quantile(T_eq,0.5,1)
+            
             toff = get_ts_global(self.t_init, U/scaling, S, 95)
             alpha, beta, gamma,ton = reinit_params(U/scaling, S, self.t_init, toff)
             
@@ -827,7 +828,7 @@ class VanillaVAE():
         
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
-        adata.uns[f"{key}_train_time"] = self.timer
+        adata.uns[f"{key}_run_time"] = self.timer
         
         rna_velocity_vanillavae(adata, key)
         
