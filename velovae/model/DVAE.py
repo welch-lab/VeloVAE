@@ -138,7 +138,7 @@ class decoder(nn.Module):
             if(use_raw):
                 U, S = adata.layers['unspliced'].A.astype(float), adata.layers['spliced'].A.astype(float)
             else:
-                U, S = adata.layers["Cu"], adata.layers["Cs"]
+                U, S = adata.layers["Mu"], adata.layers["Ms"]
             
             #Dispersion
             mean_u, mean_s, dispersion_u, dispersion_s = get_dispersion(U[train_idx], S[train_idx])
@@ -172,6 +172,7 @@ class decoder(nn.Module):
                 self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
                 self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
                 self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
+                self.t_init = None
             elif(init_method == "tprior"):
                 print("Initialization using prior time.")
                 alpha, beta, gamma, scaling, toff, u0, s0, T = init_params_raw(X,p,fit_scaling=True)
@@ -317,7 +318,7 @@ class DVAE(VAE):
                  separate_us_scale=True,
                  checkpoints=[None, None]):
         
-        
+        t_start = time.time()
         self.config = {
             #Model Parameters
             "dim_z":dim_z,
@@ -448,6 +449,8 @@ class DVAE(VAE):
         self.logp_list, self.kldt_list, self.kldz_list, self.kldparam_list = [],[],[],None
         self.counter = 0 #Count the number of iterations
         self.n_drop = 0 #Count the number of consecutive iterations with little decrease in loss
+        
+        self.timer = time.time()-t_start
     
     def set_mode(self,mode):
         #Set the model to either training or evaluation mode.
@@ -635,7 +638,7 @@ class DVAE(VAE):
             if(optimizer2 is not None):
                 optimizer2.zero_grad()
             
-            xbatch, idx = batch[0].to(self.device), batch[3]
+            xbatch, idx = batch[0].float().to(self.device), batch[3]
             u = xbatch[:,:xbatch.shape[1]//2]
             s = xbatch[:,xbatch.shape[1]//2:]
             
@@ -647,8 +650,7 @@ class DVAE(VAE):
             
             
             condition = F.one_hot(batch[1].to(self.device), self.n_type).float() if self.enable_cvae else None
-            x_in = torch.tensor(xbatch, device=self.device).float()
-            mu_tx, std_tx, mu_zx, std_zx, t, z, uhat, shat, rho = self.forward(x_in, lu_scale, ls_scale, u0, s0, t0, condition)
+            mu_tx, std_tx, mu_zx, std_zx, t, z, uhat, shat, rho = self.forward(xbatch, lu_scale, ls_scale, u0, s0, t0, condition)
             
             
             err_rec, kldt, kldz, kld_param = self.vae_risk((mu_tx, std_tx), self.p_t[:,self.train_idx[idx],:],
@@ -686,6 +688,7 @@ class DVAE(VAE):
               cluster_key = "clusters",
               figure_path = "figures", 
               embed="umap"):
+        start = time.time()
         self.train_mse = []
         self.test_mse = []
         
@@ -756,7 +759,6 @@ class DVAE(VAE):
         
         n_epochs = self.config["n_epochs"]
         
-        start = time.time()
         for epoch in range(n_epochs):
             #Train the encoder
             if(self.config["k_alt"] is None):
@@ -879,7 +881,8 @@ class DVAE(VAE):
                 iters = [i*self.config["test_iter"] for i in range(1,len(self.test_mse)+1)]
                 plot_test_loss(self.test_mse, iters, save=f'{figure_path}/test_mse_velovae.png')
         
-        print(f"*********              Finished. Total Time = {convert_time(time.time()-start)}             *********")
+        self.timer = self.timer+(time.time()-start)
+        print(f"*********              Finished. Total Time = {convert_time(self.timer)}             *********")
         print(f"Final: Train ELBO = {elbo_train:.3f},           Test ELBO = {elbo_test:.3f}")
         print(f"       Training MSE = {self.train_mse[-1]:.3f}, Test MSE = {self.test_mse[-1]:.3f}")
         return elbo_train, elbo_test, self.train_mse[-1], self.test_mse[-1]
@@ -1187,12 +1190,13 @@ class DVAE(VAE):
         
         adata.layers[f"{key}_rho"] = rho
         
-        adata.obs[f"{key}_t0"] = self.t0.squeeze().detach().cpu().numpy()
-        adata.layers[f"{key}_u0"] = self.u0.detach().cpu().numpy()
-        adata.layers[f"{key}_s0"] = self.s0.detach().cpu().numpy()
+        adata.obs[f"{key}_t0"] = self.t0.squeeze()
+        adata.layers[f"{key}_u0"] = self.u0
+        adata.layers[f"{key}_s0"] = self.s0
 
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
+        adata.uns[f"{key}_run_time"] = self.timer
         
         #scaling_u = adata.var[f"{key}_scaling_u"].to_numpy()
         #scaling_s = adata.var[f"{key}_scaling_s"].to_numpy()
@@ -1347,7 +1351,6 @@ class DVAEFullVB(DVAE):
                  checkpoints=[None, None]):
         
         t_start = time.time()
-        self.timer = 0
         self.config = {
             #Model Parameters
             "dim_z":dim_z,
@@ -1622,13 +1625,13 @@ class DVAEFullVB(DVAE):
         
         adata.layers[f"{key}_rho"] = rho
         
-        adata.obs[f"{key}_t0"] = self.t0.squeeze().detach().cpu().numpy()
-        adata.layers[f"{key}_u0"] = self.u0.detach().cpu().numpy()
-        adata.layers[f"{key}_s0"] = self.s0.detach().cpu().numpy()
+        adata.obs[f"{key}_t0"] = self.t0.squeeze()
+        adata.layers[f"{key}_u0"] = self.u0
+        adata.layers[f"{key}_s0"] = self.s0
 
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
-        adata.uns[f"{key}_train_time"] = self.timer
+        adata.uns[f"{key}_run_time"] = self.timer
         
         rna_velocity_vae(adata, key, use_raw=False, use_scv_genes=False, full_vb=True)
         
