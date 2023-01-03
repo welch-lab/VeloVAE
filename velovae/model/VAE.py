@@ -129,7 +129,6 @@ class decoder(nn.Module):
                 self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
                 self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
                 self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
-                #self.toff = torch.nn.Parameter(np.log(tmax/2)+torch.ones(G, device=device).float()*(-10))
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
@@ -154,7 +153,6 @@ class decoder(nn.Module):
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
                 self.ton = nn.Parameter((torch.ones(G, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
-                #self.toff = nn.Parameter(torch.tensor(np.log(self.toff_init+1e-10)))
             else:
                 print("Initialization using the steady-state and dynamical models.")
                 alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
@@ -178,7 +176,6 @@ class decoder(nn.Module):
                 self.gamma = nn.Parameter(torch.tensor(np.log(self.gamma_init), device=device).float())
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
-                #self.toff = nn.Parameter(torch.tensor(np.log(self.toff_init+1e-10)))
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
         
@@ -897,11 +894,11 @@ class VAE(VanillaVAE):
         elbo = 0
         if("uhat" in output):
             Uhat = None if gene_idx is None else np.zeros((N,len(gene_idx)))
-            if(self.use_knn):
+            if(self.use_knn and self.config["vel_continuity_loss"]):
                 Uhat_fw = None if gene_idx is None else np.zeros((N,len(gene_idx)))
         if("shat" in output):
             Shat = None if gene_idx is None else np.zeros((N,len(gene_idx)))
-            if(self.use_knn):
+            if(self.use_knn and self.config["vel_continuity_loss"]):
                 Shat_fw = None if gene_idx is None else np.zeros((N,len(gene_idx)))
         if("t" in output):
             t_out = np.zeros((N))
@@ -1042,9 +1039,9 @@ class VAE(VanillaVAE):
             out.append(z_out)
             out.append(std_z_out)
         if(self.use_knn):
-            if("uhat" in output):
+            if("uhat" in output and self.config["vel_continuity_loss"]):
                 out.append(Uhat_fw)
-            if("shat" in output):
+            if("shat" in output and self.config["vel_continuity_loss"]):
                 out.append(Shat_fw)
         
         return out, elbo.cpu().item()
