@@ -87,7 +87,10 @@ def filt_gene_sparsity(adata, thred_u=0.99, thred_s=0.99):
     adata._inplace_subset_var(gene_subset)
 
 def rank_gene_selection(adata, cluster_key, **kwargs):
-    cell_types = np.unique(adata.obs[cluster_key].to_numpy())
+    if(not "cell_types" in kwargs):
+        cell_types = np.unique(adata.obs[cluster_key].to_numpy())
+    else:
+        cell_types = kwargs["cell_types"]
     use_raw = kwargs["use_raw"] if "use_raw" in kwargs else False
     layer = kwargs["layer"] if "layer" in kwargs else None
     scanpy.tl.rank_genes_groups(adata, 
@@ -114,9 +117,11 @@ def rank_gene_selection(adata, cluster_key, **kwargs):
         gene_dic[x] = i
     gene_set = set()
     for ctype in cell_types:
-        gene_set = gene_set.union(set(adata.uns['rank_genes_groups_filtered']['names'][ctype]))
+        names = adata.uns['rank_genes_groups_filtered']['names'][ctype].astype(str)
+        adata.uns['rank_genes_groups_filtered']['names'][ctype] = names
+        gene_set = gene_set.union(set(names))
     for gene in gene_set:
-        if(isinstance(gene, str)):
+        if(gene!='nan'):
             gene_subset[gene_dic[gene]] = True
     print(f"Picked {len(gene_set)-1} genes")
     adata._inplace_subset_var(gene_subset)
