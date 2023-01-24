@@ -231,10 +231,15 @@ class decoder(nn.Module):
             self.u0 = nn.Parameter(torch.tensor(np.log(u0+1e-10), device=device).float())
             self.s0 = nn.Parameter(torch.tensor(np.log(s0+1e-10), device=device).float())
         else: #use the mean count of the initial type
+            print(f"Setting the root cell to {init_type}")
             cell_labels = adata.obs["clusters"].to_numpy()[train_idx]
             cell_mask = cell_labels==init_type
-            self.u0 = nn.Parameter(torch.tensor(np.log((U[cell_mask]/lu[cell_mask].reshape(-1,1)/scaling.exp()).mean(0)+1e-10), device=device).float())
-            self.s0 = nn.Parameter(torch.tensor(np.log((S[cell_mask]/ls[cell_mask].reshape(-1,1)).mean(0)+1e-10), device=device).float())
+            self.u0 = nn.Parameter(torch.tensor(np.log((U[cell_mask]/lu[train_idx][cell_mask].reshape(-1,1)).mean(0)+1e-10), device=device).float())
+            self.s0 = nn.Parameter(torch.tensor(np.log((S[cell_mask]/ls[train_idx][cell_mask].reshape(-1,1)).mean(0)+1e-10), device=device).float())
+            
+            tprior = np.ones((adata.n_obs))*tmax*0.5
+            tprior[adata.obs["clusters"].to_numpy()==init_type] = 0
+            adata.obs['tprior'] = tprior
 
         self.scaling.requires_grad = False
         self.ton.requires_grad = False
@@ -276,8 +281,12 @@ class decoder(nn.Module):
                 rho = torch.sigmoid(self.fc_out2(self.net_rho2(torch.cat((z,condition),1))))
             alpha = self.alpha.exp()*rho
             Uhat, Shat = pred_su(F.leaky_relu(t-t0, neg_slope), u0, s0, alpha, self.beta.exp(), self.gamma.exp())
+        Uhat = F.relu(Uhat)*self.scaling.exp()
+        Shat = F.relu(Shat)
+        vu = alpha - self.beta.exp() * Uhat / torch.exp(self.scaling)
+        vs = self.beta.exp() * Uhat / torch.exp(self.scaling) - self.gamma.exp() * Shat
         
-        return nn.functional.relu(Uhat), nn.functional.relu(Shat), rho
+        return nn.functional.relu(Uhat), nn.functional.relu(Shat), vu, vs
     
     def pred_rho(self, z, stage, condition=None):
         if(stage==1):
@@ -346,7 +355,7 @@ class DVAE(VAE):
             "kl_t":1.0, 
             "kl_z":1.0, 
             "kl_l":1.0,
-            "reg_vel":0.0,
+            "reg_v":0.0,
             "test_iter":None, 
             "save_epoch":100, 
             "x0_epoch":25,
@@ -360,6 +369,7 @@ class DVAE(VAE):
             "train_ton":False,
             "train_std":False,
             "weight_sample":False,
+            "vel_continuity_loss":False,
             "use_raw":use_raw,
             
             #Normalization Configurations
@@ -403,12 +413,16 @@ class DVAE(VAE):
         
         self.tmax = tmax
         self.time_distribution = time_distribution
+        if(init_type is not None):
+            tprior = 'tprior'
+            self.config['tprior'] = tprior
+            self.config['train_ton'] = False
         self.get_prior(adata, time_distribution, tmax, tprior)
         
         self.p_z = torch.stack([torch.zeros(N,dim_z), torch.ones(N,dim_z)*self.config["std_z_prior"]]).float().to(self.device)
         
         self.use_knn = False
-        self.neighbor_idx = None
+        self.neighbor_idx, self.neighbor_idx_fw = None, None
         self.u0 = None
         self.s0 = None
         self.t0 = None
@@ -474,7 +488,7 @@ class DVAE(VAE):
         else:
             print("Warning: mode not recognized. Must be 'train' or 'test'! ")
     
-    def forward(self, data_in, lu_scale, ls_scale, u0=None, s0=None, t0=None, condition=None):
+    def forward(self, data_in, lu_scale, ls_scale, u0=None, s0=None, t0=None, t1=None, condition=None):
         data_in_scale = data_in
         if(self.config["scale_gene_encoder"]):
             data_in_scale = torch.cat((data_in_scale[:,:data_in_scale.shape[1]//2]/self.decoder.scaling.exp(), data_in_scale[:,data_in_scale.shape[1]//2:]),1)
@@ -486,12 +500,15 @@ class DVAE(VAE):
         t = self.sample(mu_t, std_t)
         z = self.sample(mu_z, std_z)
 
-        uhat, shat, rho = self.decoder.forward(t, z, condition, u0, s0, t0, neg_slope=self.config["neg_slope"])
-        uhat = uhat*self.decoder.scaling.exp()
+        uhat, shat, vu, vs = self.decoder.forward(t, z, condition, u0, s0, t0, neg_slope=self.config["neg_slope"])
+        if(t1 is not None):
+            uhat_fw, shat_fw, vu_fw, vs_fw = self.decoder.forward(t1, z, condition, uhat, shat, t, neg_slope=self.config["neg_slope"])
+        else:
+            uhat_fw, shat_fw, vu_fw, vs_fw = None, None, None, None
 
-        return mu_t, std_t, mu_z, std_z, t, z, uhat, shat, rho
+        return mu_t, std_t, mu_z, std_z, t, z, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw
     
-    def eval_model(self, data_in, lu_scale, ls_scale, u0=None, s0=None, t0=None, condition=None, continuous=True):
+    def eval_model(self, data_in, lu_scale, ls_scale, u0=None, s0=None, t0=None, t1=None, condition=None, continuous=True):
         data_in_scale = data_in
         if(self.config["scale_gene_encoder"]):
             data_in_scale = torch.cat((data_in_scale[:,:data_in_scale.shape[1]//2]/self.decoder.scaling.exp(), data_in_scale[:,data_in_scale.shape[1]//2:]),1)
@@ -500,16 +517,27 @@ class DVAE(VAE):
         if(self.config["log1p"]):
             data_in_scale = torch.log1p(data_in_scale)
         mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale, condition)
-        uhat, shat, rho = self.decoder.forward(mu_t, mu_z, condition, u0=u0, s0=s0, t0=t0, neg_slope=0.0)
-        uhat = uhat*self.decoder.scaling.exp()
-
+        uhat, shat, vu, vs = self.decoder.forward(mu_t, mu_z, condition, u0=u0, s0=s0, t0=t0, neg_slope=0.0)
+        
+        if(t1 is not None):
+            uhat_fw, shat_fw, vu_fw, vs_fw = self.decoder.forward(t1, mu_z, condition, uhat, shat, mu_t, neg_slope=self.config["neg_slope"])
+        else:
+            uhat_fw, shat_fw, vu_fw, vs_fw = None, None, None, None
         if(not continuous):
             poisson_u = Poisson(F.softplus(uhat, beta=100))
             poisson_s = Poisson(F.softplus(shat, beta=100))
+            if(t1 is not None):
+                poisson_u = Poisson(F.softplus(uhat_fw, beta=100))
+                poisson_s = Poisson(F.softplus(shat_fw, beta=100))
+                u_out_fw = poisson_u_fw.sample()
+                s_out_fw = poisson_s_fw.sample()
+            else:
+                u_out_fw, s_out_fw = None, None
             u_out = poisson_u.sample()
             s_out = poisson_s.sample()
-            return mu_t, std_t, mu_z, std_z, u_out, s_out, rho
-        return mu_t, std_t, mu_z, std_z, uhat, shat, rho
+            
+            return mu_t, std_t, mu_z, std_z, u_out, s_out, u_out_fw, s_out_fw, vu, vs, vu_fw, vs_fw
+        return mu_t, std_t, mu_z, std_z, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw
     
     def update_x0(self, U, S):
         start = time.time()
@@ -532,9 +560,23 @@ class DVAE(VAE):
                                             adaptive=self.config["knn_adaptive"], 
                                             std_t=std_t)
         u0, s0, t0 = get_x0(out[0][self.train_idx]/scaling, out[2][self.train_idx], t[self.train_idx], self.neighbor_idx)
-        
+        u1,s1,t1=None,None,None
+        if(self.config["vel_continuity_loss"] and self.neighbor_idx_fw is None):
+            self.neighbor_idx_fw = knnx0_index(out[0][self.train_idx]/scaling, 
+                                               out[2][self.train_idx], 
+                                               t[self.train_idx], 
+                                               z[self.train_idx], 
+                                               t, 
+                                               z, 
+                                               dt, 
+                                               self.config["n_neighbors"], 
+                                               adaptive=self.config["knn_adaptive"], 
+                                               std_t=std_t,
+                                               forward=True)
+            u1, s1, t1 = get_x0(out[0][self.train_idx]/scaling, out[2][self.train_idx], t[self.train_idx], self.neighbor_idx_fw)
+            t1 = t1.reshape(-1,1)
         self.set_mode('train')
-        return u0, s0, t0.reshape(-1,1)
+        return u0, s0, t0.reshape(-1,1), u1, s1, t1
     
     
     def sample_poisson(self, uhat, shat):
@@ -549,21 +591,18 @@ class DVAE(VAE):
         s_nb = NegativeBinomial(shat*(1-ps)/ps, ps.repeat(shat.shape[0],1))
         return u_nb.sample(), s_nb.sample()
     
-    def corr_vel(self, uhat, shat, rho):
-        cos_sim = nn.CosineSimilarity(dim=0)
-        vu = rho * self.decoder.alpha.exp() - self.decoder.beta.exp() * uhat / self.decoder.scaling.exp()
-        vs = self.decoder.beta.exp() * uhat / self.decoder.scaling.exp() - self.decoder.gamma.exp() * shat
-        vu = vu-vu.mean(0)
-        vs = vs-vs.mean(0)
-        uhat_0 = uhat - uhat.mean(0)
-        shat_0 = shat - shat.mean(0)
-        
-        return torch.sum(cos_sim(vu,uhat_0)+cos_sim(vs,shat_0)-cos_sim(vs,uhat))
+    def loss_vel(self, x0, xhat, v):
+        cossim = nn.CosineSimilarity(dim=1)
+        return cossim(xhat-x0, v).mean()
+    
+    def kl_poisson(self, lamb_1, lamb_2):
+        return lamb_1 * (torch.log(lamb_1) - torch.log(lamb_2)) + lamb_2 - lamb_1
     
     def vae_risk_poisson(self, 
                          q_tx, p_t, 
                          q_zx, p_z, 
                          u, s, uhat, shat, 
+                         u1=None, s1=None, uhat_fw=None, shat_fw=None,
                          weight=None,
                          eps=1e-2):
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
@@ -579,7 +618,9 @@ class DVAE(VAE):
         poisson_s = Poisson(F.relu(shat)+1e-2)
         
         logp = poisson_u.log_prob(u) + poisson_s.log_prob(s)
-        
+        #velocity continuity loss
+        if(uhat_fw is not None and shat_fw is not None):
+            logp = logp - self.kl_poisson(u1, uhat_fw) - self.kl_poisson(s1, shat_fw)
         if( weight is not None):
             logp = logp*weight
         
@@ -645,26 +686,32 @@ class DVAE(VAE):
             u0 = torch.tensor(self.u0[self.train_idx[idx]], device=self.device, requires_grad = True) if self.use_knn else None
             s0 = torch.tensor(self.s0[self.train_idx[idx]], device=self.device, requires_grad = True) if self.use_knn else None
             t0 = torch.tensor(self.t0[self.train_idx[idx]], device=self.device, requires_grad = True) if self.use_knn else None
+            u1 = torch.tensor(self.u1[self.train_idx[idx]], device=self.device, requires_grad = True) if (self.use_knn and self.config["vel_continuity_loss"]) else None
+            s1 = torch.tensor(self.s1[self.train_idx[idx]], device=self.device, requires_grad = True) if (self.use_knn and self.config["vel_continuity_loss"]) else None
+            t1 = torch.tensor(self.t1[self.train_idx[idx]], device=self.device, requires_grad = True) if (self.use_knn and self.config["vel_continuity_loss"]) else None
             lu_scale = self.lu_scale[self.train_idx[idx]].exp()
             ls_scale = self.ls_scale[self.train_idx[idx]].exp()
             
             
             condition = F.one_hot(batch[1].to(self.device), self.n_type).float() if self.enable_cvae else None
-            mu_tx, std_tx, mu_zx, std_zx, t, z, uhat, shat, rho = self.forward(xbatch, lu_scale, ls_scale, u0, s0, t0, condition)
+            mu_tx, std_tx, mu_zx, std_zx, t, z, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.forward(xbatch, lu_scale, ls_scale, u0, s0, t0, t1, condition)
             
             
             err_rec, kldt, kldz, kld_param = self.vae_risk((mu_tx, std_tx), self.p_t[:,self.train_idx[idx],:],
-                                                (mu_zx, std_zx), self.p_z[:,self.train_idx[idx],:],
-                                                u.int(),
-                                                s.int(), 
-                                                uhat*lu_scale, shat*ls_scale,
-                                                None)
+                                                            (mu_zx, std_zx), self.p_z[:,self.train_idx[idx],:],
+                                                            u.int(),
+                                                            s.int(), 
+                                                            uhat*lu_scale, shat*ls_scale,
+                                                            u1, s1, uhat_fw, shat_fw,
+                                                            None)
             loss = - err_rec + self.config["kl_t"]*kldt + self.config["kl_z"]*kldz
             
             if(kld_param is not None):
                 loss = loss + self.config["kl_param"]*kld_param
-            if(self.config['reg_vel']>0):
-                loss = loss+self.config['reg_vel']*self.corr_vel(uhat, shat, rho)
+            if(self.use_knn and self.config['reg_v']>0):
+                loss = loss - self.config["reg_v"] * (self.loss_vel(u0, uhat, vu) + self.loss_vel(s0, shat, vs))
+                if(vu_fw is not None and vs_fw is not None):
+                    loss = loss - self.config["reg_v"] * (self.loss_vel(uhat, uhat_fw, vu_fw) + self.loss_vel(shat, shat_fw, vs_fw))
             loss.backward()
             if(K==0):
                 optimizer.step()
@@ -796,10 +843,14 @@ class DVAE(VAE):
         n_test1 = len(self.loss_test)
         
         print("*********                      Stage  2                       *********")
-        u0, s0, t0 = self.update_x0(U, S)
+        u0, s0, t0, u1, s1, t1 = self.update_x0(U, S)
         self.u0 = u0
         self.s0 = s0
         self.t0 = t0
+        if(self.config['vel_continuity_loss']):
+            self.u1 = u1
+            self.s1 = s1
+            self.t1 = t1
         
         self.use_knn = True
         self.decoder.init_weights()
@@ -825,7 +876,7 @@ class DVAE(VAE):
                     stop_training = self.train_epoch(data_loader, test_set, optimizer_post, None, self.config["k_alt"])
             
             if((epoch+1) % self.config["x0_epoch"] == 0):
-                u0, s0, t0 = self.update_x0(U, S)
+                u0, s0, t0, u1, s1, t1 = self.update_x0(U, S)
                 self.u0 = u0
                 self.s0 = s0
                 self.t0 = t0
@@ -917,32 +968,41 @@ class DVAE(VAE):
                     u0 = torch.tensor(self.u0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
                     s0 = torch.tensor(self.s0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
                     t0 = torch.tensor(self.t0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    u1 = torch.tensor(self.u1[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.test_idx[i*B:(i+1)*B]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.test_idx[i*B:(i+1)*B],:]
                     p_z = self.p_z[:,self.test_idx[i*B:(i+1)*B],:]
                     lu_scale = self.lu_scale[self.test_idx[i*B:(i+1)*B],:].exp()
                     ls_scale = self.ls_scale[self.test_idx[i*B:(i+1)*B],:].exp()
-                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot, continuous)
+                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot, continuous)
                 elif(mode=="train"):
                     u0 = torch.tensor(self.u0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
                     s0 = torch.tensor(self.s0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
                     t0 = torch.tensor(self.t0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    u1 = torch.tensor(self.u1[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.train_idx[i*B:(i+1)*B]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.train_idx[i*B:(i+1)*B],:]
                     p_z = self.p_z[:,self.train_idx[i*B:(i+1)*B],:]
                     lu_scale = self.lu_scale[self.train_idx[i*B:(i+1)*B],:].exp()
                     ls_scale = self.ls_scale[self.train_idx[i*B:(i+1)*B],:].exp()
-                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot, continuous)
+                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot, continuous)
                 else:
                     u0 = torch.tensor(self.u0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if self.use_knn else None
                     s0 = torch.tensor(self.s0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if self.use_knn else None
                     t0 = torch.tensor(self.t0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if self.use_knn else None
+                    u1 = torch.tensor(self.u1[i*B:(i+1)*B], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[i*B:(i+1)*B], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[i*B:(i+1)*B], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[i*B:(i+1)*B], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,i*B:(i+1)*B,:]
                     p_z = self.p_z[:,i*B:(i+1)*B,:]
                     lu_scale = self.lu_scale[i*B:(i+1)*B,:].exp()
                     ls_scale = self.ls_scale[i*B:(i+1)*B,:].exp()
-                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot, continuous)
+                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot, continuous)
 
                 u_raw, s_raw = data_in[:,:G], data_in[:,G:]
                 u_sum, s_sum = torch.sum(uhat, 1, keepdim=True), torch.sum(shat, 1, keepdim=True)
@@ -951,11 +1011,12 @@ class DVAE(VAE):
                                                             (mu_zx, std_zx), p_z,
                                                             u_raw.int(), s_raw.int(), 
                                                             uhat*lu_scale, shat*ls_scale, 
+                                                            u1, s1, uhat_fw, shat_fw,
                                                             None)
                 loss = (- logp + self.config["kl_t"] * kldt + self.config["kl_z"] * kldz).cpu().item()
                 if(kld_param is not None):
                     loss = loss+self.config["kl_param"]*kld_param.cpu().item()
-                #u_sample, s_sample = self.sample_poisson(uhat*lu_scale, shat*ls_scale)
+                
                 mse_batch = np.mean( (u_raw.cpu().numpy() - (uhat*lu_scale).cpu().numpy())**2 + ( s_raw.cpu().numpy() - (shat*ls_scale).cpu().numpy())**2)
                 elbo = elbo - (B/N)*loss
                 
@@ -985,38 +1046,48 @@ class DVAE(VAE):
                     u0 = torch.tensor(self.u0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
                     s0 = torch.tensor(self.s0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
                     t0 = torch.tensor(self.t0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    u1 = torch.tensor(self.u1[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.test_idx[Nb*B:]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.test_idx[Nb*B:],:]
                     p_z = self.p_z[:,self.test_idx[Nb*B:],:]
                     lu_scale = self.lu_scale[self.test_idx[Nb*B:],:].exp()
                     ls_scale = self.ls_scale[self.test_idx[Nb*B:],:].exp()
-                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot)
+                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot)
                 elif(mode=="train"):
                     u0 = torch.tensor(self.u0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
                     s0 = torch.tensor(self.s0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
                     t0 = torch.tensor(self.t0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
+                    u1 = torch.tensor(self.u1[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.train_idx[Nb*B:]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.train_idx[Nb*B:],:]
                     p_z = self.p_z[:,self.train_idx[Nb*B:],:]
                     lu_scale = self.lu_scale[self.train_idx[Nb*B:],:].exp()
                     ls_scale = self.ls_scale[self.train_idx[Nb*B:],:].exp()
-                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot)
+                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot)
                 else:
                     u0 = torch.tensor(self.u0[Nb*B:], dtype=torch.float, device=self.device) if self.use_knn else None
                     s0 = torch.tensor(self.s0[Nb*B:], dtype=torch.float, device=self.device) if self.use_knn else None
                     t0 = torch.tensor(self.t0[Nb*B:], dtype=torch.float, device=self.device) if self.use_knn else None
+                    u1 = torch.tensor(self.u1[Nb*B:], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[Nb*B:], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[Nb*B:], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[Nb*B:], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,Nb*B:,:]
                     p_z = self.p_z[:,Nb*B:,:]
                     lu_scale = self.lu_scale[Nb*B:,:].exp()
                     ls_scale = self.ls_scale[Nb*B:,:].exp()
-                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, rho = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, y_onehot)
+                    mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot)
                 u_raw, s_raw = data_in[:,:G], data_in[:,G:]
                 u_sum, s_sum = torch.sum(uhat, 1, keepdim=True), torch.sum(shat, 1, keepdim=True)
                 logp, kldt, kldz, kld_param = self.vae_risk((mu_tx, std_tx), p_t,
                                                             (mu_zx, std_zx), p_z,
                                                             u_raw.int(), s_raw.int(), 
                                                             uhat*lu_scale, shat*ls_scale,
+                                                            u1, s1, uhat_fw, shat_fw,
                                                             None)
                 loss = (- logp + self.config["kl_t"] * kldt + self.config["kl_z"] * kldz).cpu().item()
                 if(kld_param is not None):
@@ -1193,6 +1264,10 @@ class DVAE(VAE):
         adata.obs[f"{key}_t0"] = self.t0.squeeze()
         adata.layers[f"{key}_u0"] = self.u0
         adata.layers[f"{key}_s0"] = self.s0
+        if(self.config["vel_continuity_loss"]):
+            adata.obs[f"{key}_t1"] = self.t1.squeeze()
+            adata.layers[f"{key}_u1"] = self.u1
+            adata.layers[f"{key}_s1"] = self.s1
 
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
@@ -1300,7 +1375,11 @@ class decoder_fullvb(decoder):
             else:
                 rho = torch.sigmoid(self.fc_out2(self.net_rho2(torch.cat((z,condition),1))))
             Uhat, Shat = pred_su(F.leaky_relu(t-t0, neg_slope), u0, s0, rho*alpha, beta, gamma)
-        return nn.functional.relu(Uhat), nn.functional.relu(Shat), rho
+        Uhat = F.relu(Uhat)*self.scaling.exp()
+        Shat = F.relu(Shat)
+        vu = alpha - beta * Uhat / torch.exp(self.scaling)
+        vs = beta * Uhat / torch.exp(self.scaling) - gamma * Shat
+        return Uhat, Shat, vu, vs
         
     def eval_model(self, t, z, condition=None, u0=None, s0=None, t0=None, neg_slope=0.0):
         #Evaluate the decoder. Here, we use the mean instead of randomly sample the ODE parameters.
@@ -1320,7 +1399,11 @@ class decoder_fullvb(decoder):
             else:
                 rho = torch.sigmoid(self.fc_out2(self.net_rho2(torch.cat((z,condition),1))))
             Uhat, Shat = pred_su(F.leaky_relu(t-t0, neg_slope), u0, s0, rho*alpha, beta, gamma)
-        return nn.functional.relu(Uhat), nn.functional.relu(Shat), rho
+        Uhat = F.relu(Uhat)*self.scaling.exp()
+        Shat = F.relu(Shat)
+        vu = alpha - beta * Uhat / torch.exp(self.scaling)
+        vs = beta * Uhat / torch.exp(self.scaling) - gamma * Shat
+        return Uhat, Shat, vu, vs
 
 
 class DVAEFullVB(DVAE):
@@ -1379,7 +1462,7 @@ class DVAEFullVB(DVAE):
             "kl_t":1.0, 
             "kl_z":1.0, 
             "kl_param":1.0,
-            "reg_vel":0.0,
+            "reg_v":0.0,
             "test_iter":None, 
             "save_epoch":100, 
             "x0_epoch":25,
@@ -1393,6 +1476,7 @@ class DVAEFullVB(DVAE):
             "train_ton":False,
             "train_std":False,
             "weight_sample":False,
+            "vel_continuity_loss":False,
             "use_raw":use_raw,
             
             #Normalization Configurations
@@ -1436,6 +1520,10 @@ class DVAEFullVB(DVAE):
         
         self.tmax=tmax
         self.time_distribution = time_distribution
+        if(init_type is not None):
+            tprior = 'tprior'
+            self.config['tprior'] = tprior
+            self.config['train_ton'] = False
         self.get_prior(adata, time_distribution, tmax, tprior)
         
         self.p_z = torch.stack([torch.zeros(N,dim_z), torch.ones(N,dim_z)*self.config["std_z_prior"]]).float().to(self.device)
@@ -1444,7 +1532,7 @@ class DVAEFullVB(DVAE):
         self.u0 = None
         self.s0 = None
         self.t0 = None
-        self.neighbor_idx = None
+        self.neighbor_idx, self.neighbor_idx_fw = None, None
         self.lu_scale = torch.tensor(np.log(adata.obs['library_scale_u'].to_numpy())).unsqueeze(-1).float().to(self.device)
         self.ls_scale = torch.tensor(np.log(adata.obs['library_scale_s'].to_numpy())).unsqueeze(-1).float().to(self.device)
         
@@ -1488,8 +1576,8 @@ class DVAEFullVB(DVAE):
         self.p_log_gamma = torch.tensor([[rate_prior['gamma'][0]], [rate_prior['gamma'][1]]]).to(self.device)
         
         self.timer = time.time() - t_start
-
-    def eval_model(self, data_in, lu_scale, ls_scale, u0=None, s0=None, t0=None, condition=None, continuous=True):
+    
+    def eval_model(self, data_in, lu_scale, ls_scale, u0=None, s0=None, t0=None, t1=None, condition=None, continuous=True):
         data_in_scale = data_in
         if(self.config["scale_gene_encoder"]):
             data_in_scale = torch.cat((data_in_scale[:,:data_in_scale.shape[1]//2]/self.decoder.scaling.exp(), data_in_scale[:,data_in_scale.shape[1]//2:]),1)
@@ -1498,21 +1586,33 @@ class DVAEFullVB(DVAE):
         if(self.config["log1p"]):
             data_in_scale = torch.log1p(data_in_scale)
         mu_t, std_t, mu_z, std_z = self.encoder.forward(data_in_scale, condition)
-        uhat, shat, rho = self.decoder.eval_model(mu_t, mu_z, condition, u0=u0, s0=s0, t0=t0, neg_slope=0.0)
-        uhat = uhat * self.decoder.scaling.exp()
+        uhat, shat, vu, vs = self.decoder.eval_model(mu_t, mu_z, condition, u0=u0, s0=s0, t0=t0, neg_slope=0.0)
 
+        if(t1 is not None):
+            uhat_fw, shat_fw, vu_fw, vs_fw = self.decoder.forward(t1, mu_z, condition, uhat, shat, mu_t, neg_slope=self.config["neg_slope"])
+        else:
+            uhat_fw, shat_fw, vu_fw, vs_fw = None, None, None, None
         if(not continuous):
-            poisson_u = Poisson(F.softplus(uhat*lu_scale, beta=100))
-            poisson_s = Poisson(F.softplus(shat*ls_scale, beta=100))
+            poisson_u = Poisson(F.softplus(uhat, beta=100))
+            poisson_s = Poisson(F.softplus(shat, beta=100))
+            if(t1 is not None):
+                poisson_u = Poisson(F.softplus(uhat_fw, beta=100))
+                poisson_s = Poisson(F.softplus(shat_fw, beta=100))
+                u_out_fw = poisson_u_fw.sample()
+                s_out_fw = poisson_s_fw.sample()
+            else:
+                u_out_fw, s_out_fw = None, None
             u_out = poisson_u.sample()
             s_out = poisson_s.sample()
-            return mu_t, std_t, mu_z, std_z, u_out, s_out
-        return mu_t, std_t, mu_z, std_z, uhat, shat, rho
+            
+            return mu_t, std_t, mu_z, std_z, u_out, s_out, u_out_fw, s_out_fw, vu, vs, vu_fw, vs_fw
+        return mu_t, std_t, mu_z, std_z, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw
     
     def vae_risk_poisson(self, 
                          q_tx, p_t, 
                          q_zx, p_z, 
                          u, s, uhat, shat,
+                         u1=None, s1=None, uhat_fw=None, shat_fw=None,
                          weight=None,
                          eps=1e-2):
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
@@ -1531,10 +1631,12 @@ class DVAEFullVB(DVAE):
         
         
         logp = poisson_u.log_prob(u) + poisson_s.log_prob(s)
+        #velocity continuity loss
+        if(uhat_fw is not None and shat_fw is not None):
+            logp = logp - self.kl_poisson(u1, uhat_fw) - self.kl_poisson(s1, shat_fw)
         
         if( weight is not None):
             logp = logp*weight
-        
         err_rec = torch.mean(torch.sum(logp,1))
         
         return err_rec, kldt, kldz, kld_param
@@ -1628,6 +1730,10 @@ class DVAEFullVB(DVAE):
         adata.obs[f"{key}_t0"] = self.t0.squeeze()
         adata.layers[f"{key}_u0"] = self.u0
         adata.layers[f"{key}_s0"] = self.s0
+        if(self.config["vel_continuity_loss"]):
+            adata.obs[f"{key}_t1"] = self.t1.squeeze()
+            adata.layers[f"{key}_u1"] = self.u1
+            adata.layers[f"{key}_s1"] = self.s1
 
         adata.uns[f"{key}_train_idx"] = self.train_idx
         adata.uns[f"{key}_test_idx"] = self.test_idx
