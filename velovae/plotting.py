@@ -776,7 +776,7 @@ def plot_phase_grid(Nr,
                     Shat={}, 
                     Labels_demo={},
                     W=6,
-                    H=5,
+                    H=3,
                     alpha=0.2,
                     downsample=1,
                     legend_fontsize=None,
@@ -1203,7 +1203,7 @@ def plot_sig_grid(Nr,
                   V={},
                   Labels_demo={},
                   W=6,
-                  H=5,
+                  H=3,
                   frac=0.0,
                   alpha=1.0,
                   down_sample=1,
@@ -1304,7 +1304,7 @@ def plot_sig_grid(Nr,
                         if('Discrete' in methods[0]):
                             plot_sig_pred_axis(ax_sig[3*i], that[::K], Uhat[methods[0]][:,idx][::K])
                             plot_sig_pred_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:,idx][::K])
-                            plot_sig_axis(ax_sig[3*i+2], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', 0.1, down_sample, color_map=color_map)
+                            plot_sig_axis(ax_sig[3*i+2], t, S[:,idx], Labels[methods[0]], Legends[methods[0]], '.', 0.2, down_sample, color_map=color_map)
                             plot_vel_axis(ax_sig[3*i+2], t, Shat[methods[0]][:,idx], V[methods[0]][:,idx], None, None, sparsity_correction=sparsity_correction, color_map=color_map)
                         else:
                             if(frac>0 and frac<1):
@@ -1437,6 +1437,8 @@ def plot_time_grid(T,
                    std_t=None,
                    down_sample=1,
                    q=0.99,
+                   W=6,
+                   H=3,
                    save="figures/time_grid.png"):
     """Plot the latent time of different methods.
     
@@ -1466,7 +1468,7 @@ def plot_time_grid(T,
         methods = list(T.keys())
     M = len(methods)
     if(std_t is not None):
-        fig_time, ax = plt.subplots(2, M, figsize=(6*M+2,8),facecolor='white')
+        fig_time, ax = plt.subplots(2, M, figsize=(W*M+2,H),facecolor='white')
         for i, method in enumerate(methods):
             t = capture_time if method=="Capture Time" else T[method]
             t = np.clip(t,None,np.quantile(t,q))
@@ -2206,7 +2208,7 @@ def plot_umap_transition(graph,
 
 def plot_transition_graph(adata, 
                           key="brode", 
-                          figsize=(8,10), 
+                          figsize=(4,8), 
                           color_map=None, 
                           save=None):
     """Plot a directed graph with cell types as nodes and progenitor-descendant relation as edges.
@@ -2264,6 +2266,48 @@ def plot_transition_graph(adata,
     save_fig(fig, save, (lgd,))
     
     return
+
+def plot_rate_hist(adata, model, key, tprior='tprior', figsize=(18,4), save="figures/hist.png"):
+    if('Discrete' in model):
+        U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
+    else:
+        U, S = adata.layers["Mu"], adata.layers["Ms"]
+    x_median = np.median(U.sum(1)) + np.median(S.sum(1))
+    sparsity_u = [1-np.sum(U[:,i]<=U[:,i].max()*0.01)/adata.n_obs/adata.n_vars for i in range(adata.n_vars)]
+    sparsity_s = [1-np.sum(S[:,i]<=S[:,i].max()*0.01)/adata.n_obs/adata.n_vars for i in range(adata.n_vars)]
+    u_median = np.array([np.quantile(U[:,i],0.5+0.5*sparsity_u[i]) for i in range(adata.n_vars)])
+    s_median = np.array([np.quantile(S[:,i],0.5+0.5*sparsity_s[i]) for i in range(adata.n_vars)])
+    sparsity_scale = (360000 / x_median)
+    t = adata.obs[f"{key}_time"].to_numpy()
+    if(tprior in adata.obs):
+        tprior = adata.obs[tprior].to_numpy()
+        t_scale = (tprior.max()-tprior.min()) / (np.quantile(t,0.99)-np.quantile(t,0.01))
+    else:
+        print('Warning: No multiple capture times detected! Assume the experiment lasts one day.')
+        t_scale = 1 / (np.quantile(t,0.99)-np.quantile(t,0.01))
+    if("FullVB" in model):
+        std_alpha = np.exp(adata.var[f"{key}_logstd_alpha"].to_numpy())
+        std_beta = np.exp(adata.var[f"{key}_logstd_beta"].to_numpy())
+        std_gamma = np.exp(adata.var[f"{key}_logstd_gamma"].to_numpy())
+        alpha = np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy()+0.5*std_alpha**2) / (1440*t_scale) * sparsity_scale
+        beta = np.exp(adata.var[f"{key}_logmu_beta"].to_numpy()+0.5*std_beta**2) * u_median / (1440*t_scale) * sparsity_scale
+        gamma = np.exp(adata.var[f"{key}_logmu_gamma"].to_numpy()+0.5*std_gamma**2) * s_median / (1440*t_scale) * sparsity_scale
+    elif("VeloVAE" in model):
+        alpha = (adata.var[f"{key}_alpha"]).to_numpy() / (1440*t_scale) * sparsity_scale
+        beta = (adata.var[f"{key}_beta"]).to_numpy() * u_median / (1440*t_scale) * sparsity_scale
+        gamma = (adata.var[f"{key}_gamma"]).to_numpy() * s_median / (1440*t_scale) * sparsity_scale
+    ub = [min(np.quantile(alpha,0.95), alpha.mean()*4), min(np.quantile(beta,0.95), beta.mean()*4), min(np.quantile(gamma,0.95),gamma.mean()*4)]
+
+    fig, ax = plt.subplots(1,3,figsize=figsize)
+    ax[0].hist(alpha, bins=np.linspace(0,ub[0],50), color="orange", label=r"$\alpha$")
+    ax[1].hist(beta, bins=np.linspace(0,ub[1],50), color="green", label=r"$\beta$")
+    ax[2].hist(gamma, bins=np.linspace(0,ub[2],50), color="blue", label=r"$\gamma$")
+    ax[0].set_xlabel(r"$\alpha$ (transcript / min)", fontsize=20)
+    ax[1].set_xlabel(r"$\beta$u (transcript / min)", fontsize=20)
+    ax[2].set_xlabel(r"$\gamma$s (transcript / min)", fontsize=20)
+    ax[0].set_ylabel("Number of Genes", fontsize=20)
+    plt.tight_layout()
+    save_fig(fig, save)
 
 def plot_latent_embedding(X,  
                           n_cluster, 
