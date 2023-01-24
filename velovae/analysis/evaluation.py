@@ -4,19 +4,21 @@ from pandas import DataFrame, Index
 from ..model.model_util import make_dir
 from .evaluation_util import *
 from velovae.plotting import get_colors, plot_cluster, plot_phase_grid, plot_sig_grid, plot_time_grid
+from multiprocessing import cpu_count
 
-
-
+def get_n_cpu(n_cell):
+    #used for scVelo parallel jobs
+    return int(max(1, cpu_count() / np.clip(n_cell/5000,1,None)))
 
 def get_metric(adata, 
                method, 
                key, 
                vkey,  
                cluster_key="clusters", 
-               scv_key=None, 
-               scv_mask=True, 
+               gene_key='velocity_genes', 
                cluster_edges=[], 
-               embed='umap'):
+               embed='umap',
+               n_jobs=None):
     """Get specific metrics given a method.
     
     Arguments
@@ -24,11 +26,18 @@ def get_metric(adata,
     adata : :class:`anndata.AnnData`
     key : str
        Key in .var or .varm for extracting the ODE parameters learned by the model
-    scv_key : str, optional
-       Key for scvelo fitting. Used for filtering the genes (only effective if scv_mask=True)
-    scv_mask : bool, optional
-       Whether to filter out the genes not fitted by scvelo (used for fairness in the comparison with scVelo)
-    
+    vkey : str
+        Key in .layers for extracting rna velocity
+    cluster_key : str
+        Key in .obs for extracting cell type annotation
+    gene_key : str, optional
+       Key for filtering the genes. 
+    cluster_edges : str, optional
+        List of tuples. Each tuple contains the progenitor cell type and its descendant cell type.
+    embed : str, optional
+        Low-dimensional embedding name.
+    n_jobs : int, optional
+        Number of parallel jobs. Used in scVelo velocity graph computation.
     Returns
     -------
     stats : :class:`pandas.DataFrame`
@@ -36,31 +45,32 @@ def get_metric(adata,
     """
     
     stats = {}  #contains the performance metrics
-    gene_mask = adata.var[scv_key] if scv_key in adata.var else None
+    gene_mask = adata.var[gene_key].to_numpy() if gene_key in adata.var else None
     
     if method=='scVelo':
-        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_scv(adata)
+        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time = get_err_scv(adata)
     elif method=='Vanilla VAE':
-        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_vanilla(adata, key, gene_mask)
+        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time = get_err_vanilla(adata, key, gene_mask)
     elif method=='VeloVAE' or method=='FullVB':
-        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_velovae(adata, key, gene_mask, 'FullVB' in method)
+        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time = get_err_velovae(adata, key, gene_mask, 'FullVB' in method)
     elif(method=='BrODE'):
-        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_brode(adata, key, gene_mask)
+        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time = get_err_brode(adata, key, gene_mask)
     elif(method=='Discrete VeloVAE' or method=='Discrete FullVB'):
-        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_velovae(adata, key, gene_mask, 'FullVB' in method, True)
+        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time = get_err_velovae(adata, key, gene_mask, 'FullVB' in method, True)
     elif(method=='UniTVelo'):
-        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_utv(adata, gene_mask)
+        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time = get_err_utv(adata, key, gene_mask)
     elif(method=='DeepVelo'):
-        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_dv(adata, gene_mask)
+        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time = get_err_dv(adata, key, gene_mask)
     elif('PyroVelocity' in method):
         if('err' in adata.uns):
             mse_train, mse_test, mae_train, mae_test, logp_train, logp_test  = adata.uns['err']['MSE Train'], adata.uns['err']['MSE Test'],\
                                                                                adata.uns['err']['MAE Train'], adata.uns['err']['MAE Test'],\
                                                                                adata.uns['err']['LL Train'], adata.uns['err']['LL Test']
+            run_time = adata.uns[f'{key}_run_time'] if f'{key}_run_time' in adata.uns else np.nan
         else:
-            mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_pv(adata, key, gene_mask, not 'Continuous' in method)
+            mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time = get_err_pv(adata, key, gene_mask, not 'Continuous' in method)
     elif(method=='VeloVI'):
-        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test = get_err_velovi(adata, key, gene_mask)
+        mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time = get_err_velovi(adata, key, gene_mask)
     
     if(method in ['scVelo', 'UniTVelo', 'DeepVelo']):
         logp_test = 'N/A'
@@ -77,6 +87,7 @@ def get_metric(adata,
     stats['MAE Test'] = mae_test
     stats['LL Train'] = logp_train
     stats['LL Test'] = logp_test
+    stats['Training Time'] = run_time
     
     if('tprior' in adata.obs):
         if(method == 'DeepVelo'):
@@ -91,7 +102,8 @@ def get_metric(adata,
         print("Computing velocity embedding using scVelo")
         try:
             from scvelo.tl import velocity_graph, velocity_embedding
-            velocity_graph(adata, vkey=vkey)
+            n_jobs = get_n_cpu(adata.n_obs) if n_jobs is None else n_jobs
+            velocity_graph(adata, vkey=vkey, n_jobs=n_jobs)
             velocity_embedding(adata, vkey=vkey, basis=embed)
         except ImportError:
             print("Please install scVelo to compute velocity embedding.\nSkipping metrics 'Cross-Boundary Direction Correctness' and 'In-Cluster Coherence'.")
@@ -110,7 +122,7 @@ def get_metric(adata,
     if(len(cluster_edges)>0):
         _, mean_cbdir = cross_boundary_correctness(adata, cluster_key, vkey, cluster_edges, x_emb=f"X_{embed}")
         stats[f'Cross-Boundary Direction Correctness (embed)'] = mean_cbdir
-        _, mean_cbdir = cross_boundary_correctness(adata, cluster_key, vkey, cluster_edges, x_emb="Ms")
+        _, mean_cbdir = cross_boundary_correctness(adata, cluster_key, vkey, cluster_edges, x_emb="Ms", gene_mask=gene_mask)
         stats['Cross-Boundary Direction Correctness'] = mean_cbdir
     _, mean_iccoh = inner_cluster_coh(adata, cluster_key, vkey)
     stats['In-Cluster Coherence'] = mean_iccoh
@@ -138,7 +150,7 @@ def post_analysis(adata,
                   test_id,
                   methods, 
                   keys, 
-                  scv_key=None,
+                  gene_key='velocity_genes',
                   compute_metrics=True,
                   raw_count=False,
                   genes=[], 
@@ -165,6 +177,8 @@ def post_analysis(adata,
     keys : string list
         Used for extracting ODE parameters from .var or .varm from anndata
         It should be of the same length as methods.
+    gene_key : string, optional
+        Key in .var for gene filtering. Usually set to select velocity genes.
     compute_metrics : bool, optional
         Whether to compute the performance metrics for the methods
     genes : string list, optional 
@@ -255,10 +269,10 @@ def post_analysis(adata,
                                  keys[i], 
                                  vkeys[i], 
                                  cluster_key, 
-                                 scv_key, 
-                                 (scv_key in adata.var),
+                                 gene_key, 
                                  cluster_edges,
-                                 embed)
+                                 embed,
+                                 n_jobs=kwargs['n_jobs'] if 'n_jobs' in kwargs else None)
             method_ = f"{method} ({keys[i]})" if method in stats else method# avoid duplicate methods with different keys
             stats[method_] = stats_i
         #Compute prediction for the purpose of plotting (a fixed number of plots)
@@ -378,6 +392,8 @@ def post_analysis(adata,
                 T['scVelo Global'] = adata.obs['latent_time'].to_numpy()*20
                 Labels_sig['scVelo Global'] = Labels_sig[method]
                 Legends_sig['scVelo Global'] = cell_types_raw
+            elif(method=='UniTVelo'):
+                T[method] = adata.layers["fit_t"][:,gene_indices]
             elif(method=='VeloVI'):
                 T[method] = adata.layers[f"fit_t"][:,gene_indices]
             else:
@@ -398,7 +414,7 @@ def post_analysis(adata,
                       V,
                       Yhat,
                       frac=frac,
-                      down_sample=min(10, max(1,adata.n_obs//5000)),
+                      down_sample=min(20, max(1,adata.n_obs//1000)),
                       sparsity_correction=sparsity_correction,
                       path=save_path, 
                       figname=test_id,
@@ -411,7 +427,7 @@ def post_analysis(adata,
             colors = get_colors(len(cell_types_raw))
             for i, vkey in enumerate(vkeys):
                 if(not f"{vkey}_graph" in adata.uns):
-                    velocity_graph(adata, vkey=vkey)
+                    velocity_graph(adata, vkey=vkey, n_jobs=get_n_cpu(adata.n_obs))
                 velocity_embedding_stream(adata, 
                                           basis=embed,
                                           vkey=vkey,

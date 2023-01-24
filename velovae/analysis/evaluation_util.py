@@ -58,7 +58,11 @@ def get_err_scv(adata, key='fit'):
     mse = get_mse(adata.layers['Mu'], adata.layers['Ms'], Uhat, Shat)
     mae = get_mae(adata.layers['Mu'], adata.layers['Ms'], Uhat, Shat)
     logp = np.sum(np.log(adata.var[f"{key}_likelihood"]))
-    return mse, None, mae, None, logp, None
+    try:
+        run_time = adata.uns[f'{key}_run_time']
+    except KeyError:
+        run_time = np.nan
+    return mse, None, mae, None, logp, None, run_time
 
 def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
     if(genes is None):
@@ -123,7 +127,11 @@ def get_err_vanilla(adata, key, gene_mask=None):
     logp_train = np.nanmean(np.sum(logp_train,1))
     logp_test = np.nanmean(np.sum(logp_test,1))
     
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
+    try:
+        run_time = adata.uns[f'{key}_run_time']
+    except KeyError:
+        run_time = np.nan
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
     
     
 
@@ -224,7 +232,12 @@ def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n
     logp_train = np.nanmean(np.sum(logp_train,1))
     logp_test = np.nanmean(np.sum(logp_test,1))
     
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
+    try:
+        run_time = adata.uns[f'{key}_run_time']
+    except KeyError:
+        run_time = np.nan
+    
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
 
 def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False):
     if( (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers)):
@@ -252,7 +265,7 @@ def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False)
             Uhat, Shat = adata.layers[f"{key}_uhat"][:,gene_indices], adata.layers[f"{key}_shat"][:,gene_indices]
     if(discrete):
         lu = adata.obs["library_scale_u"].to_numpy().reshape(-1,1)
-        ls = adata.obs["library_scale_u"].to_numpy().reshape(-1,1)
+        ls = adata.obs["library_scale_s"].to_numpy().reshape(-1,1)
         Uhat = Uhat * lu
         Shat = Shat * ls
     return Uhat, Shat
@@ -312,7 +325,12 @@ def get_err_brode(adata, key, gene_mask=None):
     logp_train = np.nanmean(np.sum(logp_train,1))
     logp_test = np.nanmean(np.sum(logp_test,1))
     
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
+    try:
+        run_time = adata.uns[f'{key}_run_time']
+    except KeyError:
+        run_time = np.nan
+    
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
 
 def get_pred_brode_demo(adata, key, genes=None, N=100):
     t_trans = adata.uns[f"{key}_t_trans"]
@@ -400,8 +418,7 @@ def transition_prob_util(x_embed, t, cell_labels, nbin=20, epsilon = 0.05, batch
 
 #UniTVelo
 def get_pred_utv(adata, B=5000):
-    idx_t = np.where(~np.isnan(adata.layers['fit_t'][0]))[0][0]
-    t = adata.layers['fit_t'][:,idx_t].reshape(-1,1)
+    t = adata.layers['fit_t']
     o = adata.var['fit_offset'].values
     a0 = adata.var['fit_a'].values
     t0 = adata.var['fit_t'].values
@@ -423,12 +440,12 @@ def get_pred_utv(adata, B=5000):
     return uhat, shat
 
 
-def get_err_utv(adata, gene_mask=None, B=5000):
+def get_err_utv(adata, key, gene_mask=None, B=5000):
     Uhat, Shat = get_pred_utv(adata, B)
     U, S = adata.layers['Mu'], adata.layers['Ms']
     
     if(gene_mask is None):
-        gene_mask = np.ones((adata.n_vars)).astype(bool)
+        gene_mask = np.where(~np.isnan(adata.layers['fit_t'][0]))[0]
     
     dist_u = np.abs(U[:,gene_mask]-Uhat[:,gene_mask])
     dist_s = np.abs(S[:,gene_mask]-Shat[:,gene_mask])
@@ -441,29 +458,33 @@ def get_err_utv(adata, gene_mask=None, B=5000):
     mae = np.nanmean(dist_u+dist_s)
     logp = -dist_u**2/(2*var_u)-dist_s**2/(2*var_s) - 0.5*np.log(var_u) - 0.5*np.log(var_s) - np.log(2*np.pi)
     
-    return mse, None, mae, None, logp.sum(1).mean(0), None
+    try:
+        run_time = adata.uns[f'{key}_run_time']
+    except KeyError:
+        run_time = np.nan
+    
+    return mse, None, mae, None, logp.sum(1).mean(0), None, run_time
 
 def get_pred_utv_demo(adata, genes=None, N=100):
-    idx_t = np.where(~np.isnan(adata.layers['fit_t'][0]))[0][0]
-    t = adata.layers['fit_t'][:,idx_t].reshape(-1,1)
-    t_demo = np.linspace(t.min(),t.max(),N)
-    
+    t = adata.layers['fit_t']
+
     if(genes is None):
         gene_indices = np.array(np.range(adata.n_vars))
     else:
         gene_indices = np.array([np.where(adata.var_names==x)[0][0] for x in genes])
     
-    o = adata.var['fit_offset0'].values[gene_indices]
-    a0 = adata.var['fit_a0'].values[gene_indices]
-    t0 = adata.var['fit_t0'].values[gene_indices]
-    h0 = adata.var['fit_h0'].values[gene_indices]
+    t_demo = np.linspace(t[:,gene_indices].min(0),t[:,gene_indices].max(0),N)
+    o = adata.var['fit_offset'].values[gene_indices]
+    a0 = adata.var['fit_a'].values[gene_indices]
+    t0 = adata.var['fit_t'].values[gene_indices]
+    h0 = adata.var['fit_h'].values[gene_indices]
     i = adata.var['fit_intercept'].values[gene_indices]
     gamma = adata.var['fit_gamma'].values[gene_indices]
     beta = adata.var['fit_beta'].values[gene_indices]
     scaling = adata.var['scaling'].values[gene_indices]
     
-    shat = h0*np.exp(-a0*(t_demo.reshape(-1,1) - t0)**2) + o
-    vs = shat * (-2*a0*(t_demo.reshape(-1,1) - t0))
+    shat = h0*np.exp(-a0*(t_demo - t0)**2) + o
+    vs = shat * (-2*a0*(t_demo - t0))
     uhat = (vs + gamma*shat)/beta + i
     
     return t_demo, uhat, shat
@@ -553,7 +574,7 @@ def _loss_dv(
     loss = torch.stack(loss).mean()
     return loss.detach().cpu().item()
 
-def get_err_dv(adata, gene_mask):
+def get_err_dv(adata, key, gene_mask):
     if(gene_mask is None):
         gene_mask = np.array(range(adata.n_vars))
     nn_t_idx = get_neighbor_idx(adata)
@@ -575,7 +596,11 @@ def get_err_dv(adata, gene_mask):
                                  torch.tensor(nn_t_idx, dtype=torch.long), 
                                  torch.tensor(adata.layers['Ms'][:,gene_mask]),
                                  l=1)
-    return mse_u+mse_s, None, mae_u+mae_s, None, None, None
+    try:
+        run_time = adata.uns[f'{key}_run_time']
+    except KeyError:
+        run_time = np.nan
+    return mse_u+mse_s, None, mae_u+mae_s, None, None, None, run_time
 
 
 
@@ -624,7 +649,12 @@ def get_err_pv(adata, key, gene_mask, discrete=True):
     mae_train = np.nanmean(dist_u_train+dist_s_train)
     mae_test = np.nanmean(dist_u_test+dist_s_test)
     
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
+    try:
+        run_time = adata.uns[f'{key}_run_time']
+    except KeyError:
+        run_time = np.nan
+    
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
     
 
 
@@ -639,6 +669,11 @@ def get_err_velovi(adata, key, gene_mask):
         gene_mask = np.ones((adata.n_vars)).astype(bool)
     U, S = adata.layers['Mu'][:,gene_mask], adata.layers['Ms'][:,gene_mask]
     Uhat, Shat = adata.layers[f'{key}_uhat'][:,gene_mask], adata.layers[f'{key}_shat'][:,gene_mask]
+    
+    try:
+        run_time = adata.uns[f'{key}_run_time']
+    except KeyError:
+        run_time = np.nan
     
     try:
         train_idx = adata.uns[f'{key}_train_idx']
@@ -661,9 +696,9 @@ def get_err_velovi(adata, key, gene_mask):
         mae = np.mean(dist_u+dist_s)
         logp = np.mean(adata.obs[f'{key}_likelihood'].to_numpy())
     
-        return mse, None, mae, None, logp, None
+        return mse, None, mae, None, logp, None, run_time
     
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
 
 
 
@@ -722,7 +757,8 @@ def cross_boundary_correctness(
     k_velocity, 
     cluster_edges, 
     return_raw=False, 
-    x_emb="X_umap"
+    x_emb="X_umap",
+    gene_mask=None
 ):
     #Cross-Boundary Direction Correctness Score (A->B)
     #Args:
@@ -756,6 +792,10 @@ def cross_boundary_correctness(
     else:
         x_emb = adata.layers[x_emb]
         v_emb = adata.layers[k_velocity]
+        if(gene_mask is None):
+            gene_mask = ~np.isnan(v_emb[0])
+        x_emb = x_emb[:,gene_mask]
+        v_emb = v_emb[:,gene_mask]
         
     for u, v in cluster_edges:
         sel = adata.obs[k_cluster] == u
@@ -772,9 +812,11 @@ def cross_boundary_correctness(
             position_dif = x_emb[nodes] - x_pos
             dir_scores = cosine_similarity(position_dif, x_vel.reshape(1,-1)).flatten()
             type_score.append(np.nanmean(dir_scores))
-        
-        scores[(u, v)] = np.nanmean(type_score)
-        all_scores[(u, v)] = type_score
+        if(len(type_score)==0):
+            print(f'Warning: cell type transition pair ({u},{v}) does not exist in the KNN graph. Ignored.')
+        else:
+            scores[(u, v)] = np.nanmean(type_score)
+            all_scores[(u, v)] = type_score
         
     if return_raw:
         return all_scores 
@@ -810,6 +852,9 @@ def inner_cluster_coh(adata, k_cluster, k_velocity, return_raw=False):
         same_cat_nodes = map(lambda nodes:keep_type(adata, nodes, cat, k_cluster), nbs)
 
         velocities = adata.layers[k_velocity]
+        nan_mask = ~np.isnan(velocities[0])
+        velocities = velocities[:,nan_mask]
+        
         cat_vels = velocities[sel]
         cat_score = [cosine_similarity(cat_vels[[ith]], velocities[nodes]).mean() 
                      for ith, nodes in enumerate(same_cat_nodes) 
