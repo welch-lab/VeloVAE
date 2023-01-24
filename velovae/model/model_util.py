@@ -367,7 +367,8 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True, eps=1e-3):
         residual -= offset
     
     r2 = R_squared(residual, total=u-u.mean(0))
-    velocity_genes = (r2>min_r2) & (gamma>0.01) & (np.max(s > 0, 0) > 0) & (np.max(u > 0, 0) > 0)
+    velocity_genes = (r2 > min_r2) & (r2 < 0.95) & (gamma>0.01) & (np.max(s > 0, 0) > 0) & (np.max(u > 0, 0) > 0)
+    print(f'Detected {np.sum(velocity_genes)} velocity genes.')
     
     dist_u, dist_s = np.zeros(u.shape),np.zeros(s.shape)
     print('Estimating the variance...')
@@ -383,7 +384,8 @@ def init_params(data, percent,fit_offset=False,fit_scaling=True, eps=1e-3):
     sigma_s[np.isnan(sigma_s)] = 0.1
     
     #Make sure all genes get the same total relevance score
-    Rscore = ((u>0) & (s>0))*np.ones(u.shape) + ((u==0) & (s==0))*np.ones(u.shape)*0.02 + ((u==0) & (s>0))*np.ones(u.shape)*0.1 + ((u>0) & (s==0))*np.ones(u.shape)*0.1
+    #Rscore = ((u>0) & (s>0))*np.ones(u.shape) + ((u==0) & (s==0))*np.ones(u.shape)*0.02 + ((u==0) & (s>0))*np.ones(u.shape)*0.1 + ((u>0) & (s==0))*np.ones(u.shape)*0.1
+    Rscore = velocity_genes * 1.0 + (1 - velocity_genes) * 0.25
     
     return params[:,0], params[:,1], params[:,2], params[:,3], Ts, U0, S0, sigma_u, sigma_s, T.T, Rscore
 
@@ -568,7 +570,7 @@ def reinit_gene(u,s,t,ts,eps=1e-6):
     
     p = 0.95
     s_inf = np.quantile(s,p)
-    while(s_inf==0 and p<=1.0):
+    while(s_inf==0 and p<1.0):
         p = p + 0.01
         s_inf = np.quantile(s,p)
     gamma = alpha/np.clip(s_inf, a_min=eps, a_max=None)
@@ -1184,6 +1186,10 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None, forward
     n1 = 0
     len_avg = 0
     t_98 = np.quantile(t,0.98)
+    p = 0.98
+    while(not np.any(t>=t_98) and p>0.01):
+        p = p - 0.01
+        t_98 = np.quantile(t,p)
     u_end, s_end = U[t>=t_98].mean(0), S[t>=t_98].mean(0)
     for i in tqdm(range(Nq)):
         if(adaptive>0):
@@ -1220,7 +1226,7 @@ def knnx0(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None, forward
     print(f"Average Set Size: {len_avg//Nq}")
     return u0,s0,t0
 
-def knnx0_index(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
+def knnx0_index(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None, forward=False):
     ############################################################
     #Same functionality as knnx0, but returns the neighbor index
     ############################################################
@@ -1234,7 +1240,10 @@ def knnx0_index(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None):
             dt_r, dt_l = adaptive*std_t[i], adaptive*std_t[i] + (dt[1]-dt[0])
         else:
             dt_r, dt_l = dt[0], dt[1]
-        t_ub, t_lb = t_query[i] - dt_r, t_query[i] - dt_l
+        if(forward):
+            t_ub, t_lb = t_query[i] + dt_l, t_query[i] + dt_r
+        else:
+            t_ub, t_lb = t_query[i] - dt_r, t_query[i] - dt_l
         indices = np.where((t>=t_lb) & (t<t_ub))[0]
         k_ = len(indices)
         len_avg = len_avg+k_
