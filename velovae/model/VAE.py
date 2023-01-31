@@ -75,6 +75,7 @@ class decoder(nn.Module):
                  N2=500, 
                  p=98, 
                  init_ton_zero=False,
+                 filter_gene=False,
                  device=torch.device('cpu'), 
                  init_method="steady", 
                  init_key=None, 
@@ -83,6 +84,104 @@ class decoder(nn.Module):
                  **kwargs):
         super(decoder,self).__init__()
         G = adata.n_vars
+        
+       
+        if(checkpoint is None):
+            #Dynamical Model Parameters
+            U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
+            X = np.concatenate((U,S),1)
+            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, gene_score = init_params(X,p,fit_scaling=True)
+            if(filter_gene):
+                gene_mask = (gene_score==1.0)
+                adata._inplace_subset_var(gene_mask)
+                U, S = U[:,gene_mask], S[:,gene_mask]
+                G = adata.n_vars
+                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T = alpha[gene_mask], beta[gene_mask], gamma[gene_mask], scaling[gene_mask], toff[gene_mask], u0[gene_mask], s0[gene_mask], sigma_u[gene_mask], sigma_s[gene_mask], T[:,gene_mask]
+            if(init_method == "random"):
+                print("Random Initialization.")
+                self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+                self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+                self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+                self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
+                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                self.t_init = None
+            elif(init_method == "tprior"):
+                print("Initialization using prior time.")
+                t_prior = adata.obs[init_key].to_numpy()
+                t_prior = t_prior[train_idx]
+                std_t = (np.std(t_prior)+1e-3)*0.2
+                self.t_init = np.random.uniform(t_prior-std_t, t_prior+std_t)
+                self.t_init -= self.t_init.min()
+                self.t_init = self.t_init
+                self.t_init = self.t_init/self.t_init.max()*tmax
+                self.toff_init = get_ts_global(self.t_init, U/scaling, S, 95)
+                self.alpha_init, self.beta_init, self.gamma_init, self.ton_init = reinit_params(U/scaling, S, self.t_init, self.toff_init)
+                
+                self.alpha = nn.Parameter(torch.tensor(np.log(self.alpha_init), device=device).float())
+                self.beta = nn.Parameter(torch.tensor(np.log(self.beta_init), device=device).float())
+                self.gamma = nn.Parameter(torch.tensor(np.log(self.gamma_init), device=device).float())
+                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                self.ton = nn.Parameter((torch.ones(G, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
+            else:
+                print("Initialization using the steady-state and dynamical models.")
+                if(init_key is not None):
+                    self.t_init = adata.obs[init_key].to_numpy()[train_idx]
+                else:
+                    T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
+                    T_eq = np.zeros(T.shape)
+                    Nbin = T.shape[0]//50+1
+                    for i in range(T.shape[1]):
+                        T_eq[:, i] = hist_equal(T[:, i], tmax, 0.9, Nbin)
+                    if("init_t_quant" in kwargs):
+                        self.t_init = np.quantile(T_eq,kwargs["init_t_quant"],1)
+                    else:
+                        self.t_init = np.quantile(T_eq,0.5,1)
+                self.toff_init = get_ts_global(self.t_init, U/scaling, S, 95)
+                self.alpha_init, self.beta_init, self.gamma_init, self.ton_init = reinit_params(U/scaling, S, self.t_init, self.toff_init)
+                
+                self.alpha = nn.Parameter(torch.tensor(np.log(self.alpha_init), device=device).float())
+                self.beta = nn.Parameter(torch.tensor(np.log(self.beta_init), device=device).float())
+                self.gamma = nn.Parameter(torch.tensor(np.log(self.gamma_init), device=device).float())
+                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
+                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
+                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+        
+        if(init_type is None):  
+            self.u0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
+            self.s0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
+        elif(init_type == "random"):
+            rv_u = stats.gamma(1.0, 0, 4.0)
+            rv_s = stats.gamma(1.0, 0, 4.0)
+            r_u_gamma = rv_u.rvs(size=(G))
+            r_s_gamma = rv_s.rvs(size=(G))
+            r_u_bern = stats.bernoulli(0.02).rvs(size=(G))
+            r_s_bern = stats.bernoulli(0.02).rvs(size=(G))
+            u_top = np.quantile(U, 0.99, 0)
+            s_top = np.quantile(S, 0.99, 0)
+            
+            u0, s0 = u_top*r_u_gamma*r_u_bern, s_top*r_s_gamma*r_s_bern
+            self.u0 = nn.Parameter(torch.tensor(np.log(u0+1e-10), device=device).float())
+            self.s0 = nn.Parameter(torch.tensor(np.log(s0+1e-10), device=device).float())
+        else: #use the mean count of the initial type
+            print(f"Setting the root cell to {init_type}")
+            cell_labels = adata.obs["clusters"].to_numpy()[train_idx]
+            cell_mask = cell_labels==init_type
+            self.u0 = nn.Parameter(torch.tensor(np.log(U[cell_mask].mean(0)+1e-10), device=device).float())
+            self.s0 = nn.Parameter(torch.tensor(np.log(S[cell_mask].mean(0)+1e-10), device=device).float())
+            
+            tprior = np.ones((adata.n_obs))*tmax*0.5
+            tprior[adata.obs["clusters"].to_numpy()==init_type] = 0
+            adata.obs['tprior'] = tprior
+        
+        self.scaling.requires_grad = False
+        self.sigma_u.requires_grad = False
+        self.sigma_s.requires_grad = False
+        
         self.fc1 = nn.Linear(dim_z+dim_cond, N1).to(device)
         self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
         self.dpt1 = nn.Dropout(p=0.2).to(device)
@@ -119,99 +218,6 @@ class decoder(nn.Module):
             self.load_state_dict(torch.load(checkpoint, map_location=device))
         else:
             self.init_weights()
-            
-            #Dynamical Model Parameters
-            U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
-            X = np.concatenate((U,S),1)
-            if(init_method == "random"):
-                print("Random Initialization.")
-                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
-                self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
-                self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
-                self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(U.shape[1],), device=device).float())
-                self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-                self.t_init = None
-            elif(init_method == "tprior"):
-                print("Initialization using prior time.")
-                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
-                t_prior = adata.obs[init_key].to_numpy()
-                t_prior = t_prior[train_idx]
-                std_t = (np.std(t_prior)+1e-3)*0.2
-                self.t_init = np.random.uniform(t_prior-std_t, t_prior+std_t)
-                self.t_init -= self.t_init.min()
-                self.t_init = self.t_init
-                self.t_init = self.t_init/self.t_init.max()*tmax
-                self.toff_init = get_ts_global(self.t_init, U/scaling, S, 95)
-                self.alpha_init, self.beta_init, self.gamma_init, self.ton_init = reinit_params(U/scaling, S, self.t_init, self.toff_init)
-                
-                self.alpha = nn.Parameter(torch.tensor(np.log(self.alpha_init), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.log(self.beta_init), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.log(self.gamma_init), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-                self.ton = nn.Parameter((torch.ones(G, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
-            else:
-                print("Initialization using the steady-state and dynamical models.")
-                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
-                if(init_key is not None):
-                    self.t_init = adata.obs[init_key].to_numpy()[train_idx]
-                else:
-                    T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
-                    T_eq = np.zeros(T.shape)
-                    Nbin = T.shape[0]//50+1
-                    for i in range(T.shape[1]):
-                        T_eq[:, i] = hist_equal(T[:, i], tmax, 0.9, Nbin)
-                    if("init_t_quant" in kwargs):
-                        self.t_init = np.quantile(T_eq,kwargs["init_t_quant"],1)
-                    else:
-                        self.t_init = np.quantile(T_eq,0.5,1)
-                self.toff_init = get_ts_global(self.t_init, U/scaling, S, 95)
-                self.alpha_init, self.beta_init, self.gamma_init, self.ton_init = reinit_params(U/scaling, S, self.t_init, self.toff_init)
-                
-                self.alpha = nn.Parameter(torch.tensor(np.log(self.alpha_init), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.log(self.beta_init), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.log(self.gamma_init), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
-                self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-        
-        self.Rscore = torch.tensor(Rscore, device=device, requires_grad=False).float()
-        
-        if(init_type is None):  
-            self.u0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
-            self.s0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
-        elif(init_type == "random"):
-            rv_u = stats.gamma(1.0, 0, 4.0)
-            rv_s = stats.gamma(1.0, 0, 4.0)
-            r_u_gamma = rv_u.rvs(size=(G))
-            r_s_gamma = rv_s.rvs(size=(G))
-            r_u_bern = stats.bernoulli(0.02).rvs(size=(G))
-            r_s_bern = stats.bernoulli(0.02).rvs(size=(G))
-            u_top = np.quantile(U, 0.99, 0)
-            s_top = np.quantile(S, 0.99, 0)
-            
-            u0, s0 = u_top*r_u_gamma*r_u_bern, s_top*r_s_gamma*r_s_bern
-            self.u0 = nn.Parameter(torch.tensor(np.log(u0+1e-10), device=device).float())
-            self.s0 = nn.Parameter(torch.tensor(np.log(s0+1e-10), device=device).float())
-        else: #use the mean count of the initial type
-            print(f"Setting the root cell to {init_type}")
-            cell_labels = adata.obs["clusters"].to_numpy()[train_idx]
-            cell_mask = cell_labels==init_type
-            self.u0 = nn.Parameter(torch.tensor(np.log(U[cell_mask].mean(0)+1e-10), device=device).float())
-            self.s0 = nn.Parameter(torch.tensor(np.log(S[cell_mask].mean(0)+1e-10), device=device).float())
-            
-            tprior = np.ones((adata.n_obs))*tmax*0.5
-            tprior[adata.obs["clusters"].to_numpy()==init_type] = 0
-            adata.obs['tprior'] = tprior
-        
-        self.scaling.requires_grad = False
-        self.sigma_u.requires_grad = False
-        self.sigma_s.requires_grad = False
     
     def init_weights(self):
         for m in self.net_rho.modules():
@@ -269,6 +275,7 @@ class VAE(VanillaVAE):
                  tprior=None, 
                  init_type=None,
                  init_ton_zero=True,
+                 filter_gene=False,
                  time_distribution="gaussian",
                  std_z_prior=0.01,
                  checkpoints=[None, None],
@@ -381,13 +388,8 @@ class VAE(VanillaVAE):
         self.set_device(device)
         self.split_train_test(adata.n_obs)
         
-        G = adata.n_vars
         self.dim_z = dim_z
         self.enable_cvae = dim_cond>0
-        try:
-            self.encoder = encoder(2*G, dim_z, dim_cond, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0]).float()
-        except IndexError:
-            print('Please provide two dimensions!')
         
         self.decoder = decoder(adata, 
                                tmax, 
@@ -396,12 +398,20 @@ class VAE(VanillaVAE):
                                N1=hidden_size[2], 
                                N2=hidden_size[3], 
                                init_ton_zero=init_ton_zero,
+                               filter_gene=filter_gene,
                                device=self.device, 
                                init_method = init_method,
                                init_key = init_key,
                                init_type = init_type,
                                checkpoint=checkpoints[1], 
                                **kwargs).float()
+        
+        try:
+            G = adata.n_vars
+            self.encoder = encoder(2*G, dim_z, dim_cond, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0]).float()
+        except IndexError:
+            print('Please provide two dimensions!')
+        
         self.tmax=tmax
         self.time_distribution = time_distribution
         if(init_type is not None and init_type!='random'):
@@ -747,10 +757,10 @@ class VAE(VanillaVAE):
         self.cell_types = np.array([self.label_dic[cell_types_raw[i]] for i in range(self.n_type)])
         
         print("*********        Creating Training/Validation Datasets        *********")
-        train_set = SCData(X[self.train_idx], self.cell_labels[self.train_idx], weight=self.decoder.Rscore[self.train_idx]) if self.config['weight_sample'] else SCData(X[self.train_idx], self.cell_labels[self.train_idx])
+        train_set = SCData(X[self.train_idx], self.cell_labels[self.train_idx])
         test_set = None
         if(len(self.test_idx)>0):
-            test_set = SCData(X[self.test_idx], self.cell_labels[self.test_idx], weight=self.decoder.Rscore[self.test_idx]) if self.config['weight_sample'] else SCData(X[self.test_idx], self.cell_labels[self.test_idx])
+            test_set = SCData(X[self.test_idx], self.cell_labels[self.test_idx])
         data_loader = torch.utils.data.DataLoader(train_set, batch_size=self.config["batch_size"], shuffle=True)
         #Automatically set test iteration if not given
         if(self.config["test_iter"] is None):
@@ -1257,6 +1267,7 @@ class decoder_fullvb(nn.Module):
                  N2=500, 
                  p=98, 
                  init_ton_zero=False,
+                 filter_gene=False,
                  device=torch.device('cpu'), 
                  init_method ="steady", 
                  init_key=None, 
@@ -1265,61 +1276,32 @@ class decoder_fullvb(nn.Module):
                  **kwargs):
         super(decoder_fullvb, self).__init__()
         G = adata.n_vars
-        self.fc1 = nn.Linear(dim_z, N1).to(device)
-        self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
-        self.dpt1 = nn.Dropout(p=0.2).to(device)
-        self.fc2 = nn.Linear(N1, N2).to(device)
-        self.bn2 = nn.BatchNorm1d(num_features=N2).to(device)
-        self.dpt2 = nn.Dropout(p=0.2).to(device)
-        
-        self.fc_out1 = nn.Linear(N2, G).to(device)
-        
-        self.net_rho = nn.Sequential(self.fc1, self.bn1, nn.LeakyReLU(), self.dpt1,
-                                     self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2)
-        
-        self.fc3 = nn.Linear(dim_z, N1).to(device)
-        self.bn3 = nn.BatchNorm1d(num_features=N1).to(device)
-        self.dpt3 = nn.Dropout(p=0.2).to(device)
-        self.fc4 = nn.Linear(N1, N2).to(device)
-        self.bn4 = nn.BatchNorm1d(num_features=N2).to(device)
-        self.dpt4 = nn.Dropout(p=0.2).to(device)
-        
-        self.fc_out2 = nn.Linear(N2, G).to(device)
-        
-        self.net_rho2 = nn.Sequential(self.fc3, self.bn3, nn.LeakyReLU(), self.dpt3,
-                                      self.fc4, self.bn4, nn.LeakyReLU(), self.dpt4)
         
         sigma_param = np.log(0.05)
-        if(checkpoint is not None):
-            self.alpha = nn.Parameter(torch.empty((2,G), device=device).float())
-            self.beta = nn.Parameter(torch.empty((2,G), device=device).float())
-            self.gamma = nn.Parameter(torch.empty((2,G), device=device).float())
-            self.scaling = nn.Parameter(torch.empty(G, device=device).float())
-            self.ton = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_u = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_s = nn.Parameter(torch.empty(G, device=device).float())
-            
-            self.load_state_dict(torch.load(checkpoint, map_location=device))
-        else:
-            self.init_weights()
-            
+        
+        if(checkpoint is None):    
             #Dynamical Model Parameters
             U,S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
             X = np.concatenate((U,S),1)
+            alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, gene_score = init_params(X,p,fit_scaling=True)
+            if(filter_gene):
+                gene_mask = (gene_score==1.0)
+                adata._inplace_subset_var(gene_mask)
+                U, S = U[:,gene_mask], S[:,gene_mask]
+                G = adata.n_vars
+                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T = alpha[gene_mask], beta[gene_mask], gamma[gene_mask], scaling[gene_mask], toff[gene_mask], u0[gene_mask], s0[gene_mask], sigma_u[gene_mask], sigma_s[gene_mask], T[:,gene_mask]
             if(init_method == "random"):
                 print("Random Initialization.")
-                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
-                self.alpha = nn.Parameter(torch.normal(0.0, 1.0, size=(2,U.shape[1]), device=device).float())
-                self.beta =  nn.Parameter(torch.normal(0.0, 0.5, size=(2,U.shape[1]), device=device).float())
-                self.gamma = nn.Parameter(torch.normal(0.0, 0.5, size=(2,U.shape[1]), device=device).float())
-                self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
+                self.alpha = nn.Parameter(torch.normal(0.0, 1.0, size=(2,G), device=device).float())
+                self.beta =  nn.Parameter(torch.normal(0.0, 0.5, size=(2,G), device=device).float())
+                self.gamma = nn.Parameter(torch.normal(0.0, 0.5, size=(2,G), device=device).float())
+                self.ton = torch.nn.Parameter(torch.ones(len(alpha), device=device).float()*(-10))
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
                 self.t_init = None
             elif(init_method == "tprior"):
                 print("Initialization using prior time.")
-                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
                 t_prior = adata.obs[init_key].to_numpy()
                 t_prior = t_prior[train_idx]
                 std_t = np.std(t_prior)*0.2
@@ -1339,7 +1321,6 @@ class decoder_fullvb(nn.Module):
                 self.ton = nn.Parameter((torch.ones(G, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
             else:
                 print("Initialization using the steady-state and dynamical models.")
-                alpha, beta, gamma, scaling, toff, u0, s0, sigma_u, sigma_s, T, Rscore = init_params(X,p,fit_scaling=True)
                 if(init_key is not None):
                     self.t_init = adata.obs[init_key].to_numpy()[train_idx]
                 else:
@@ -1362,8 +1343,6 @@ class decoder_fullvb(nn.Module):
                 self.ton = nn.Parameter((torch.ones(G, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float())
                 self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                 self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-        
-        self.Rscore = torch.tensor(Rscore, device=device, requires_grad=False).float()
         
         if(init_type is None):  
             self.u0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
@@ -1395,6 +1374,43 @@ class decoder_fullvb(nn.Module):
         self.scaling.requires_grad = False
         self.sigma_u.requires_grad = False
         self.sigma_s.requires_grad = False
+        
+        self.fc1 = nn.Linear(dim_z, N1).to(device)
+        self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
+        self.dpt1 = nn.Dropout(p=0.2).to(device)
+        self.fc2 = nn.Linear(N1, N2).to(device)
+        self.bn2 = nn.BatchNorm1d(num_features=N2).to(device)
+        self.dpt2 = nn.Dropout(p=0.2).to(device)
+        
+        self.fc_out1 = nn.Linear(N2, G).to(device)
+        
+        self.net_rho = nn.Sequential(self.fc1, self.bn1, nn.LeakyReLU(), self.dpt1,
+                                     self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2)
+        
+        self.fc3 = nn.Linear(dim_z, N1).to(device)
+        self.bn3 = nn.BatchNorm1d(num_features=N1).to(device)
+        self.dpt3 = nn.Dropout(p=0.2).to(device)
+        self.fc4 = nn.Linear(N1, N2).to(device)
+        self.bn4 = nn.BatchNorm1d(num_features=N2).to(device)
+        self.dpt4 = nn.Dropout(p=0.2).to(device)
+        
+        self.fc_out2 = nn.Linear(N2, G).to(device)
+        
+        self.net_rho2 = nn.Sequential(self.fc3, self.bn3, nn.LeakyReLU(), self.dpt3,
+                                      self.fc4, self.bn4, nn.LeakyReLU(), self.dpt4)
+        
+        if(checkpoint is not None):
+            self.alpha = nn.Parameter(torch.empty((2,G), device=device).float())
+            self.beta = nn.Parameter(torch.empty((2,G), device=device).float())
+            self.gamma = nn.Parameter(torch.empty((2,G), device=device).float())
+            self.scaling = nn.Parameter(torch.empty(G, device=device).float())
+            self.ton = nn.Parameter(torch.empty(G, device=device).float())
+            self.sigma_u = nn.Parameter(torch.empty(G, device=device).float())
+            self.sigma_s = nn.Parameter(torch.empty(G, device=device).float())
+            
+            self.load_state_dict(torch.load(checkpoint, map_location=device))
+        else:
+            self.init_weights()
     
     def init_weights(self):
         for m in self.net_rho.modules():
@@ -1602,13 +1618,8 @@ class VAEFullVB(VAE):
         self.set_device(device)
         self.split_train_test(adata.n_obs)
         
-        G = adata.n_vars
         self.dim_z = dim_z
         self.enable_cvae = dim_cond>0
-        try:
-            self.encoder = encoder(2*G, dim_z, dim_cond, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0]).float()
-        except IndexError:
-            print('Please provide two dimensions!')
         
         self.decoder = decoder_fullvb(adata, 
                                       tmax, 
@@ -1623,6 +1634,13 @@ class VAEFullVB(VAE):
                                       init_type = init_type,
                                       checkpoint=checkpoints[1],
                                       **kwargs).float()
+        
+        try:
+            G = adata.n_vars
+            self.encoder = encoder(2*G, dim_z, dim_cond, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints[0]).float()
+        except IndexError:
+            print('Please provide two dimensions!')
+        
         self.tmax=tmax
         self.time_distribution = time_distribution
         if(init_type is not None and init_type!='random'):
