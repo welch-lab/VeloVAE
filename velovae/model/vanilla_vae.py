@@ -13,7 +13,7 @@ from velovae.plotting import (plot_phase,
 
 from .model_util import hist_equal, init_params, get_ts_global, reinit_params, ode
 from .model_util import convert_time, get_gene_index
-from .TrainingData import SCData
+from .training_data import SCData
 from .velocity import rna_velocity_vanillavae
 
 

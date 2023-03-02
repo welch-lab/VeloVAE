@@ -10,17 +10,17 @@ from torch.utils.data import Dataset, DataLoader
 import time
 from velovae.plotting import plot_sig, plot_sig_, plot_time, plot_train_loss, plot_test_loss, plot_loss_split, plot_vel
 
-from .VAE import VAE
-from .VAE import encoder as encoder_velovae
-from .VAE import decoder as decoder_velovae
+from .vae import VAE
+from .vae import encoder as encoder_velovae
+from .vae import decoder as decoder_velovae
 from .model_util import scale_by_gene, scale_by_cell, get_cell_scale, get_gene_scale, get_dispersion
 from .model_util import hist_equal, init_params, init_params_raw, get_ts_global, reinit_params, convert_time, get_gene_index
 from .model_util import pred_su, ode, knnx0_index, get_x0
-from .TransitionGraph import encode_type
-from .TrainingData import SCData
-from .VanillaVAE import VanillaVAE, kl_gaussian, kl_uniform
-from .VanillaVAE import encoder as encoder_vanilla
-from .VanillaVAE import decoder as decoder_vanilla
+from .transition_graph import encode_type
+from .training_data import SCData
+from .vanilla_vae import VanillaVAE, kl_gaussian, kl_uniform
+from .vanilla_vae import encoder as encoder_vanilla
+from .vanilla_vae import decoder as decoder_vanilla
 from .velocity import rna_velocity_vae
 
 

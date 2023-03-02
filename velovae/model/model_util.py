@@ -752,9 +752,9 @@ def assign_gene_mode(adata, w_noisy, assign_type='binary', thred=0.05, std_prior
     # Assign one of ('inductive', 'repressive', 'mixture') to gene clusters
     # `assign_type' specifies which strategy to use
     if assign_type == 'binary':
-        return assign_gene_mode_binary(adata, w_noisy, thred, std_prior, n_cluster_thred)
+        return assign_gene_mode_binary(adata, w_noisy, thred)
     elif assign_type == 'auto':
-        return assign_gene_mode_auto(adata, w_noisy, thred)
+        return assign_gene_mode_auto(adata, w_noisy, thred, std_prior, n_cluster_thred)
     elif assign_type == 'inductive':
         adata.varm['alpha_w'] = np.ones((adata.n_vars, 2))*np.array([13.8, 9.2])
         return dirichlet([13.8, 9.2]).rvs(adata.n_vars)[:, 0]

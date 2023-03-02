@@ -18,9 +18,9 @@ from .model_util import elbo_collapsed_categorical
 from .model_util import assign_gene_mode, find_dirichlet_param
 from .model_util import scale_by_cell, get_cell_scale, get_dispersion
 
-from .TransitionGraph import encode_type
-from .TrainingData import SCData
-from .VanillaVAE import VanillaVAE, kl_gaussian
+from .transition_graph import encode_type
+from .training_data import SCData
+from .vanilla_vae import VanillaVAE, kl_gaussian
 from .velocity import rna_velocity_vae
 
 ##############################################################
