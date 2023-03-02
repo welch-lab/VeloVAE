@@ -6,10 +6,10 @@
      However, during software development, we found these functions quite useful
      in the initialization stage, since we adopt scVelo's initialization method.
      Therefore, we directly copied the code here and formally cite the work:
-     
-     Reference: 
-     Bergen, V., Lange, M., Peidli, S., Wolf, F. A., & Theis, F. J. (2020). 
-     Generalizing RNA velocity to transient cell states through dynamical modeling. 
+
+     Reference:
+     Bergen, V., Lange, M., Peidli, S., Wolf, F. A., & Theis, F. J. (2020).
+     Generalizing RNA velocity to transient cell states through dynamical modeling.
      Nature biotechnology, 38(12), 1408-1414.
 """
 ############################################################################
@@ -19,25 +19,47 @@ import numpy as np
 from numpy import exp
 from scipy.sparse import csr_matrix, issparse
 
+import warnings
+
+import numpy as np
+import os
+from typing import Union
+
+from scipy.sparse import coo_matrix, issparse, spmatrix
+
+from ..scvelo_preprocessing.moments import get_moments
+from ..scvelo_preprocessing.neighbors import (
+    get_n_neighs,
+    get_neighs,
+    neighbors,
+    pca,
+    verify_neighbors,
+    compute_connectivities_umap
+)
+from sklearn.neighbors import NearestNeighbors
+
+
 def prod_sum_obs(A, B):
-    #dot product and sum over axis 0 (obs) equivalent to np.sum(A * B, 0)
-    
+    # dot product and sum over axis 0 (obs) equivalent to np.sum(A * B, 0)
+
     if issparse(A):
         return A.multiply(B).sum(0).A1
     else:
         return np.einsum("ij, ij -> j", A, B) if A.ndim > 1 else (A * B).sum()
 
+
 def R_squared(residual, total):
-    #Clipping added by GYC: remove warning
+    # Clipping added by GYC: remove warning
     r2 = np.ones(residual.shape[1]) - prod_sum_obs(
         residual, residual
     ) / np.clip(prod_sum_obs(total, total), a_min=1e-6, a_max=None)
     r2[np.isnan(r2)] = 0
     return r2
 
-def test_bimodality(x, bins=30, kde=True, plot=False):
-    #Test for bimodal distribution.
-    
+
+def test_bimodality(x, bins=30, kde=True):
+    # Test for bimodal distribution.
+
     from scipy.stats import gaussian_kde, norm
 
     lb, ub = np.min(x), np.percentile(x, 99.9)
@@ -47,7 +69,7 @@ def test_bimodality(x, bins=30, kde=True, plot=False):
     )
 
     idx = int(bins / 2) - 2
-    idx += np.argmin(kde_grid[idx : idx + 4])
+    idx += np.argmin(kde_grid[idx: idx + 4])
 
     peak_0 = kde_grid[:idx].argmax()
     peak_1 = kde_grid[idx:].argmax()
@@ -66,19 +88,8 @@ def test_bimodality(x, bins=30, kde=True, plot=False):
         (grid_1[peak_1] + grid_1[min(peak_1 + 1, len(grid_1) - 1)]) / 2,
     ]
 
-    if plot:
-        color = "grey"
-        if kde:
-            pl.plot(grid, kde_grid, color=color)
-            pl.fill_between(grid, 0, kde_grid, alpha=0.4, color=color)
-        else:
-            pl.hist(x, bins=grid, alpha=0.4, density=True, color=color)
-        pl.axvline(means[0], color=color)
-        pl.axvline(means[1], color=color)
-        pl.axhline(kde_mid, alpha=0.2, linestyle="--", color=color)
-        pl.show()
-
     return t_stat, p_val, means  # ~ t_test (reject unimodality if t_stat > 3)
+
 
 def get_weight(x, y=None, perc=95):
     xy_norm = np.array(x.A if issparse(x) else x)
@@ -94,9 +105,10 @@ def get_weight(x, y=None, perc=95):
         weights = (xy_norm <= lb) | (xy_norm >= ub)
     return weights
 
+
 def leastsq_NxN(x, y, fit_offset=False, perc=None, constraint_positive_offset=True):
-    #Solves least squares X*b=Y for b.
-    
+    # Solves least squares X*b=Y for b.
+
     if perc is not None:
         if not fit_offset and isinstance(perc, (list, tuple)):
             perc = perc[1]
@@ -126,18 +138,21 @@ def leastsq_NxN(x, y, fit_offset=False, perc=None, constraint_positive_offset=Tr
     else:
         gamma = xy_ / xx_
         offset = np.zeros(x.shape[1]) if x.ndim > 1 else 0
-    
+
     nans_offset, nans_gamma = np.isnan(offset), np.isnan(gamma)
     if np.any([nans_offset, nans_gamma]):
         offset[np.isnan(offset)], gamma[np.isnan(gamma)] = 0, 0
     return offset, gamma
 
+
 def inv(x):
     x_inv = 1 / x * (x != 0)
     return x_inv
 
+
 def log(x, eps=1e-6):  # to avoid invalid values for log.
     return np.log(np.clip(x, eps, 1 - eps))
+
 
 def unspliced(tau, u0, alpha, beta):
     expu = exp(-beta * tau)
@@ -147,7 +162,7 @@ def unspliced(tau, u0, alpha, beta):
 def spliced(tau, s0, u0, alpha, beta, gamma):
     c = (alpha - u0 * beta) * inv(gamma - beta)
     expu, exps = exp(-beta * tau), exp(-gamma * tau)
-    
+
     return s0 * exps + alpha / gamma * (1 - exps) + c * (exps - expu)
 
 
@@ -156,8 +171,9 @@ def mRNA(tau, u0, s0, alpha, beta, gamma):
     expus = (alpha - u0 * beta) * inv(gamma - beta) * (exps - expu)
     u = u0 * expu + alpha / beta * (1 - expu)
     s = s0 * exps + alpha / gamma * (1 - exps) + expus
-    
+
     return u, s
+
 
 def vectorize(t, t_, alpha, beta, gamma=None, alpha_=0, u0=0, s0=0, sorted=False):
     o = np.array(t < t_, dtype=int)
@@ -175,12 +191,13 @@ def vectorize(t, t_, alpha, beta, gamma=None, alpha_=0, u0=0, s0=0, sorted=False
         idx = np.argsort(t)
         tau, alpha, u0, s0 = tau[idx], alpha[idx], u0[idx], s0[idx]
     return tau, alpha, u0, s0
-    
+
+
 def tau_inv(u, s=None, u0=None, s0=None, alpha=None, beta=None, gamma=None):
-    
+
     inv_u = (gamma >= beta) if gamma is not None else True
     inv_us = np.invert(inv_u)
-    
+
     any_invu = np.any(inv_u) or s is None
     any_invus = np.any(inv_us) and s is not None
 
@@ -199,24 +216,7 @@ def tau_inv(u, s=None, u0=None, s0=None, alpha=None, beta=None, gamma=None):
 ############################################################
 #  Velocity Embedding
 ############################################################
-import warnings
 
-import numpy as np
-import os
-from typing import Union
-
-from scipy.sparse import coo_matrix, issparse, spmatrix
-
-from ..scvelo_preprocessing.moments import get_moments
-from ..scvelo_preprocessing.neighbors import (
-    get_n_neighs,
-    get_neighs,
-    neighbors,
-    pca,
-    verify_neighbors,
-    compute_connectivities_umap
-)
-from sklearn.neighbors import NearestNeighbors
 
 def vals_to_csr(vals, rows, cols, shape, split_negative=False):
     graph = coo_matrix((vals, (rows, cols)), shape=shape)
@@ -234,6 +234,7 @@ def vals_to_csr(vals, rows, cols, shape, split_negative=False):
 
     else:
         return graph.tocsr()
+
 
 def l2_norm(x: Union[np.ndarray, spmatrix], axis: int = 1) -> Union[float, np.ndarray]:
     """Calculate l2 norm along a given axis.
@@ -258,9 +259,10 @@ def l2_norm(x: Union[np.ndarray, spmatrix], axis: int = 1) -> Union[float, np.nd
     elif axis == 1:
         return np.sqrt(np.einsum("ij, ij -> i", x, x))
 
+
 def cosine_correlation(dX, Vi):
     dx = dX - dX.mean(-1)[:, None]
-    #dx = dX
+    # dx = dX
     Vi_norm = l2_norm(Vi, axis=0)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -271,6 +273,7 @@ def cosine_correlation(dX, Vi):
                 np.einsum("ij, j", dx, Vi) / (l2_norm(dx, axis=1) * Vi_norm)[None, :]
             )
     return result
+
 
 def get_indices(dist, n_neighbors=None, mode_neighbors="distances"):
 
@@ -302,6 +305,7 @@ def get_indices(dist, n_neighbors=None, mode_neighbors="distances"):
         indices = get_indices_from_csr(conn)
     return indices, D
 
+
 def get_iterative_indices(
     indices,
     index,
@@ -321,6 +325,7 @@ def get_iterative_indices(
         indices = np.random.choice(indices, max_neighs, replace=False)
     return indices
 
+
 def normalize(X):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -329,43 +334,43 @@ def normalize(X):
         else:
             return X / X.sum(1)
 
+
 def knnx0_neighbor_index(t, z, n_neighbors, n_bins):
     ############################################################
-    #Given cell time and state, find KNN for each cell in a time 
-    #window ahead of it. 
+    # Given cell time and state, find KNN for each cell in a time 
+    # window ahead of it.
     ############################################################
-    N = len(t)
     indices = np.empty((len(t), n_neighbors))
     tmax, tmin = t.max(), t.min()
     delta_t = (tmax-tmin+1e-6)/(n_bins+1)
     idx_sort = np.argsort(t)
     bin_size = len(t) // n_bins
-    
+
     for i in range(n_bins-1):
         knn_model = NearestNeighbors(n_neighbors=n_neighbors)
         knn_model.fit(z[idx_sort[(i+1)*bin_size:(i+2)*bin_size]])
         dist, ind = knn_model.kneighbors(z[idx_sort[i*bin_size:(i+1)*bin_size]])
         indices[idx_sort[i*bin_size:(i+1)*bin_size]] = idx_sort[(i+1)*bin_size:(i+2)*bin_size][ind] 
-    
-    #Build KNN within the last two bins
+
+    # Build KNN within the last two bins
     knn_model = NearestNeighbors(n_neighbors=n_neighbors)
     knn_model.fit(z[idx_sort[-bin_size:]])
     dist, ind = knn_model.kneighbors(z[idx_sort[(n_bins-1)*bin_size:n_bins*bin_size]])
     indices[idx_sort[(n_bins-1)*bin_size:n_bins*bin_size]] = idx_sort[-bin_size:][ind]
-    
+
     dist, ind = knn_model.kneighbors(z[idx_sort[n_bins*bin_size:]])
     indices[idx_sort[n_bins*bin_size:]] = idx_sort[-bin_size:][ind]
     return indices
 
+
 def knnx0_neighbor_index_cellwise(t, z, n_neighbors, bin_size=100, n_shift=100):
     ############################################################
-    #Given cell time and state, find KNN for each cell in a time 
-    #window ahead of it. 
+    # Given cell time and state, find KNN for each cell in a time 
+    # window ahead of it. 
     ############################################################
-    N = len(t)
     indices = np.empty((len(t), n_neighbors))
     idx_sort = np.argsort(t)
-    
+
     knn_model = NearestNeighbors(n_neighbors=n_neighbors)
     for i in range(len(t) - n_shift - n_neighbors):
         start = i+n_shift
@@ -373,14 +378,15 @@ def knnx0_neighbor_index_cellwise(t, z, n_neighbors, bin_size=100, n_shift=100):
         knn_model.fit(z[idx_sort[start:end]])
         dist, ind = knn_model.kneighbors(z[[idx_sort[i]]])
         indices[idx_sort[i]] = idx_sort[start:end][ind[0]]
-    
+
     #Build KNN within the last two bins
     knn_model = NearestNeighbors(n_neighbors=n_neighbors)
     knn_model.fit(z[idx_sort[-n_shift - n_neighbors:]])
     dist, ind = knn_model.kneighbors(z[idx_sort[-n_shift - n_neighbors:]])
     indices[idx_sort[-n_shift - n_neighbors:]] = idx_sort[-n_shift - n_neighbors:][ind]
-    
+
     return indices
+
 
 class VelocityGraph:
     def __init__(
@@ -462,8 +468,8 @@ class VelocityGraph:
                 "Your neighbor graph seems to be corrupted. "
                 "Consider recomputing via pp.neighbors."
             )
-        #if n_neighbors is None or n_neighbors <= get_n_neighs(adata):
-        
+        # if n_neighbors is None or n_neighbors <= get_n_neighs(adata):
+
         self.indices = get_indices(
             dist=get_neighs(adata, "distances"),
             n_neighbors=n_neighbors,
@@ -485,8 +491,7 @@ class VelocityGraph:
         gkey, gkey_ = f"{vkey}_graph", f"{vkey}_graph_neg"
         self.graph = adata.uns[gkey] if gkey in adata.uns.keys() else []
         self.graph_neg = adata.uns[gkey_] if gkey_ in adata.uns.keys() else []
-        
-        
+
         self.compute_uncertainties = compute_uncertainties
         self.uncertainties = None
         self.self_prob = None
@@ -504,14 +509,12 @@ class VelocityGraph:
                 neighs_idx = get_iterative_indices(
                     self.indices, obs_id, self.n_recurse_neighbors, self.max_neighs
                 )
-                
-                
-                
+
                 dX = self.X[neighs_idx] - self.X[obs_id, None]  # 60% of runtime
                 if self.sqrt_transform:
                     dX = np.sqrt(np.abs(dX)) * np.sign(dX)
                 val = cosine_correlation(dX, self.V[obs_id])  # 40% of runtime
-                
+
                 if self.compute_uncertainties:
                     dX /= l2_norm(dX)[:, None]
                     uncertainties.extend(
@@ -521,14 +524,14 @@ class VelocityGraph:
                 vals.extend(val)
                 rows.extend(np.ones(len(neighs_idx)) * obs_id)
                 cols.extend(neighs_idx)
-        
+
         vals = np.hstack(vals)
         vals[np.isnan(vals)] = 0
 
         self.graph, self.graph_neg = vals_to_csr(
             vals, rows, cols, shape=(n_obs, n_obs), split_negative=True
         )
-        
+
         if self.compute_uncertainties:
             uncertainties = np.hstack(uncertainties)
             uncertainties[np.isnan(uncertainties)] = 0
@@ -539,7 +542,7 @@ class VelocityGraph:
 
         confidence = self.graph.max(1).A.flatten()
         self.self_prob = np.clip(np.percentile(confidence, 98) - confidence, 0, 1)
-        
+
         return
 
 
@@ -650,7 +653,6 @@ def velocity_graph(
         mode_neighbors=mode_neighbors,
     )
 
-
     if isinstance(basis, str):
         print(
             f"The velocity graph is computed on {basis} embedding coordinates.\n",
@@ -681,6 +683,7 @@ def velocity_graph(
     )
 
     return adata if copy else None
+
 
 def transition_matrix(
     adata,
