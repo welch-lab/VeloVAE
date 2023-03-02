@@ -55,16 +55,12 @@ class encoder(nn.Module):
     def init_weights(self, data_density=0.1):
         for m in self.net.modules():
             if(isinstance(m, nn.Linear)):
-                #bound = np.sqrt(6/(data_density*m.weight.shape[0]+m.weight.shape[1]))
-                #nn.init.uniform_(m.weight, -bound, bound)
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.constant_(m.bias, 0.0)
             elif(isinstance(m, nn.BatchNorm1d)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
         for m in [self.fc_mu_t, self.fc_std_t, self.fc_mu_z, self.fc_std_z]:
-            #bound = np.sqrt(6/(data_density*m.weight.shape[0]+m.weight.shape[1]))
-            #nn.init.uniform_(m.weight, -bound, bound)
             nn.init.xavier_uniform_(m.weight)
             nn.init.constant_(m.bias, 0.0)
     
@@ -98,6 +94,118 @@ class decoder(nn.Module):
                  checkpoint=None):
         super(decoder,self).__init__()
         G = adata.n_vars
+        self.tmax=tmax
+            
+        #Library Size
+        if(use_raw):
+            U, S = adata.layers['unspliced'].A.astype(float), adata.layers['spliced'].A.astype(float)
+        else:
+            U, S = adata.layers["Mu"], adata.layers["Ms"]
+        
+        # Dispersion
+        mean_u, mean_s, dispersion_u, dispersion_s = get_dispersion(U[train_idx], S[train_idx])
+        adata.var["mean_u"] = mean_u
+        adata.var["mean_s"] = mean_s
+        adata.var["dispersion_u"] = dispersion_u
+        adata.var["dispersion_s"] = dispersion_s
+        
+        if scale_cell:
+            U, S, lu, ls = scale_by_cell(U, S, train_idx, separate_us_scale, 50)
+            adata.obs["library_scale_u"] = lu
+            adata.obs["library_scale_s"] = ls
+        else:
+            lu, ls = get_cell_scale(U, S, train_idx, separate_us_scale, 50)
+            adata.obs["library_scale_u"] = lu
+            adata.obs["library_scale_s"] = ls
+        
+        U = U[train_idx]
+        S = S[train_idx]
+        
+        X = np.concatenate((U,S),1)
+        if(add_noise):
+            noise = np.exp(np.random.normal(size=(len(train_idx), 2*G))*1e-3)
+            X = X + noise
+        
+        if(checkpoint is None):
+            alpha, beta, gamma, scaling, toff, u0, s0, T = init_params_raw(X,p,fit_scaling=True)
+            
+            if(init_method == "random"):
+                print("Random Initialization.")
+                scaling, scaling_s = get_gene_scale(U,S,None)
+                self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+                self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+                self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+                self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
+                self.t_init = None
+            elif(init_method == "tprior"):
+                print("Initialization using prior time.")
+                t_prior = adata.obs[init_key].to_numpy()
+                t_prior = t_prior[train_idx]
+                std_t = (np.std(t_prior)+1e-3)*0.2
+                self.t_init = np.random.uniform(t_prior-std_t, t_prior+std_t)
+                self.t_init -= self.t_init.min()
+                self.t_init = self.t_init
+                self.t_init = self.t_init/self.t_init.max()*tmax
+                toff = get_ts_global(self.t_init, U, S, 95)
+                alpha, beta, gamma, ton = reinit_params(U, S, self.t_init, toff)
+                
+                self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
+                self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
+                self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
+                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+            else:
+                print("Initialization using the steady-state and dynamical models.")
+
+                if(init_key is not None):
+                    self.t_init = adata.obs[init_key].to_numpy()[train_idx]
+                else:
+                    T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
+                    T_eq = np.zeros(T.shape)
+                    Nbin = T.shape[0]//50+1
+                    for i in range(T.shape[1]):
+                        T_eq[:, i] = hist_equal(T[:, i], tmax, 0.9, Nbin)
+                    self.t_init = np.quantile(T_eq,0.5,1)
+                toff = get_ts_global(self.t_init, U, S, 95)
+                alpha, beta, gamma, ton = reinit_params(U, S, self.t_init, toff)
+                
+                self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
+                self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
+                self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
+                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
+        
+        self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
+            
+        
+        if(init_type is None):  
+            self.u0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
+            self.s0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
+        elif(init_type == "random"):
+            rv_u = stats.gamma(1.0, 0, 4.0)
+            rv_s = stats.gamma(1.0, 0, 4.0)
+            r_u_gamma = rv_u.rvs(size=(G))
+            r_s_gamma = rv_s.rvs(size=(G))
+            r_u_bern = stats.bernoulli(0.02).rvs(size=(G))
+            r_s_bern = stats.bernoulli(0.02).rvs(size=(G))
+            u_top = np.quantile(U, 0.99, 0)
+            s_top = np.quantile(S, 0.99, 0)
+            
+            u0, s0 = u_top*r_u_gamma*r_u_bern, s_top*r_s_gamma*r_s_bern
+            self.u0 = nn.Parameter(torch.tensor(np.log(u0+1e-10), device=device).float())
+            self.s0 = nn.Parameter(torch.tensor(np.log(s0+1e-10), device=device).float())
+        else: #use the mean count of the initial type
+            print(f"Setting the root cell to {init_type}")
+            cell_labels = adata.obs["clusters"].to_numpy()[train_idx]
+            cell_mask = cell_labels==init_type
+            self.u0 = nn.Parameter(torch.tensor(np.log((U[cell_mask]/lu[train_idx][cell_mask].reshape(-1,1)).mean(0)+1e-10), device=device).float())
+            self.s0 = nn.Parameter(torch.tensor(np.log((S[cell_mask]/ls[train_idx][cell_mask].reshape(-1,1)).mean(0)+1e-10), device=device).float())
+            
+            tprior = np.ones((adata.n_obs))*tmax*0.5
+            tprior[adata.obs["clusters"].to_numpy()==init_type] = 0
+            adata.obs['tprior'] = tprior
+
+        self.scaling.requires_grad = False
+        self.ton.requires_grad = False
+        
         self.fc1 = nn.Linear(dim_z+dim_cond, N1).to(device)
         self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
         self.dpt1 = nn.Dropout(p=0.2).to(device)
@@ -133,116 +241,6 @@ class decoder(nn.Module):
             self.load_state_dict(torch.load(checkpoint, map_location=device))
         else:
             self.init_weights()
-            
-            #Library Size
-            if(use_raw):
-                U, S = adata.layers['unspliced'].A.astype(float), adata.layers['spliced'].A.astype(float)
-            else:
-                U, S = adata.layers["Mu"], adata.layers["Ms"]
-            
-            #Dispersion
-            mean_u, mean_s, dispersion_u, dispersion_s = get_dispersion(U[train_idx], S[train_idx])
-            adata.var["mean_u"] = mean_u
-            adata.var["mean_s"] = mean_s
-            adata.var["dispersion_u"] = dispersion_u
-            adata.var["dispersion_s"] = dispersion_s
-            
-            if(scale_cell):
-                U, S, lu, ls = scale_by_cell(U, S, train_idx, separate_us_scale, 50)
-                adata.obs["library_scale_u"] = lu
-                adata.obs["library_scale_s"] = ls
-            else:
-                lu, ls = get_cell_scale(U, S, train_idx, separate_us_scale, 50)
-                adata.obs["library_scale_u"] = lu
-                adata.obs["library_scale_s"] = ls
-            
-            U = U[train_idx]
-            S = S[train_idx]
-            
-            X = np.concatenate((U,S),1)
-            if(add_noise):
-                noise = np.exp(np.random.normal(size=(len(train_idx), 2*G))*1e-3)
-                X = X + noise
-            
-
-            if(init_method == "random"):
-                print("Random Initialization.")
-                scaling, scaling_s = get_gene_scale(U,S,None)
-                self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
-                self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
-                self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
-                self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
-                self.t_init = None
-            elif(init_method == "tprior"):
-                print("Initialization using prior time.")
-                alpha, beta, gamma, scaling, toff, u0, s0, T = init_params_raw(X,p,fit_scaling=True)
-                t_prior = adata.obs[init_key].to_numpy()
-                t_prior = t_prior[train_idx]
-                std_t = (np.std(t_prior)+1e-3)*0.2
-                self.t_init = np.random.uniform(t_prior-std_t, t_prior+std_t)
-                self.t_init -= self.t_init.min()
-                self.t_init = self.t_init
-                self.t_init = self.t_init/self.t_init.max()*tmax
-                toff = get_ts_global(self.t_init, U, S, 95)
-                alpha, beta, gamma, ton = reinit_params(U, S, self.t_init, toff)
-                
-                self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
-            else:
-                print("Initialization using the steady-state and dynamical models.")
-                alpha, beta, gamma, scaling, toff, u0, s0, T = init_params_raw(X,p,fit_scaling=True)
-                
-                if(init_key is not None):
-                    self.t_init = adata.obs[init_key].to_numpy()[train_idx]
-                else:
-                    T = T+np.random.rand(T.shape[0],T.shape[1]) * 1e-3
-                    T_eq = np.zeros(T.shape)
-                    Nbin = T.shape[0]//50+1
-                    for i in range(T.shape[1]):
-                        T_eq[:, i] = hist_equal(T[:, i], tmax, 0.9, Nbin)
-                    self.t_init = np.quantile(T_eq,0.5,1)
-                toff = get_ts_global(self.t_init, U, S, 95)
-                alpha, beta, gamma, ton = reinit_params(U, S, self.t_init, toff)
-                
-                self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
-                self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
-                self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
-                self.ton = nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float()) if init_ton_zero else nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
-            
-            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-            
-        
-        if(init_type is None):  
-            self.u0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
-            self.s0 = nn.Parameter(torch.ones(G, device=device).float()*(-10))
-        elif(init_type == "random"):
-            rv_u = stats.gamma(1.0, 0, 4.0)
-            rv_s = stats.gamma(1.0, 0, 4.0)
-            r_u_gamma = rv_u.rvs(size=(G))
-            r_s_gamma = rv_s.rvs(size=(G))
-            r_u_bern = stats.bernoulli(0.02).rvs(size=(G))
-            r_s_bern = stats.bernoulli(0.02).rvs(size=(G))
-            u_top = np.quantile(U, 0.99, 0)
-            s_top = np.quantile(S, 0.99, 0)
-            
-            u0, s0 = u_top*r_u_gamma*r_u_bern, s_top*r_s_gamma*r_s_bern
-            self.u0 = nn.Parameter(torch.tensor(np.log(u0+1e-10), device=device).float())
-            self.s0 = nn.Parameter(torch.tensor(np.log(s0+1e-10), device=device).float())
-        else: #use the mean count of the initial type
-            print(f"Setting the root cell to {init_type}")
-            cell_labels = adata.obs["clusters"].to_numpy()[train_idx]
-            cell_mask = cell_labels==init_type
-            self.u0 = nn.Parameter(torch.tensor(np.log((U[cell_mask]/lu[train_idx][cell_mask].reshape(-1,1)).mean(0)+1e-10), device=device).float())
-            self.s0 = nn.Parameter(torch.tensor(np.log((S[cell_mask]/ls[train_idx][cell_mask].reshape(-1,1)).mean(0)+1e-10), device=device).float())
-            
-            tprior = np.ones((adata.n_obs))*tmax*0.5
-            tprior[adata.obs["clusters"].to_numpy()==init_type] = 0
-            adata.obs['tprior'] = tprior
-
-        self.scaling.requires_grad = False
-        self.ton.requires_grad = False
     
     def init_weights(self):
         for m in self.net_rho.modules():
@@ -463,6 +461,7 @@ class DVAE(VAE):
         self.logp_list, self.kldt_list, self.kldz_list, self.kldparam_list = [],[],[],None
         self.counter = 0 #Count the number of iterations
         self.n_drop = 0 #Count the number of consecutive iterations with little decrease in loss
+        self.train_stage = 1
         
         self.timer = time.time()-t_start
     
@@ -855,6 +854,7 @@ class DVAE(VAE):
         self.use_knn = True
         self.decoder.init_weights()
         self.n_drop = 0
+        self.train_stage = 2
         
         #param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma] 
         #optimizer_ode = torch.optim.Adam(param_ode, lr=self.config["learning_rate_ode"])
@@ -962,15 +962,16 @@ class DVAE(VAE):
         with torch.no_grad():
             B = min(N//5, 5000)
             Nb = N // B
+            has_init_cond = (self.train_stage > 1)
             for i in range(Nb):
                 data_in = torch.tensor(data[i*B:(i+1)*B]).float().to(self.device)
                 if(mode=="test"):
-                    u0 = torch.tensor(self.u0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    s0 = torch.tensor(self.s0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    t0 = torch.tensor(self.t0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    u1 = torch.tensor(self.u1[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    s1 = torch.tensor(self.s1[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    t1 = torch.tensor(self.t1[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    u0 = torch.tensor(self.u0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    s0 = torch.tensor(self.s0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    t0 = torch.tensor(self.t0[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    u1 = torch.tensor(self.u1[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[self.test_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.test_idx[i*B:(i+1)*B]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.test_idx[i*B:(i+1)*B],:]
                     p_z = self.p_z[:,self.test_idx[i*B:(i+1)*B],:]
@@ -978,12 +979,12 @@ class DVAE(VAE):
                     ls_scale = self.ls_scale[self.test_idx[i*B:(i+1)*B],:].exp()
                     mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot, continuous)
                 elif(mode=="train"):
-                    u0 = torch.tensor(self.u0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    s0 = torch.tensor(self.s0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    t0 = torch.tensor(self.t0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    u1 = torch.tensor(self.u1[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    s1 = torch.tensor(self.s1[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    t1 = torch.tensor(self.t1[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    u0 = torch.tensor(self.u0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    s0 = torch.tensor(self.s0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    t0 = torch.tensor(self.t0[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    u1 = torch.tensor(self.u1[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[self.train_idx[i*B:(i+1)*B]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.train_idx[i*B:(i+1)*B]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.train_idx[i*B:(i+1)*B],:]
                     p_z = self.p_z[:,self.train_idx[i*B:(i+1)*B],:]
@@ -991,12 +992,12 @@ class DVAE(VAE):
                     ls_scale = self.ls_scale[self.train_idx[i*B:(i+1)*B],:].exp()
                     mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot, continuous)
                 else:
-                    u0 = torch.tensor(self.u0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if self.use_knn else None
-                    s0 = torch.tensor(self.s0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if self.use_knn else None
-                    t0 = torch.tensor(self.t0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if self.use_knn else None
-                    u1 = torch.tensor(self.u1[i*B:(i+1)*B], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    s1 = torch.tensor(self.s1[i*B:(i+1)*B], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    t1 = torch.tensor(self.t1[i*B:(i+1)*B], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    u0 = torch.tensor(self.u0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if has_init_cond else None
+                    s0 = torch.tensor(self.s0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if has_init_cond else None
+                    t0 = torch.tensor(self.t0[i*B:(i+1)*B], dtype=torch.float, device=self.device) if has_init_cond else None
+                    u1 = torch.tensor(self.u1[i*B:(i+1)*B], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[i*B:(i+1)*B], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[i*B:(i+1)*B], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[i*B:(i+1)*B], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,i*B:(i+1)*B,:]
                     p_z = self.p_z[:,i*B:(i+1)*B,:]
@@ -1043,12 +1044,12 @@ class DVAE(VAE):
             if(N > B*Nb):
                 data_in = torch.tensor(data[Nb*B:]).float().to(self.device)
                 if(mode=="test"):
-                    u0 = torch.tensor(self.u0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    s0 = torch.tensor(self.s0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    t0 = torch.tensor(self.t0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    u1 = torch.tensor(self.u1[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    s1 = torch.tensor(self.s1[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    t1 = torch.tensor(self.t1[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    u0 = torch.tensor(self.u0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    s0 = torch.tensor(self.s0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    t0 = torch.tensor(self.t0[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    u1 = torch.tensor(self.u1[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[self.test_idx[Nb*B:]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.test_idx[Nb*B:]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.test_idx[Nb*B:],:]
                     p_z = self.p_z[:,self.test_idx[Nb*B:],:]
@@ -1056,12 +1057,12 @@ class DVAE(VAE):
                     ls_scale = self.ls_scale[self.test_idx[Nb*B:],:].exp()
                     mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot)
                 elif(mode=="train"):
-                    u0 = torch.tensor(self.u0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    s0 = torch.tensor(self.s0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    t0 = torch.tensor(self.t0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if self.use_knn else None
-                    u1 = torch.tensor(self.u1[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    s1 = torch.tensor(self.s1[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    t1 = torch.tensor(self.t1[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    u0 = torch.tensor(self.u0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    s0 = torch.tensor(self.s0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    t0 = torch.tensor(self.t0[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if has_init_cond else None
+                    u1 = torch.tensor(self.u1[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[self.train_idx[Nb*B:]], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[self.train_idx[Nb*B:]], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,self.train_idx[Nb*B:],:]
                     p_z = self.p_z[:,self.train_idx[Nb*B:],:]
@@ -1069,12 +1070,12 @@ class DVAE(VAE):
                     ls_scale = self.ls_scale[self.train_idx[Nb*B:],:].exp()
                     mu_tx, std_tx, mu_zx, std_zx, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw = self.eval_model(data_in, lu_scale, ls_scale, u0, s0, t0, t1, y_onehot)
                 else:
-                    u0 = torch.tensor(self.u0[Nb*B:], dtype=torch.float, device=self.device) if self.use_knn else None
-                    s0 = torch.tensor(self.s0[Nb*B:], dtype=torch.float, device=self.device) if self.use_knn else None
-                    t0 = torch.tensor(self.t0[Nb*B:], dtype=torch.float, device=self.device) if self.use_knn else None
-                    u1 = torch.tensor(self.u1[Nb*B:], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    s1 = torch.tensor(self.s1[Nb*B:], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
-                    t1 = torch.tensor(self.t1[Nb*B:], dtype=torch.float, device=self.device) if (self.use_knn and self.config['vel_continuity_loss']) else None
+                    u0 = torch.tensor(self.u0[Nb*B:], dtype=torch.float, device=self.device) if has_init_cond else None
+                    s0 = torch.tensor(self.s0[Nb*B:], dtype=torch.float, device=self.device) if has_init_cond else None
+                    t0 = torch.tensor(self.t0[Nb*B:], dtype=torch.float, device=self.device) if has_init_cond else None
+                    u1 = torch.tensor(self.u1[Nb*B:], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    s1 = torch.tensor(self.s1[Nb*B:], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
+                    t1 = torch.tensor(self.t1[Nb*B:], dtype=torch.float, device=self.device) if (has_init_cond and self.config['vel_continuity_loss']) else None
                     y_onehot = F.one_hot(torch.tensor(cell_labels[Nb*B:], dtype=int, device=self.device), self.n_type).float() if self.enable_cvae else None
                     p_t = self.p_t[:,Nb*B:,:]
                     p_z = self.p_z[:,Nb*B:,:]
