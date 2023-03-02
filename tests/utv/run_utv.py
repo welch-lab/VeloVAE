@@ -18,6 +18,7 @@ args = parser.parse_args()
 
 def run_utv(adata):
     print(f'Input: {args.input}')
+    #utv.utils.choose_mode(adata, 'leiden')
     t_start = time.time()
     velo_config = utv.config.Configuration()
     velo_config.R2_ADJUST = args.r2_adjust
@@ -27,6 +28,7 @@ def run_utv(adata):
     velo_config.GPU = 0
     
     label = 'clusters'
+    #label = 'leiden'
     adata = utv.run_model(adata, label, config_file=velo_config)
     run_time = time.time() - t_start
 
@@ -39,7 +41,7 @@ def run_utv(adata):
     else:
         idx_t = np.where(~np.isnan(adata.layers['fit_t'][0]))[0][0]
         t = adata.layers['fit_t'][:,idx_t]
-    adata.obs['utv_time'] = t
+        adata.obs['utv_time'] = t
     adata.uns['utv_run_time'] = run_time
     if(args.save is not None):
         adata.write_h5ad(f'{args.out_folder}/{args.save}')

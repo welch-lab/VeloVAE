@@ -4,6 +4,7 @@ import os
 import sys
 sys.path.append('../../')
 import velovae as vv
+import scvelo as scv
 
 def preprocess_embryo():
     dataset = "Embryo"
@@ -104,4 +105,43 @@ def preprocess_embryo():
     
     adata.write_h5ad(f"{root}/{dataset}_dpp.h5ad")
 
-preprocess_embryo()
+def divide_lineage(discrete=False):
+    dataset = "Embryo"
+    
+    print("Reading file...")
+    #root = "/nfs/turbo/umms-welchjd/yichen/data/scRNA/Embryo"
+    if(discrete):
+        root = "/scratch/blaauw_root/blaauw1/gyichen/data/velovae/discrete/Embryo"
+        key = "dfullvb"
+    else:
+        root = "/scratch/blaauw_root/blaauw1/gyichen/data/velovae/continuous/Embryo"
+        key = "fullvb"
+    
+    adata = anndata.read_h5ad(f"{root}/{dataset}.h5ad")
+    cell_labels = adata.obs["Main_trajectory_refined_by_cluster"].to_numpy()
+    lineages = np.unique(cell_labels)
+
+    adata.obsm['X_umap_main'] = adata.obs[['Main_trajectory_refined_umap_1','Main_trajectory_refined_umap_2','Main_trajectory_refined_umap_3']].to_numpy()
+    adata.obsm['X_umap_sub'] = adata.obs[['Sub_trajectory_umap_1','Sub_trajectory_umap_2']].to_numpy()
+    for lineage in lineages:
+        print(lineage)
+        if(lineage == 'nan'):
+            continue
+        mask = cell_labels==lineage
+        mask = mask & (~np.any(np.isnan(adata.obsm["X_umap_main"]),axis=1))
+        mask = mask & (~(adata.obs["Sub_trajectory_name"].to_numpy()=='nan'))
+        adata_sub = adata[mask]
+        adata_sub.obs['clusters'] = adata_sub.obs['Sub_trajectory_name'].to_numpy()
+        #velocity embedding
+        scv.pp.neighbors(adata_sub, n_neighbors=30, n_pcs=30)
+        scv.tl.velocity_graph(adata_sub, vkey=f"{key}_velocity", n_jobs=4)
+        scv.tl.umap(adata_sub)
+        scv.tl.velocity_embedding(adata_sub, vkey=f"{key}_velocity",  basis='umap')
+        scv.tl.velocity_embedding(adata_sub, vkey=f"{key}_velocity",  basis='umap_sub')
+        name = lineage.replace(' ','_')
+        adata_sub.write_h5ad(f"{root}/{name}.h5ad")
+        del adata_sub
+
+#preprocess_embryo()
+#divide_lineage()
+divide_lineage(discrete=True)
