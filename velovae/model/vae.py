@@ -5,10 +5,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.distributions.normal import Normal
 from torch.distributions.negative_binomial import NegativeBinomial
 from torch.distributions.poisson import Poisson
 import time
-from velovae.plotting import plot_sig, plot_sig_, plot_time
+from velovae.plotting import plot_sig, plot_sig_, plot_time, plot_vel
 from velovae.plotting import plot_train_loss, plot_test_loss
 
 from .model_util import hist_equal, init_params, get_ts_global, reinit_params
@@ -16,13 +17,14 @@ from .model_util import convert_time, get_gene_index
 from .model_util import pred_su, ode_numpy, knnx0, knnx0_bin
 from .model_util import elbo_collapsed_categorical
 from .model_util import assign_gene_mode, find_dirichlet_param
-from .model_util import scale_by_cell, get_cell_scale, get_dispersion
+from .model_util import get_cell_scale, get_dispersion
 
 from .transition_graph import encode_type
 from .training_data import SCData
 from .vanilla_vae import VanillaVAE, kl_gaussian
 from .velocity import rna_velocity_vae
-
+P_MAX = 1e30
+GRAD_MAX = 1e7
 ##############################################################
 # VAE
 ##############################################################
@@ -104,7 +106,6 @@ class decoder(nn.Module):
                  init_key=None,
                  init_type=None,
                  checkpoint=None,
-                 scale_cell=False,
                  **kwargs):
         super(decoder, self).__init__()
         G = adata.n_vars
@@ -122,14 +123,9 @@ class decoder(nn.Module):
                 adata.var["mean_s"] = mean_s
                 adata.var["dispersion_u"] = dispersion_u
                 adata.var["dispersion_s"] = dispersion_s
-                if scale_cell:
-                    U, S, lu, ls = scale_by_cell(U, S, train_idx, True, 50)
-                    adata.obs["library_scale_u"] = lu
-                    adata.obs["library_scale_s"] = ls
-                else:
-                    lu, ls = get_cell_scale(U, S, train_idx, True, 50)
-                    adata.obs["library_scale_u"] = lu
-                    adata.obs["library_scale_s"] = ls
+                lu, ls = get_cell_scale(U, S, train_idx, True, 50)
+                adata.obs["library_scale_u"] = lu
+                adata.obs["library_scale_s"] = ls
                 del U
                 del S
             U, S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
@@ -159,14 +155,17 @@ class decoder(nn.Module):
                 T = T[:, gene_mask]
             # Gene dyncamical mode initialization
             dyn_mask = (T > tmax*0.01) & (np.abs(T-toff) > tmax*0.01)
-            w = np.sum(((T < toff) & dyn_mask), 0) / np.sum(dyn_mask, 0)
+            w = np.sum(((T < toff) & dyn_mask), 0) / (np.sum(dyn_mask, 0) + 1e-10)
             assign_type = kwargs['assign_type'] if 'assign_type' in kwargs else 'auto'
+            thred = kwargs['ks_test_thred'] if 'ks_test_thred' in kwargs else 0.05
+            n_cluster_thred = kwargs['n_cluster_thred'] if 'n_cluster_thred' in kwargs else 3
+            std_prior = kwargs['std_alpha_prior'] if 'std_alpha_prior' in kwargs else 0.1
             if 'reverse_gene_mode' in kwargs:
-                w = (1 - assign_gene_mode(adata, w, assign_type)
+                w = (1 - assign_gene_mode(adata, w, assign_type, thred, std_prior, n_cluster_thred)
                      if kwargs['reverse_gene_mode'] else
-                     assign_gene_mode(adata, w, assign_type))
+                     assign_gene_mode(adata, w, assign_type, thred, std_prior, n_cluster_thred))
             else:
-                w = assign_gene_mode(adata, w, assign_type)
+                w = assign_gene_mode(adata, w, assign_type, thred, std_prior, n_cluster_thred)
             adata.var["w_init"] = w
             logit_pw = 0.5*(np.log(w+1e-10) - np.log(1-w+1e-10))
             logit_pw = np.stack([logit_pw, -logit_pw], 1)
@@ -222,9 +221,9 @@ class decoder(nn.Module):
                 else:
                     T = T+np.random.rand(T.shape[0], T.shape[1]) * 1e-3
                     T_eq = np.zeros(T.shape)
-                    Nbin = T.shape[0]//50+1
+                    n_bin = T.shape[0]//50+1
                     for i in range(T.shape[1]):
-                        T_eq[:, i] = hist_equal(T[:, i], tmax, 0.9, Nbin)
+                        T_eq[:, i] = hist_equal(T[:, i], tmax, 0.9, n_bin)
                     if "init_t_quant" in kwargs:
                         self.t_init = np.quantile(T_eq, kwargs["init_t_quant"], 1)
                     else:
@@ -360,6 +359,7 @@ class decoder(nn.Module):
                 alpha = torch.exp(self.alpha[0] + eps[0]*(self.alpha[1].exp()))
                 beta = torch.exp(self.beta[0] + eps[1]*(self.beta[1].exp()))
                 gamma = torch.exp(self.gamma[0] + eps[2]*(self.gamma[1].exp()))
+                self._eps = eps
             else:
                 alpha = self.alpha[0].exp()
                 beta = self.beta[0].exp()
@@ -369,6 +369,10 @@ class decoder(nn.Module):
             beta = self.beta.exp()
             gamma = self.gamma.exp()
         return alpha, beta, gamma
+
+    def _clip_rate(self, rate, max_val):
+        clip_fn = nn.Hardtanh(-16, np.log(max_val))
+        return clip_fn(rate)
 
     def forward_basis(self, t, z, condition=None, eval_mode=False, neg_slope=0.0):
         ####################################################
@@ -386,7 +390,12 @@ class decoder(nn.Module):
         u0 = torch.stack([zero_vec, self.u0.exp()])
         s0 = torch.stack([zero_vec, self.s0.exp()])
         tau = torch.stack([F.leaky_relu(t - self.ton.exp(), neg_slope) for i in range(2)], 1)
-        Uhat, Shat = pred_su(tau, u0, s0, alpha, beta, gamma)
+        Uhat, Shat = pred_su(tau,
+                             u0,
+                             s0,
+                             alpha,
+                             beta,
+                             gamma)
         Uhat = Uhat * torch.exp(self.scaling)
 
         Uhat = F.relu(Uhat)
@@ -409,7 +418,8 @@ class decoder(nn.Module):
             alpha, beta, gamma = self._sample_ode_param(random=not eval_mode)
             alpha = alpha*rho
             Uhat, Shat = pred_su(F.leaky_relu(t-t0, neg_slope),
-                                 u0/self.scaling.exp(), s0,
+                                 u0/self.scaling.exp(),
+                                 s0,
                                  alpha,
                                  beta,
                                  gamma)
@@ -440,7 +450,6 @@ class VAE(VanillaVAE):
                  init_type=None,
                  init_ton_zero=True,
                  filter_gene=False,
-                 scale_cell=False,
                  time_distribution="gaussian",
                  count_distribution="Poisson",
                  std_z_prior=0.01,
@@ -501,6 +510,8 @@ class VAE(VanillaVAE):
         init_ton_zero : bool, optional
             Whether to add a non-zero switch-on time for each gene.
             It's set to True if there's no capture time.
+        filter_gene : bool, optional
+            Whether to remove non-velocity genes
         time_distribution : {'gaussian', 'uniform'}, optional
             Time distribution, set to Gaussian by default.
         count_distriution : {'auto', 'Poisson', 'NB'}, optional
@@ -512,6 +523,11 @@ class VAE(VanillaVAE):
         checkpoints : list of 2 strings, optional
             Contains the path to saved encoder and decoder models.
             Should be a .pt file.
+        rate_prior : dict, optional
+            Prior distribution of rate parameters.
+            Keys are always `alpha',`beta',`gamma'
+            Values are length-2 tuples (mu, sigma), representing the mean and standard deviation
+            of log rates.
         """
         t_start = time.time()
         self.timer = 0
@@ -537,7 +553,7 @@ class VAE(VanillaVAE):
             # Training Parameters
             "n_epochs": 1000,
             "n_epochs_post": 1000,
-            "n_refine": 5,
+            "n_refine": 20,
             "batch_size": 128,
             "learning_rate": None,
             "learning_rate_ode": None,
@@ -548,6 +564,8 @@ class VAE(VanillaVAE):
             "kl_z": 1.0,
             "kl_w": 0.01,
             "reg_v": 0.0,
+            "reg_a": 0.0,
+            "max_rate": 1e4,
             "test_iter": None,
             "save_epoch": 100,
             "n_warmup": 5,
@@ -567,7 +585,6 @@ class VAE(VanillaVAE):
             "kl_param": 1.0,
 
             # Normalization Configurations
-            "scale_cell": scale_cell,
             "scale_gene_encoder": True,
             "scale_cell_encoder": False,
             "log1p": False,
@@ -597,7 +614,6 @@ class VAE(VanillaVAE):
                                init_key=init_key,
                                init_type=init_type,
                                checkpoint=checkpoints[1],
-                               scale_cell=scale_cell,
                                **kwargs).float()
 
         try:
@@ -614,10 +630,6 @@ class VAE(VanillaVAE):
 
         self.tmax = tmax
         self.time_distribution = time_distribution
-        if init_type is not None and init_type != 'random':
-            tprior = 'tprior'
-            self.config['tprior'] = tprior
-            self.config['train_ton'] = False
         self.get_prior(adata, time_distribution, tmax, tprior)
 
         self._pick_loss_func(adata, count_distribution)
@@ -653,6 +665,10 @@ class VAE(VanillaVAE):
         self.timer = time.time()-t_start
 
     def _pick_loss_func(self, adata, count_distribution):
+        ##############################################################
+        # Pick the corresponding loss function (mainly the generative
+        # likelihood function) based on count distribution
+        ##############################################################
         if self.is_discrete:
             # Determine Count Distribution
             dispersion_u = adata.var["dispersion_u"].to_numpy()
@@ -688,6 +704,12 @@ class VAE(VanillaVAE):
 
         data_in : `torch.tensor`
             input count data, (N, 2G)
+        lu_scale : `torch.tensor`
+            library size scaling factor of unspliced counts, (G)
+            Effective in the discrete mode and set to 1's in the
+            continuouts model
+        ls_scale : `torch.tensor`
+            Similar to lu_scale, but for spliced counts, (G)
         u0 : `torch.tensor`, optional
             Initial condition of u, (N, G)
             This is set to None in the first stage when cell time is
@@ -697,6 +719,11 @@ class VAE(VanillaVAE):
             Initial condition of s, (N,G)
         t0 : `torch.tensor`, optional
             time at the initial condition, (N,1)
+        t1 : `torch.tensor`, optional
+            time at the future state.
+            Used only when `vel_continuity_loss` is set to True
+        condition : `torch.tensor`, optional
+            Any additional condition to the VAE
 
         Returns
         -------
@@ -719,6 +746,7 @@ class VAE(VanillaVAE):
             predicted mean s values, (N,G)
         """
         data_in_scale = data_in
+        # optional data scaling
         if self.config["scale_gene_encoder"]:
             data_in_scale = torch.cat((data_in_scale[:, :data_in_scale.shape[1]//2]/self.decoder.scaling.exp(),
                                        data_in_scale[:, data_in_scale.shape[1]//2:]), 1)
@@ -732,7 +760,8 @@ class VAE(VanillaVAE):
         z = self.sample(mu_z, std_z)
 
         uhat, shat, vu, vs = self.decoder.forward(t, z, u0, s0, t0, condition, neg_slope=self.config["neg_slope"])
-        if t1 is not None:
+
+        if t1 is not None:  # predict the future state when we enable velocity continuity loss
             uhat_fw, shat_fw, vu_fw, vs_fw = self.decoder.forward(t1,
                                                                   z,
                                                                   uhat,
@@ -751,6 +780,7 @@ class VAE(VanillaVAE):
         cell state instead of random sampling. The input arguments are the same as 'forward'.
         """
         data_in_scale = data_in
+        # optional data scaling
         if self.config["scale_gene_encoder"]:
             data_in_scale = torch.cat((data_in_scale[:, :data_in_scale.shape[1]//2]/self.decoder.scaling.exp(),
                                        data_in_scale[:, data_in_scale.shape[1]//2:]), 1)
@@ -782,13 +812,36 @@ class VAE(VanillaVAE):
         return mu_t, std_t, mu_z, std_z, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw
 
     def loss_vel(self, x0, xhat, v):
+        ##############################################################
+        # Velocity correlation loss, optionally
+        # added to the total loss function
+        ##############################################################
         cossim = nn.CosineSimilarity(dim=1)
         return cossim(xhat-x0, v).mean()
 
+    def loss_accl(self, vu, vs):
+        beta = (self.decoder.beta[0].exp() + self.decoder._eps[1] * self.decoder.beta[1].exp()
+                if self.is_full_vb else
+                self.decoder.beta.exp())
+        gamma = (self.decoder.gamma[0].exp() + self.decoder._eps[2] * self.decoder.gamma[1].exp()
+                 if self.is_full_vb else
+                 self.decoder.gamma.exp())
+        return torch.mean(torch.norm(beta * vu - gamma * vs))
+
     def _compute_kl_term(self, q_tx, p_t, q_zx, p_z):
+        ##############################################################
+        # Compute all KL-divergence terms 
+        # Arguments:
+        # q_tx, q_zx: `tensor` 
+        #   conditional distribution of time and cell state given
+        #   observation (count vector)
+        # p_t, p_z: `tensor`
+        #   Prior distribution, usually Gaussian
+        ##############################################################
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
         kldz = kl_gaussian(q_zx[0], q_zx[1], p_z[0], p_z[1])
         kld_param = 0
+        # In full VB, we treat all rate parameters as random variables
         if self.is_full_vb:
             kld_param = (kl_gaussian(self.decoder.alpha[0].view(1, -1),
                                      self.decoder.alpha[1].exp().view(1, -1),
@@ -802,6 +855,7 @@ class VAE(VanillaVAE):
                                        self.decoder.gamma[1].exp().view(1, -1),
                                        self.p_log_gamma[0],
                                        self.p_log_gamma[1])) / q_tx[0].shape[0]
+        # In stage 1, dynamical mode weights are considered random
         kldw = (
             elbo_collapsed_categorical(self.decoder.logit_pw, self.alpha_w, 2, self.decoder.scaling.shape[0])
             if self.train_stage == 1 else 0
@@ -846,18 +900,22 @@ class VAE(VanillaVAE):
 
         sigma_u = self.decoder.sigma_u.exp()
         sigma_s = self.decoder.sigma_s.exp()
+        n = u.shape[0]
 
         # u and sigma_u has the original scale
+        clip_fn = nn.Hardtanh(-P_MAX, P_MAX)
         if uhat.ndim == 3:  # stage 1
             logp = -0.5*((u.unsqueeze(1)-uhat)/sigma_u).pow(2)\
                    - 0.5*((s.unsqueeze(1)-shat)/sigma_s).pow(2)\
                    - torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
+            logp = clip_fn(logp)
             pw = F.softmax(self.decoder.logit_pw, dim=1).T
             logp = torch.sum(pw*logp, 1)
         else:
-            logp = -0.5*((u-uhat)/sigma_u).pow(2)\
+            logp = - 0.5*((u-uhat)/sigma_u).pow(2)\
                    - 0.5*((s-shat)/sigma_s).pow(2)\
                    - torch.log(sigma_u)-torch.log(sigma_s*2*np.pi)
+            logp = clip_fn(logp)
 
         if uhat_fw is not None and shat_fw is not None:
             logp = logp - 0.5*((u1-uhat_fw)/sigma_u).pow(2)-0.5*((s1-shat_fw)/sigma_s).pow(2)
@@ -1038,7 +1096,12 @@ class VAE(VanillaVAE):
                 if vu_fw is not None and vs_fw is not None:
                     loss = loss - self.config["reg_v"]\
                         * (self.loss_vel(uhat, uhat_fw, vu_fw) + self.loss_vel(shat, shat_fw, vs_fw))
+            if self.config["reg_a"] > 0:
+                loss = loss + 0.001 * self.loss_accl(vu, vs)
             loss.backward()
+            # gradient clipping
+            torch.nn.utils.clip_grad_value_(self.encoder.parameters(), GRAD_MAX)
+            torch.nn.utils.clip_grad_value_(self.decoder.parameters(), GRAD_MAX)
             if K == 0:
                 optimizer.step()
                 if optimizer2 is not None:
@@ -1085,7 +1148,7 @@ class VAE(VanillaVAE):
                                   "both",
                                   ["uhat", "shat", "t", "z"],
                                   np.array(range(U.shape[1])))
-        t, z = out[2], out[4]
+        t, z = out["t"], out["z"]
         # Clip the time to avoid outliers
         t = np.clip(t, 0, np.quantile(t, 0.99))
         dt = (self.config["dt"][0]*(t.max()-t.min()), self.config["dt"][1]*(t.max()-t.min()))
@@ -1094,17 +1157,13 @@ class VAE(VanillaVAE):
         with torch.no_grad():
             # w = F.softmax(self.decoder.logit_pw, 1).detach().cpu().numpy()[:, 0]
             # tensor shape (1, 2, n_gene)
-            # u0_rep = np.exp(self.decoder.u0.detach().cpu().numpy())
-            # s0_rep = np.exp(self.decoder.s0.detach().cpu().numpy())
-            init_mask = (t <= np.quantile(t, 0.001))
-            u0_init = np.mean(out[0][init_mask], 0)
-            s0_init = np.mean(out[1][init_mask], 0)
-            # u0_init = np.zeros((len(w)))*(w > 0.5) + u0_rep*(w <= 0.5)
-            # s0_init = np.zeros((len(w)))*(w > 0.5) + s0_rep*(w <= 0.5)
+            init_mask = (t <= np.quantile(t, 0.01))
+            u0_init = np.mean(U[init_mask], 0)
+            s0_init = np.mean(S[init_mask], 0)
         if n_bin is None:
             print("Cell-wise KNN Estimation.")
-            u0, s0, t0 = knnx0(out[0][self.train_idx],
-                               out[1][self.train_idx],
+            u0, s0, t0 = knnx0(out["uhat"][self.train_idx],
+                               out["shat"][self.train_idx],
                                t[self.train_idx],
                                z[self.train_idx],
                                t,
@@ -1114,8 +1173,8 @@ class VAE(VanillaVAE):
                                u0_init,
                                s0_init,)
             if self.config["vel_continuity_loss"]:
-                u1, s1, t1 = knnx0(out[0][self.train_idx],
-                                   out[1][self.train_idx],
+                u1, s1, t1 = knnx0(out["uhat"][self.train_idx],
+                                   out["shat"][self.train_idx],
                                    t[self.train_idx],
                                    z[self.train_idx],
                                    t,
@@ -1128,8 +1187,8 @@ class VAE(VanillaVAE):
                 t1 = t1.reshape(-1, 1)
         else:
             print(f"Fast KNN Estimation with {n_bin} time bins.")
-            u0, s0, t0 = knnx0_bin(out[0][self.train_idx],
-                                   out[1][self.train_idx],
+            u0, s0, t0 = knnx0_bin(out["uhat"][self.train_idx],
+                                   out["shat"][self.train_idx],
                                    t[self.train_idx],
                                    z[self.train_idx],
                                    t,
@@ -1137,8 +1196,8 @@ class VAE(VanillaVAE):
                                    dt,
                                    self.config["n_neighbors"])
             if self.config["vel_continuity_loss"]:
-                u1, s1, t1 = knnx0_bin(out[0][self.train_idx],
-                                       out[1][self.train_idx],
+                u1, s1, t1 = knnx0_bin(out["uhat"][self.train_idx],
+                                       out["shat"][self.train_idx],
                                        t[self.train_idx],
                                        z[self.train_idx],
                                        t,
@@ -1191,11 +1250,14 @@ class VAE(VanillaVAE):
         if self.config["learning_rate"] is None:
             p = (np.sum(adata.layers["unspliced"].A > 0)
                  + (np.sum(adata.layers["spliced"].A > 0)))/adata.n_obs/adata.n_vars/2
-            self.config["learning_rate"] = 10**(-8.3*p-2.25)
-            # self.config["learning_rate"] = 10**(-4.19*p-1.96)
+            # self.config["learning_rate"] = 10**(-8.3*p-2.25)
+            self.config["learning_rate"] = 10**(-4*p-3)
             self.config["learning_rate_post"] = self.config["learning_rate"]
             self.config["learning_rate_ode"] = 8*self.config["learning_rate"]
-
+            if self.is_discrete:
+                self.config["learning_rate"] = self.config["learning_rate"] * 2
+                self.config["learning_rate_post"] = self.config["learning_rate"] * 2
+            print(f'Learning Rate based on Data Sparsity: {self.config["learning_rate"]:.4f}')
         print("--------------------------- Train a VeloVAE ---------------------------")
         # Get data loader
         if self.is_discrete:
@@ -1207,7 +1269,7 @@ class VAE(VanillaVAE):
             Xembed = adata.obsm[f"X_{embed}"]
         except KeyError:
             print("Embedding not found! Set to None.")
-            Xembed = None
+            Xembed = np.nan*np.ones((adata.n_obs, 2))
             plot = False
 
         cell_labels_raw = (adata.obs[cluster_key].to_numpy() if cluster_key in adata.obs
@@ -1342,21 +1404,25 @@ class VAE(VanillaVAE):
         if not self.is_discrete:
             sigma_u_prev = self.decoder.sigma_u.detach().cpu().numpy()
             sigma_s_prev = self.decoder.sigma_s.detach().cpu().numpy()
-            noise_change = 1
+            u0_prev, s0_prev = None, None
+            noise_change = np.inf
+            x0_change = np.inf
+            x0_change_prev = np.inf
         param_post = list(self.decoder.net_rho2.parameters())+list(self.decoder.fc_out2.parameters())
         optimizer_post = torch.optim.Adam(param_post,
                                           lr=self.config["learning_rate_post"],
                                           weight_decay=self.config["lambda_rho"])
         for r in range(self.config['n_refine']):
             print(f"*********             Velocity Refinement Round {r+1}              *********")
-            if (not self.is_discrete) and noise_change > 0.001 and r < self.config['n_refine']-1:
+            if (x0_change >= x0_change_prev and r > 1) or (x0_change < 0.01):
+                print(f"Stage 2: Early Stop Triggered at round {r}.")
+                break
+            if (not self.is_discrete) and (noise_change > 0.001) and (r < self.config['n_refine']-1):
                 self.update_std_noise(train_set.data)
             self.update_x0(X[:, :X.shape[1]//2], X[:, X.shape[1]//2:], self.config["n_bin"])
             # self.decoder.init_weights(2)
             self.n_drop = 0
-            # param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma]
-            # optimizer_ode = torch.optim.Adam(param_ode,
-            #                                  lr=self.config["learning_rate_ode"])
+
             for epoch in range(self.config["n_epochs_post"]):
                 if self.config["k_alt"] is None:
                     stop_training = self.train_epoch(data_loader, test_set, optimizer_post)
@@ -1399,7 +1465,7 @@ class VAE(VanillaVAE):
 
                 if stop_training:
                     print(f"*********       "
-                          f"Stage 2: Early Stop Triggered at epoch {epoch+count_epoch+1}."
+                          f"Round {r+1}: Early Stop Triggered at epoch {epoch+count_epoch+1}."
                           f"       *********")
                     break
             count_epoch += (epoch+1)
@@ -1412,6 +1478,15 @@ class VAE(VanillaVAE):
                 sigma_s_prev = self.decoder.sigma_s.detach().cpu().numpy()
                 noise_change = norm_delta_sigma/norm_sigma
                 print(f"Change in noise variance: {noise_change}")
+            if r > 0:
+                x0_change_prev = x0_change
+                norm_delta_x0 = np.sqrt(((self.u0 - u0_prev)**2 + (self.s0 - s0_prev)**2).sum(1).mean())
+                std_x = np.sqrt((self.u0.var(0) + self.s0.var(0)).sum())
+                x0_change = norm_delta_x0/std_x
+                print(f"Change in x0: {x0_change}")
+            u0_prev = self.u0
+            s0_prev = self.s0
+
         elbo_train = self.test(train_set,
                                Xembed[self.train_idx],
                                "final-train",
@@ -1462,6 +1537,9 @@ class VAE(VanillaVAE):
         if "z" in output:
             z_out = np.zeros((N, self.dim_z))
             std_z_out = np.zeros((N, self.dim_z))
+        if "v" in output:
+            Vu = np.zeros((N, G))
+            Vs = np.zeros((N, G))
 
         with torch.no_grad():
             B = min(N//5, 5000)
@@ -1549,6 +1627,9 @@ class VAE(VanillaVAE):
                 if "z" in output:
                     z_out[i*B:(i+1)*B] = mu_zx.cpu().numpy()
                     std_z_out[i*B:(i+1)*B] = std_zx.cpu().numpy()
+                if "v" in output:
+                    Vu[i*B:(i+1)*B] = vu.cpu().numpy()
+                    Vs[i*B:(i+1)*B] = vs.cpu().numpy()
 
             if N > B*Nb:
                 data_in = torch.tensor(data[Nb*B:]).float().to(self.device)
@@ -1628,22 +1709,28 @@ class VAE(VanillaVAE):
                 if "z" in output:
                     z_out[Nb*B:] = mu_zx.cpu().numpy()
                     std_z_out[Nb*B:] = std_zx.cpu().numpy()
-        out = []
+                if "v" in output:
+                    Vu[Nb*B:] = vu.cpu().numpy()
+                    Vs[Nb*B:] = vs.cpu().numpy()
+        out = {}
         if "uhat" in output:
-            out.append(Uhat)
+            out["uhat"] = Uhat
         if "shat" in output:
-            out.append(Shat)
+            out["shat"] = Shat
         if "t" in output:
-            out.append(t_out)
-            out.append(std_t_out)
+            out["t"] = t_out
+            out["std_t"] = std_t_out
         if "z" in output:
-            out.append(z_out)
-            out.append(std_z_out)
+            out["z"] = z_out
+            out["std_z"] = std_z_out
         if self.use_knn:
             if "uhat" in output and self.config["vel_continuity_loss"]:
                 out.append(Uhat_fw)
             if "shat" in output and self.config["vel_continuity_loss"]:
                 out.append(Shat_fw)
+        if "v" in output:
+            out["vu"] = Vu
+            out["vs"] = Vs
 
         return out, elbo.cpu().item()
 
@@ -1685,8 +1772,11 @@ class VAE(VanillaVAE):
         """
         self.set_mode('eval')
         mode = "test" if test_mode else "train"
-        out, elbo = self.pred_all(dataset.data, self.cell_labels, mode, ["uhat", "shat", "t"], gind)
-        Uhat, Shat, t = out[0], out[1], out[2]
+        out_type = ["uhat", "shat", "t"]
+        if self.train_stage == 2:
+            out_type.append("v")
+        out, elbo = self.pred_all(dataset.data, self.cell_labels, mode, out_type, gind)
+        Uhat, Shat, t = out["uhat"], out["shat"], out["t"]
 
         G = dataset.data.shape[1]//2
 
@@ -1704,10 +1794,20 @@ class VAE(VanillaVAE):
                          gene_plot[i],
                          save=f"{path}/sig-{gene_plot[i]}-{testid}.png",
                          sparsify=self.config['sparsify'])
-                if len(out) > 4:
+                if self.train_stage == 2:
+                    scaling = self.decoder.scaling[i].detach().cpu().exp().numpy()
+                    cell_idx = self.test_idx if test_mode else self.train_idx
+                    plot_vel(t.squeeze(),
+                             Uhat[:, i]/scaling, Shat[:, i],
+                             out["vu"][:, i], out["vs"][:, i],
+                             self.t0[cell_idx].squeeze(),
+                             self.u0[cell_idx, idx]/scaling, self.s0[cell_idx, idx],
+                             title=gene_plot[i],
+                             save=f"{path}/vel-{gene_plot[i]}-{testid}.png")
+                if self.config['vel_continuity_loss']:
                     plot_sig(t.squeeze(),
                              dataset.data[:, idx], dataset.data[:, idx+G],
-                             out[4][:, i], out[5][:, i],
+                             out["uhat_fw"][:, i], out["shat_fw"][:, i],
                              np.array([self.label_dic_rev[x] for x in dataset.labels]),
                              gene_plot[i],
                              save=f"{path}/sig-{gene_plot[i]}-{testid}-bw.png",
@@ -1725,9 +1825,13 @@ class VAE(VanillaVAE):
                                   mode='train',
                                   output=["uhat", "shat"],
                                   gene_idx=np.array(range(G)))
-        self.decoder.sigma_u = nn.Parameter(torch.tensor(np.log((out[0]-train_data[:, :G]).std(0)),
+        std_u = (out["uhat"]-train_data[:, :G]).std(0)
+        std_s = (out["shat"]-train_data[:, G:]).std(0)
+        self.decoder.sigma_u = nn.Parameter(torch.tensor(np.log(std_u),
+                                            dtype=torch.float,
                                             device=self.device))
-        self.decoder.sigma_s = nn.Parameter(torch.tensor(np.log((out[1]-train_data[:, G:]).std(0)),
+        self.decoder.sigma_s = nn.Parameter(torch.tensor(np.log(std_s),
+                                            dtype=torch.float,
                                             device=self.device))
         return
 
@@ -1772,7 +1876,7 @@ class VAE(VanillaVAE):
                                   self.cell_labels,
                                   "both",
                                   gene_idx=np.array(range(adata.n_vars)))
-        Uhat, Shat, t, std_t, z, std_z = out[0], out[1], out[2], out[3], out[4], out[5]
+        Uhat, Shat, t, std_t, z, std_z = out["uhat"], out["shat"], out["t"], out["std_t"], out["z"], out["std_z"]
 
         adata.obs[f"{key}_time"] = t
         adata.obs[f"{key}_std_t"] = std_t
