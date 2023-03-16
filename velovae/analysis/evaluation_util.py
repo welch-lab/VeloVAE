@@ -53,8 +53,8 @@ def cell_state(adata, method, key, gene_indices=None, **kwargs):
                 mask_repression[:, i] = (rho[:, i] <= 0.1) & (t >= ton)
                 mask_off[:, i] = (rho[:, i] <= 0.1) & (t < ton)
             else:
-                mask_repression = True
-                mask_off = False
+                mask_repression[:, i] = True
+                mask_off[:, i] = False
         cell_state = mask_repression * 1 + mask_off * 2
     elif method == 'VeloVI':
         t = adata.layers["fit_t"][:, gene_indices]
