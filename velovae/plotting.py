@@ -289,10 +289,12 @@ def plot_sig(t,
 
 
 def plot_vel(t,
-             u, s,
+             uhat, shat,
              vu, vs,
-             cell_labels=None,
-             cell_types=None,
+             t0,
+             u0, s0,
+             dt=0.2,
+             n_sample=10,
              title="Gene",
              save=None,
              **kwargs):
@@ -309,6 +311,8 @@ def plot_vel(t,
         Predicted unspliced or spliced counts of a single gene, (N,)
     vu, vs : `numpy array`
         RNA velocity of a single gene
+    u0, s0 : `numpy array`
+        Initial conditions
     cell_labels : `numpy array`, optional
         Cell type annotation in integer, (N,)
     cell_types : `numpy array`, optional
@@ -318,41 +322,36 @@ def plot_vel(t,
     save : str, optional
         Figure name for saving (including path)
     """
-    fig, ax = plt.subplots(2, 1, figsize=(10, 12), facecolor='white')
-    ax[0] = plot_vel_axis(ax[0],
-                          t,
-                          u,
-                          vu,
-                          labels=cell_labels,
-                          legends=cell_types,
-                          show_legend=True,
-                          sparsity_correction=True,
-                          color_map=None,
-                          title=title)
-    ax[1] = plot_vel_axis(ax[1],
-                          t,
-                          s,
-                          vs,
-                          labels=cell_labels,
-                          legends=cell_types,
-                          show_legend=False,
-                          sparsity_correction=True,
-                          color_map=None,
-                          title=title)
-    bbox_extra_artist = None
-    if cell_types is not None:
-        handles, labels = ax[0].get_legend_handles_labels()
-        lgd = fig.legend(handles,
-                         labels,
-                         fontsize=15,
-                         markerscale=5,
-                         ncol=4,
-                         bbox_to_anchor=(0.0, 1.0, 1.0, 0.25),
-                         loc='center')
-        bbox_extra_artist = (lgd,)
+    fig, ax = plt.subplots(1, 2, figsize=(18, 6), facecolor='white')
+
+    ax[0].plot(t, uhat, '.', color='grey', alpha=0.1)
+    ax[1].plot(t, shat, '.', color='grey', alpha=0.1)
+    plot_indices = np.random.choice(len(t), n_sample, replace=False)
+    if dt > 0:
+        ax[0].quiver(t[plot_indices],
+                     uhat[plot_indices],
+                     dt*np.ones((len(plot_indices),)),
+                     vu[plot_indices]*dt,
+                     angles='xy')
+        ax[1].quiver(t[plot_indices],
+                     shat[plot_indices],
+                     dt*np.ones((len(plot_indices),)),
+                     vs[plot_indices]*dt,
+                     angles='xy')
+    for i, k in enumerate(plot_indices):
+        if i == 0:
+            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]], 'r-o', label='Prediction')
+        else:
+            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]], 'r-o')
+        ax[1].plot([t0[k], t[k]], [s0[k], shat[k]], 'r-o')
+
+    ax[0].set_ylabel("U", fontsize=16)
+    ax[1].set_ylabel("S", fontsize=16)
+    fig.suptitle(title, fontsize=28)
+    fig.legend(loc=1, fontsize=18)
     plt.tight_layout()
-    save_fig(fig, save, bbox_extra_artist)
-    return
+
+    save_fig(fig, save)
 
 
 def plot_phase(u, s,
@@ -1348,7 +1347,7 @@ def plot_vel_axis(ax,
                 if len(indices) == 0:  # edge case handling
                     continue
                 v_type = v[mask][torder][indices]
-                v_type = np.clip(v_type, np.quantile(v_type, 0.02), np.quantile(v_type, 0.98))
+                v_type = np.clip(v_type, np.quantile(v_type, 0.01), np.quantile(v_type, 0.99))
                 if show_legend:
                     ax.quiver(t_type[torder][indices],
                               x[mask][torder][indices],
@@ -1546,7 +1545,7 @@ def plot_sig_grid(Nr,
                                                     frac=frac)
                             plot_vel_axis(ax_sig[3 * i + 2],
                                           t,
-                                          S[:, idx],
+                                          Shat[methods[0]][:, idx],
                                           V[methods[0]][:, idx],
                                           Labels[methods[0]],
                                           Legends[methods[0]],
@@ -1571,7 +1570,7 @@ def plot_sig_grid(Nr,
                                            1)
                         plot_vel_axis(ax_sig[3 * i + 2],
                                       t,
-                                      S[:, idx],
+                                      Shat[methods[0]][:, idx],
                                       V[methods[0]][:, idx],
                                       Labels[methods[0]],
                                       Legends[methods[0]],
@@ -1681,7 +1680,7 @@ def plot_sig_grid(Nr,
                                                             Legends[method], frac=frac)
                                     plot_vel_axis(ax_sig[3 * i + 2, M * j + k],
                                                   t,
-                                                  S[:, idx],
+                                                  Shat[method][:, idx],
                                                   V[method][:, idx],
                                                   Labels[method],
                                                   Legends[method],
@@ -1706,7 +1705,7 @@ def plot_sig_grid(Nr,
                                                    1)
                                 plot_vel_axis(ax_sig[3*i+2, M*j+k],
                                               t,
-                                              S[:, idx],
+                                              Shat[method][:, idx],
                                               V[method][:, idx],
                                               Labels[method],
                                               Legends[method],
