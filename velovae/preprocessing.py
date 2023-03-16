@@ -263,6 +263,20 @@ def preprocess(adata,
         normalize_per_cell(adata)
         log1p(adata)
 
+    # second round of gene filter in case genes in genes_retain don't fulfill
+    # minimal count requirement
+    if genes_retain is not None:
+        filter_genes(adata,
+                     min_counts=min_counts_s,
+                     min_cells=min_cells_s,
+                     max_counts=max_counts_s,
+                     max_cells=max_cells_s,
+                     min_counts_u=min_counts_u,
+                     min_cells_u=min_cells_u,
+                     max_counts_u=max_counts_u,
+                     max_cells_u=max_cells_u,
+                     retain_genes=genes_retain)
+
     # 2. KNN Averaging
     # remove_duplicate_cells(adata)
     moments(adata, n_pcs=npc, n_neighbors=n_neighbors)
