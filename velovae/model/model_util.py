@@ -70,12 +70,12 @@ End of Reference
 ############################################################
 
 
-def hist_equal(t, Tmax, perc=0.95, Nbin=101):
+def hist_equal(t, tmax, perc=0.95, n_bin=101):
     # Perform histogram equalization across all local times.
     t_ub = np.quantile(t, perc)
     t_lb = t.min()
-    delta_t = (t_ub - t_lb)/(Nbin-1)
-    bins = [t_lb+i*delta_t for i in range(Nbin)]+[t.max()]
+    delta_t = (t_ub - t_lb)/(n_bin-1)
+    bins = [t_lb+i*delta_t for i in range(n_bin)]+[t.max()]
     pdf_t, edges = np.histogram(t, bins, density=True)
     pt, edges = np.histogram(t, bins, density=False)
 
@@ -83,9 +83,9 @@ def hist_equal(t, Tmax, perc=0.95, Nbin=101):
     cdf_t = np.concatenate(([0], np.cumsum(pt)))
     cdf_t = cdf_t/cdf_t[-1]
     t_out = np.zeros((len(t)))
-    for i in range(Nbin):
+    for i in range(n_bin):
         mask = (t >= bins[i]) & (t < bins[i+1])
-        t_out[mask] = (cdf_t[i] + (t[mask]-bins[i])*pdf_t[i])*Tmax
+        t_out[mask] = (cdf_t[i] + (t[mask]-bins[i])*pdf_t[i])*tmax
     return t_out
 
 ############################################################
@@ -549,7 +549,7 @@ def get_ts_global(tgl, U, S, perc):
     return tsgl
 
 
-def reinit_gene(u, s, t, ts, eps=1e-6):
+def reinit_gene(u, s, t, ts, eps=1e-6, max_val=1e4):
     # Applied to the regular ODE
     # Initialize the ODE parameters (alpha,beta,gamma,t_on) from
     # input data and estimated global cell time.
@@ -587,6 +587,7 @@ def reinit_gene(u, s, t, ts, eps=1e-6):
         t0 = 0
     beta = 1
     alpha = u1/(1-np.exp(t0-t1)) if u1 > 0 else 0.1*np.random.rand()
+    alpha = np.clip(alpha, None, max_val)
     if alpha <= 0 or np.isnan(alpha) or np.isinf(alpha):
         alpha = u1
     p = 0.95
@@ -597,6 +598,7 @@ def reinit_gene(u, s, t, ts, eps=1e-6):
     gamma = alpha/np.clip(s_inf, a_min=eps, a_max=None)
     if gamma <= 0 or np.isnan(gamma) or np.isinf(gamma):
         gamma = 2.0
+    gamma = np.clip(gamma, None, max_val)
     return alpha, beta, gamma, t0
 
 
@@ -610,6 +612,8 @@ def reinit_params(U, S, t, ts):
         beta[i] = beta_g
         gamma[i] = gamma_g
         ton[i] = ton_g
+    assert not np.any(np.isnan(alpha))
+    assert not np.any(np.isnan(gamma))
     return alpha, beta, gamma, ton
 
 
@@ -1098,6 +1102,27 @@ Geoffrey Schiebinger, Jian Shu, Marcin Tabaka, Brian Cleary, Vidya Subramanian,
 ############################################################
 #  KNN-Related Functions
 ############################################################
+def _hist_equal(t, t_query, perc=0.95, n_bin=101):
+    # Perform histogram equalization across all local times.
+    tmax = t.max() - t.min()
+    t_ub = np.quantile(t, perc)
+    t_lb = t.min()
+    delta_t = (t_ub - t_lb)/(n_bin-1)
+    bins = [t_lb+i*delta_t for i in range(n_bin)]+[t.max()]
+    pdf_t, edges = np.histogram(t, bins, density=True)
+    pt, edges = np.histogram(t, bins, density=False)
+
+    # Perform histogram equalization
+    cdf_t = np.concatenate(([0], np.cumsum(pt)))
+    cdf_t = cdf_t/cdf_t[-1]
+    t_out = np.zeros((len(t)))
+    t_out_query = np.zeros((len(t_query)))
+    for i in range(n_bin):
+        mask = (t >= bins[i]) & (t < bins[i+1])
+        t_out[mask] = (cdf_t[i] + (t[mask]-bins[i])*pdf_t[i])*tmax
+        mask_q = (t_query >= bins[i]) & (t_query < bins[i+1])
+        t_out_query[mask_q] = (cdf_t[i] + (t_query[mask_q]-bins[i])*pdf_t[i])*tmax
+    return t_out, t_out_query
 
 
 def knnx0(U, S,
@@ -1111,7 +1136,8 @@ def knnx0(U, S,
           s0_init=None,
           adaptive=0.0,
           std_t=None,
-          forward=False):
+          forward=False,
+          hist_eq=False):
     ############################################################
     # Given cell time and state, find KNN for each cell in a time window ahead of
     # it. The KNNs are used to compute the initial condition for the ODE of
@@ -1136,6 +1162,10 @@ def knnx0(U, S,
     #         Posterior standard deviation of cell time
     # 11.     forward [bool]
     #         Whether to look for ancestors or descendants
+    # 12.     hist_eq [bool]
+    #         Whether to perform histogram equalization to time.
+    #         The purpose is to preserve more resolution in 
+    #         densely populated time intervals.
     ############################################################
     Nq = len(t_query)
     u0 = (np.zeros((Nq, U.shape[1])) if u0_init is None
@@ -1143,9 +1173,12 @@ def knnx0(U, S,
     s0 = (np.zeros((Nq, S.shape[1])) if s0_init is None
           else np.tile(s0_init, (Nq, 1)))
     t0 = np.ones((Nq))*(t.min() - dt[0])
+    t_knn = t
 
     n1 = 0
     len_avg = 0
+    if hist_eq:
+        t, t_query = _hist_equal(t, t_query)
     t_98 = np.quantile(t, 0.98)
     p = 0.98
     while not np.any(t >= t_98) and p > 0.01:
@@ -1181,7 +1214,7 @@ def knnx0(U, S,
             dist, ind = knn_model.kneighbors(z_query[i:i+1])
             u0[i] = np.mean(U[indices[ind.squeeze()].astype(int)], 0)
             s0[i] = np.mean(S[indices[ind.squeeze()].astype(int)], 0)
-            t0[i] = np.mean(t[indices[ind.squeeze()].astype(int)])
+            t0[i] = np.mean(t_knn[indices[ind.squeeze()].astype(int)])
         else:
             if forward:
                 u0[i] = u_end
