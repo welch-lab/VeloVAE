@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.stats import spearmanr, poisson
+from scipy.stats import spearmanr, poisson, norm
 from scipy.special import loggamma
 from sklearn.metrics.pairwise import pairwise_distances
 from ..model.model_util import pred_su_numpy, ode_numpy, ode_br_numpy, scv_pred, scv_pred_single
@@ -856,6 +856,8 @@ def cross_boundary_correctness(
     #        return aggregated or raw scores.
     #    x_emb (str):
     #        key to x embedding for visualization.
+    #   gene_mask (numpy array):
+    #       Boolean array to filter out non-velocity genes
     # Returns:
     #    dict:
     #        all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
@@ -904,6 +906,128 @@ def cross_boundary_correctness(
         return all_scores
 
     return scores, np.mean([sc for sc in scores.values()])
+
+
+def _combine_scores(scores, cell_types):
+    scores_combined = {}
+    for i in range(len(cell_types)):
+        u = cell_types[i]
+        for j in range(i):
+            v = cell_types[j]
+            if not (u, v) in scores:
+                continue
+            if scores[(u, v)] > scores[(v, u)]:
+                scores_combined[(u, v)] = scores[(u, v)]
+            else:
+                scores_combined[(v, u)] = scores[(v, u)]
+    return scores_combined
+
+
+def calibrated_cross_boundary_correctness(
+    adata,
+    k_cluster,
+    k_velocity,
+    k_time,
+    cluster_edges=None,
+    return_raw=False,
+    x_emb="X_umap",
+    gene_mask=None,
+    k_std_t=None,
+):
+    # Calibrated Cross-Boundary Direction Correctness Score (A->B)
+    # Args:
+    #    adata (Anndata):
+    #        Anndata object.
+    #    k_cluster (str):
+    #        key to the cluster column in adata.obs DataFrame.
+    #    k_velocity (str):
+    #        key to the velocity matrix in adata.obsm.
+    #    k_time (str):
+    #       key to the cell time in adata.obs
+    #    cluster_edges (list of tuples("A", "B")):
+    #        pairs of clusters has transition direction A->B
+    #    return_raw (bool):
+    #        return aggregated or raw scores.
+    #    x_emb (str):
+    #        key to x embedding for visualization.
+    #   gene_mask (numpy array):
+    #       Boolean array to filter out non-velocity genes
+    # Returns:
+    #    dict:
+    #        all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
+    #    float:
+    #        averaged score over all cells.
+    #    dict:
+    #        time score := proportion of cells with correct time order in a cell type transition
+    #    float:
+    #        averaged time score
+
+    scores = {}
+    all_scores = {}
+    p_fw = {}
+
+    eval_all = cluster_edges is None
+    cell_types = np.unique(adata.obs[k_cluster].to_numpy())
+    if eval_all:
+        cluster_edges = [(u, v) for v in cell_types for u in cell_types]
+    x_emb_name = x_emb
+    if x_emb in adata.obsm:
+        x_emb = adata.obsm[x_emb]
+        if x_emb_name == "X_umap":
+            v_emb = adata.obsm['{}_umap'.format(k_velocity)]
+        else:
+            v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(k_velocity)][0]]
+    else:
+        x_emb = adata.layers[x_emb]
+        v_emb = adata.layers[k_velocity]
+        if gene_mask is None:
+            gene_mask = ~np.isnan(v_emb[0])
+        x_emb = x_emb[:, gene_mask]
+        v_emb = v_emb[:, gene_mask]
+    t = adata.obs[k_time].to_numpy()
+    std_t = None if k_std_t is None else adata.obs[k_std_t].to_numpy()
+
+    for u, v in cluster_edges:
+        n1, n2 = 0, 0
+        sel = adata.obs[k_cluster] == u
+        nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
+        boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
+
+        x_points = x_emb[sel]
+        x_velocities = v_emb[sel]
+
+        type_score = []
+        sel_indices = np.array(range(adata.n_obs))[sel]
+        for x_pos, x_vel, nodes, idx in zip(x_points, x_velocities, boundary_nodes, sel_indices):
+            if len(nodes) == 0:
+                continue
+            if std_t is None:
+                p1 = t[nodes] >= t[idx]
+                p2 = 1 - p1
+            else:
+                p1 = norm.cdf(np.zeros((len(nodes))),
+                              loc=t[idx]-t[nodes],
+                              scale=np.sqrt(std_t[nodes]**2+std_t[idx]**2))
+                p2 = 1 - p1
+            n1 += np.sum(p1)
+            n2 += np.sum(p2)
+
+            position_dif = x_emb[nodes] - x_pos
+            dir_scores = cosine_similarity(position_dif, x_vel.reshape(1, -1)).flatten()
+            type_score.extend(dir_scores*p1+(-dir_scores)*p2)
+
+        if len(type_score) == 0:
+            print(f'Warning: cell type transition pair ({u},{v}) does not exist in the KNN graph. Ignored.')
+            pass
+        else:
+            scores[(u, v)] = np.nanmean(type_score)
+            all_scores[(u, v)] = type_score
+            p_fw[(u, v)] = n1 / (n1 + n2)
+
+    if return_raw:
+        return all_scores
+    scores_combined = _combine_scores(scores, cell_types) if eval_all else scores
+    return scores, np.mean([sc for sc in scores_combined.values()]), p_fw, np.mean([p for p in p_fw.values()])
 
 
 def inner_cluster_coh(adata, k_cluster, k_velocity, return_raw=False):
