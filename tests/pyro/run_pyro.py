@@ -11,7 +11,8 @@ import os
 import argparse
 import time
 import matplotlib.pyplot as plt
-
+import torch
+print(torch.__version__)
 parser = argparse.ArgumentParser('hyperparam')
 parser.add_argument('-i', '--input', type=str, default=None)
 parser.add_argument('-o', '--out_folder', type=str, default="dvae")

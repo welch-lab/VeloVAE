@@ -1,7 +1,7 @@
+import unitvelo as utv
 import anndata
 import scvelo as scv
 import numpy as np
-import unitvelo as utv
 import os
 import argparse
 import time
