@@ -38,26 +38,25 @@ class encoder(nn.Module):
                  dim_cond=0,
                  N1=500,
                  N2=250,
-                 device=torch.device('cpu'),
                  checkpoint=None):
         super(encoder, self).__init__()
-        self.fc1 = nn.Linear(Cin, N1).to(device)
-        self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
-        self.dpt1 = nn.Dropout(p=0.2).to(device)
-        self.fc2 = nn.Linear(N1, N2).to(device)
-        self.bn2 = nn.BatchNorm1d(num_features=N2).to(device)
-        self.dpt2 = nn.Dropout(p=0.2).to(device)
+        self.fc1 = nn.Linear(Cin, N1)
+        self.bn1 = nn.BatchNorm1d(num_features=N1)
+        self.dpt1 = nn.Dropout(p=0.2)
+        self.fc2 = nn.Linear(N1, N2)
+        self.bn2 = nn.BatchNorm1d(num_features=N2)
+        self.dpt2 = nn.Dropout(p=0.2)
 
         self.net = nn.Sequential(self.fc1, self.bn1, nn.LeakyReLU(), self.dpt1,
                                  self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2,
                                  )
 
-        self.fc_mu_t = nn.Linear(N2+dim_cond, 1).to(device)
+        self.fc_mu_t = nn.Linear(N2+dim_cond, 1)
         self.spt1 = nn.Softplus()
-        self.fc_std_t = nn.Linear(N2+dim_cond, 1).to(device)
+        self.fc_std_t = nn.Linear(N2+dim_cond, 1)
         self.spt2 = nn.Softplus()
-        self.fc_mu_z = nn.Linear(N2+dim_cond, dim_z).to(device)
-        self.fc_std_z = nn.Linear(N2+dim_cond, dim_z).to(device)
+        self.fc_mu_z = nn.Linear(N2+dim_cond, dim_z)
+        self.fc_std_z = nn.Linear(N2+dim_cond, dim_z)
         self.spt3 = nn.Softplus()
 
         if checkpoint is not None:
@@ -621,8 +620,7 @@ class VAE(VanillaVAE):
                                    dim_cond,
                                    hidden_size[0],
                                    hidden_size[1],
-                                   self.device,
-                                   checkpoint=checkpoints[0]).float()
+                                   checkpoint=checkpoints[0]).float().to(self.device)
         except IndexError:
             print('Please provide two dimensions!')
 
@@ -1928,3 +1926,73 @@ class VAE(VanillaVAE):
 
         if file_name is not None:
             adata.write_h5ad(f"{file_path}/{file_name}")
+
+
+##############################################################
+# Pseudo Graph VAE (Message Passing)
+##############################################################
+class gcn_encoder(nn.Module):
+    """Encoder class for the GVAE model
+    """
+    def __init__(self,
+                 Cin,
+                 dim_z,
+                 dim_cond=0,
+                 N1=500,
+                 N2=250,
+                 checkpoint=None):
+        super(encoder, self).__init__()
+        self.lin_1 = nn.Linear(Cin, N1, bias=False)
+        self.bias_1 = nn.Parameter(torch.zeros(N1))
+
+        self.lin_mu_t = nn.Linear(N1+dim_cond, N2, bias=False)
+        self.bias_mu_t = nn.Parameter(torch.zeros(N2))
+        self.fc_mu_t = nn.Linear(N2, 1)
+        self.spt1 = nn.Softplus()
+
+        self.lin_std_t = nn.Linear(N1+dim_cond, N2, bias=False)
+        self.bias_std_t = nn.Parameter(torch.zeros(N2))
+        self.fc_std_t = nn.Linear(N2, 1)
+        self.spt2 = nn.Softplus()
+
+        self.lin_mu_z = nn.Linear(N1+dim_cond, N2, bias=False)
+        self.bias_mu_z = nn.Parameter(torch.zeros(N2))
+        self.fc_mu_z = nn.Linear(N2, dim_z)
+
+        self.lin_std_z = nn.Linear(N1+dim_cond, N2, bias=False)
+        self.bias_std_z = nn.Parameter(torch.zeros(N2))
+        self.fc_std_z = nn.Linear(N2, dim_z)
+        self.spt3 = nn.Softplus()
+
+        if checkpoint is not None:
+            self.load_state_dict(torch.load(checkpoint, map_location=device))
+        else:
+            self.init_weights()
+
+    def init_weights(self):
+        for m in [self.lin_1,
+                  self.lin_mu_t,
+                  self.lin_mu_z,
+                  self.lin_std_t,
+                  self.lin_std_z]:
+            nn.init.xavier_uniform_(m.weight)
+        for m in [self.fc_mu_t,
+                  self.fc_std_t,
+                  self.fc_mu_z,
+                  self.fc_std_z]:
+            nn.init.xavier_uniform_(m.weight)
+            nn.init.constant_(m.bias, 0)
+
+    def forward(self, data_in, condition=None):
+        # x_neighbors: N x N neighbors x G
+        h = self.lin_1(data_in).mean(1) + self.bias_1
+        if condition is not None:
+            h = torch.cat((h, condition), 1)
+        h_mu_t = self.lin_mu_t(h).mean(1) + self.bias_mu_t
+        h_std_t = self.lin_std_t(h).mean(1) + self.bias_std_t
+        h_mu_z = self.lin_mu_z(h).mean(1) + self.bias_mu_z
+        h_std_z = self.lin_std_z.mean(1) + self.bias_std_z
+        mu_tx, std_tx = self.spt1(self.fc_mu_t(h_mu_t)), self.spt2(self.fc_std_t(h_std_t))
+        mu_zx, std_zx = self.fc_mu_z(h_mu_z), self.spt3(self.fc_std_z(h_std_z))
+        return mu_tx, std_tx, mu_zx, std_zx
+
