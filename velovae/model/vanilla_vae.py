@@ -316,7 +316,7 @@ class VanillaVAE():
             self.encoder = encoder(2*G, hidden_size[0], hidden_size[1], self.device, checkpoint=checkpoints).float()
         except IndexError:
             print('Please provide two dimensions!')
-        self.tmax = torch.tensor(tmax).to(self.device)
+        self.tmax = torch.tensor(tmax, device=self.device)
         self.time_distribution = time_distribution
         # Time prior
         self.get_prior(adata, time_distribution, tmax, tprior)
@@ -344,9 +344,9 @@ class VanillaVAE():
             self.kl_time = kl_gaussian
             self.sample = self.reparameterize
             if tprior is None:
-                self.p_t = torch.stack([torch.ones(adata.n_obs, 1)*tmax*0.5,
-                                        torch.ones(adata.n_obs, 1)*tmax*self.config["time_overlap"]])\
-                                            .float().to(self.device)
+                self.p_t = torch.stack([torch.ones(adata.n_obs, 1, device=self.device)*tmax*0.5,
+                                        torch.ones(adata.n_obs, 1, device=self.device)*tmax
+                                        * self.config["time_overlap"]]).float()
             else:
                 print('Using informative time prior.')
                 t = adata.obs[tprior].to_numpy()
@@ -358,15 +358,15 @@ class VanillaVAE():
                     std_t[t == t_cap[i]] = 0.5*(t_cap[i] - t_cap[i-1])*(0.5+0.5*self.config["time_overlap"]) \
                         + 0.5*(t_cap[i+1] - t_cap[i])*(0.5+0.5*self.config["time_overlap"])
                 std_t[t == t_cap[-1]] = (t_cap[-1] - t_cap[-2])*(0.5+0.5*self.config["time_overlap"])
-                self.p_t = torch.stack([torch.tensor(t).view(-1, 1), torch.tensor(std_t).view(-1, 1)])\
-                    .float().to(self.device)
+                self.p_t = torch.stack([torch.tensor(t, device=self.device).view(-1, 1),
+                                        torch.tensor(std_t, device=self.device).view(-1, 1)]).float()
         else:
             print("Tailed Uniform Prior.")
             self.kl_time = kl_uniform
             self.sample = self.reparameterize_uniform
             if tprior is None:
-                self.p_t = torch.stack([torch.zeros(adata.n_obs, 1), torch.ones(adata.n_obs, 1)*tmax])\
-                    .float().to(self.device)
+                self.p_t = torch.stack([torch.zeros(adata.n_obs, 1, device=self.device),
+                                        torch.ones(adata.n_obs, 1, device=self.device)*tmax]).float()
             else:
                 print('Using informative time prior.')
                 t = adata.obs[tprior].to_numpy()
@@ -383,8 +383,8 @@ class VanillaVAE():
                                                  * (0.5+0.5*self.config["time_overlap"]))
                 t_start[t == t_cap[0]] = max(0, t_cap[0] - (t_cap[1] - t_cap[0]) *
                                              (0.5+0.5*self.config["time_overlap"]))
-                self.p_t = torch.stack([torch.tensor(t).unsqueeze(-1),
-                                        torch.tensor(t_end).unsqueeze(-1)]).float().to(self.device)
+                self.p_t = torch.stack([torch.tensor(t, device=self.device).unsqueeze(-1),
+                                        torch.tensor(t_end, device=self.device).unsqueeze(-1)]).float()
 
     def set_device(self, device):
         """Set the device of the model.
@@ -400,13 +400,14 @@ class VanillaVAE():
 
     def reparameterize(self, mu, std):
         # Apply the reparameterization trick for Gaussian random variables.
-        eps = torch.normal(mean=torch.zeros(mu.shape), std=torch.ones(mu.shape)).to(self.device)
+        eps = torch.normal(mean=torch.zeros(mu.shape, device=self.device),
+                           std=torch.ones(mu.shape, device=self.device))
         return std*eps+mu
 
     def reparameterize_uniform(self, mu, std):
         # Apply the reparameterization trick for uniform random variables.
 
-        eps = torch.rand(mu.shape).to(self.device)
+        eps = torch.rand(mu.shape, device=self.device)
         return np.sqrt(12)*std*eps + (mu - np.sqrt(3)*std)
 
     def forward(self, data_in):
@@ -599,7 +600,10 @@ class VanillaVAE():
         test_set = None
         if len(self.test_idx) > 0:
             test_set = SCData(X[self.test_idx], cell_labels_raw[self.test_idx])
-        data_loader = DataLoader(train_set, batch_size=self.config["batch_size"], shuffle=True)
+        data_loader = DataLoader(train_set,
+                                 batch_size=self.config["batch_size"],
+                                 shuffle=True,
+                                 pin_memory=True)
         # Automatically set test iteration if not given
         if self.config["test_iter"] is None:
             self.config["test_iter"] = len(self.train_idx)//self.config["batch_size"]*2
@@ -713,7 +717,7 @@ class VanillaVAE():
             B = min(N//10, 1000)
             Nb = N // B
             for i in range(Nb):
-                data_in = torch.tensor(data[i*B:(i+1)*B]).float().to(self.device)
+                data_in = torch.tensor(data[i*B:(i+1)*B], device=self.device).float()
                 mu_tx, std_tx, uhat, shat = self.eval_model(data_in)
                 if mode == "test":
                     p_t = self.p_t[:, self.test_idx[i*B:(i+1)*B], :]
@@ -730,14 +734,14 @@ class VanillaVAE():
                                      1.0)
                 elbo = elbo-loss*B
                 if "uhat" in output and gene_idx is not None:
-                    Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].cpu().numpy()
+                    Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].detach().cpu().numpy()
                 if "shat" in output and gene_idx is not None:
-                    Shat[i*B:(i+1)*B] = shat[:, gene_idx].cpu().numpy()
+                    Shat[i*B:(i+1)*B] = shat[:, gene_idx].detach().cpu().numpy()
                 if "t" in output:
-                    t_out[i*B:(i+1)*B] = mu_tx.cpu().squeeze().numpy()
-                    std_t_out[i*B:(i+1)*B] = std_tx.cpu().squeeze().numpy()
+                    t_out[i*B:(i+1)*B] = mu_tx.detach().cpu().squeeze().numpy()
+                    std_t_out[i*B:(i+1)*B] = std_tx.detach().cpu().squeeze().numpy()
             if N > B*Nb:
-                data_in = torch.tensor(data[B*Nb:]).float().to(self.device)
+                data_in = torch.tensor(data[B*Nb:], device=self.device).float()
                 mu_tx, std_tx, uhat, shat = self.eval_model(data_in)
                 if mode == "test":
                     p_t = self.p_t[:, self.test_idx[B*Nb:], :]
@@ -756,12 +760,12 @@ class VanillaVAE():
                                      1.0)
                 elbo = elbo-loss*(N-B*Nb)
                 if "uhat" in output and gene_idx is not None:
-                    Uhat[Nb*B:] = uhat[:, gene_idx].cpu().numpy()
+                    Uhat[Nb*B:] = uhat[:, gene_idx].detach().cpu().numpy()
                 if "shat" in output and gene_idx is not None:
-                    Shat[Nb*B:] = shat[:, gene_idx].cpu().numpy()
+                    Shat[Nb*B:] = shat[:, gene_idx].detach().cpu().numpy()
                 if "t" in output:
-                    t_out[Nb*B:] = mu_tx.cpu().squeeze().numpy()
-                    std_t_out[Nb*B:] = std_tx.cpu().squeeze().numpy()
+                    t_out[Nb*B:] = mu_tx.detach().cpu().squeeze().numpy()
+                    std_t_out[Nb*B:] = std_tx.detach().cpu().squeeze().numpy()
         out = []
         if "uhat" in output:
             out.append(Uhat)
@@ -770,7 +774,7 @@ class VanillaVAE():
         if "t" in output:
             out.append(t_out)
             out.append(std_t_out)
-        return out, elbo.cpu().item()/N
+        return out, elbo.detach().cpu().item()/N
 
     def test(self,
              test_set,
@@ -1149,11 +1153,11 @@ class CycleVAE(VanillaVAE):
         except IndexError:
             print('Please provide two dimensions!')
 
-        self.tmax = torch.tensor(tmax).to(self.device)
+        self.tmax = torch.tensor(tmax, device=self.device)
         self.angle_distribution = angle_distribution
         # Angle prior
-        self.p_theta = torch.stack([torch.ones(adata.shape[0], 1)*(np.pi),
-                                    torch.ones(adata.shape[0], 1)*(np.pi*2)]).float().to(self.device)
+        self.p_theta = torch.stack([torch.ones(adata.shape[0], 1, device=self.device)*(np.pi),
+                                    torch.ones(adata.shape[0], 1, device=self.device)*(np.pi*2)]).float()
         if angle_distribution == 'uniform':
             self.kl_time = kl_uniform
         else:
@@ -1265,13 +1269,13 @@ class CycleVAE(VanillaVAE):
                                      1.0)
                 elbo = elbo-loss*B
                 if "uhat" in output and gene_idx is not None:
-                    Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].cpu().numpy()
+                    Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].detach().cpu().numpy()
                 if "shat" in output and gene_idx is not None:
-                    Shat[i*B:(i+1)*B] = shat[:, gene_idx].cpu().numpy()
+                    Shat[i*B:(i+1)*B] = shat[:, gene_idx].detach().cpu().numpy()
                 if "theta" in output:
-                    theta_out[i*B:(i+1)*B] = mu_thetax.cpu().squeeze().numpy()
-                    std_theta_out[i*B:(i+1)*B] = std_thetax.cpu().squeeze().numpy()
-                    t_out[i*B:(i+1)*B] = t.cpu().squeeze().numpy()
+                    theta_out[i*B:(i+1)*B] = mu_thetax.detach().cpu().squeeze().numpy()
+                    std_theta_out[i*B:(i+1)*B] = std_thetax.detach().cpu().squeeze().numpy()
+                    t_out[i*B:(i+1)*B] = t.detach().cpu().squeeze().numpy()
             if N > B*Nb:
                 data_in = torch.tensor(data[B*Nb:]).float().to(self.device)
                 mu_thetax, std_thetax, uhat, shat, t = self.eval_model(data_in)
@@ -1290,13 +1294,13 @@ class CycleVAE(VanillaVAE):
                                      1.0)
                 elbo = elbo-loss*(N-B*Nb)
                 if "uhat" in output and gene_idx is not None:
-                    Uhat[Nb*B:] = uhat[:, gene_idx].cpu().numpy()
+                    Uhat[Nb*B:] = uhat[:, gene_idx].detach().cpu().numpy()
                 if "shat" in output and gene_idx is not None:
-                    Shat[Nb*B:] = shat[:, gene_idx].cpu().numpy()
+                    Shat[Nb*B:] = shat[:, gene_idx].detach().cpu().numpy()
                 if "theta" in output:
-                    theta_out[Nb*B:] = mu_thetax.cpu().squeeze().numpy()
-                    std_theta_out[Nb*B:] = std_thetax.cpu().squeeze().numpy()
-                    t_out[Nb*B:] = t.cpu().squeeze().numpy()
+                    theta_out[Nb*B:] = mu_thetax.detach().cpu().squeeze().numpy()
+                    std_theta_out[Nb*B:] = std_thetax.detach().cpu().squeeze().numpy()
+                    t_out[Nb*B:] = t.detach().cpu().squeeze().numpy()
         out = []
         if "uhat" in output:
             out.append(Uhat)
@@ -1306,7 +1310,7 @@ class CycleVAE(VanillaVAE):
             out.append(theta_out)
             out.append(std_theta_out)
             out.append(t_out)
-        return out, elbo.cpu().item()/N
+        return out, elbo.detach().cpu().item()/N
 
     def test(self,
              test_set,
