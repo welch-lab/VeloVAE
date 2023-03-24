@@ -1226,13 +1226,25 @@ def knnx0(U, S,
     return u0, s0, t0
 
 
-def knnx0_index(U, S, t, z, t_query, z_query, dt, k, adaptive=0.0, std_t=None, forward=False):
+def knnx0_index(U,
+                S,
+                t,
+                z,
+                t_query,
+                z_query,
+                dt,
+                k,
+                adaptive=0.0,
+                std_t=None,
+                forward=False,
+                hist_eq=False):
     ############################################################
     # Same functionality as knnx0, but returns the neighbor index
     ############################################################
     Nq = len(t_query)
     neighbor_index = []
-
+    if hist_eq:
+        t, t_query = _hist_equal(t, t_query)
     n1 = 0
     len_avg = 0
     for i in tqdm(range(Nq)):

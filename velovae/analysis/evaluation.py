@@ -9,7 +9,7 @@ from scipy.stats import spearmanr
 
 def get_n_cpu(n_cell):
     # used for scVelo parallel jobs
-    return int(min(cpu_count(), max(1, n_cell/3000)))
+    return int(min(cpu_count(), max(1, n_cell/2000)))
 
 
 def get_metric(adata,
@@ -475,7 +475,8 @@ def post_analysis(adata,
                                           vkey=vkey,
                                           title="",
                                           palette=colors,
-                                          legend_fontsize=15,
+                                          legend_fontsize=np.clip(15 - np.clip(len(colors)-10, 0, None), 8, None),
+                                          legend_loc='on data' if len(colors) <= 10 else 'right margin',
                                           dpi=150,
                                           show=False,
                                           save=f'{save_path}/{test_id}_{keys[i]}_stream.png')

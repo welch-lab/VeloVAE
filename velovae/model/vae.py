@@ -11,7 +11,7 @@ import time
 from velovae.plotting import plot_sig, plot_sig_, plot_time, plot_vel
 from velovae.plotting import plot_train_loss, plot_test_loss
 
-from .model_util import hist_equal, init_params, get_ts_global, reinit_params
+from .model_util import hist_equal, init_params, init_params_raw, get_ts_global, reinit_params
 from .model_util import convert_time, get_gene_index
 from .model_util import pred_su, ode_numpy, knnx0, knnx0_bin
 from .model_util import elbo_collapsed_categorical
@@ -124,33 +124,57 @@ class decoder(nn.Module):
                 lu, ls = get_cell_scale(U, S, train_idx, True, 50)
                 adata.obs["library_scale_u"] = lu
                 adata.obs["library_scale_s"] = ls
-                del U
-                del S
-            U, S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
-            X = np.concatenate((U, S), 1)
-            # Dynamical Model Parameters
-            (alpha, beta, gamma,
-             scaling,
-             toff,
-             u0, s0,
-             sigma_u, sigma_s,
-             T,
-             gene_score) = init_params(X, p, fit_scaling=True)
-            gene_mask = (gene_score == 1.0)
-            if filter_gene:
-                adata._inplace_subset_var(gene_mask)
-                U, S = U[:, gene_mask], S[:, gene_mask]
-                G = adata.n_vars
-                alpha = alpha[gene_mask]
-                beta = beta[gene_mask]
-                gamma = gamma[gene_mask]
-                scaling = scaling[gene_mask]
-                toff = toff[gene_mask]
-                u0 = u0[gene_mask]
-                s0 = s0[gene_mask]
-                sigma_u = sigma_u[gene_mask]
-                sigma_s = sigma_s[gene_mask]
-                T = T[:, gene_mask]
+                init_fn = init_params_raw
+                """
+                U, S = U[train_idx], S[train_idx]
+                noise = np.exp(np.random.normal(size=(len(train_idx), 2*G))*1e-3)
+                X = np.concatenate((U, S), 1) + noise
+                # Dynamical Model Parameters
+                (alpha, beta, gamma,
+                 scaling,
+                 toff,
+                 u0, s0,
+                 T) = init_fn(X, p, fit_scaling=True)
+                """
+                U, S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
+                init_fn = init_params
+                X = np.concatenate((U, S), 1)
+                # Dynamical Model Parameters
+                (alpha, beta, gamma,
+                 scaling,
+                 toff,
+                 u0, s0,
+                 sigma_u, sigma_s,
+                 T,
+                 gene_score) = init_fn(X, p, fit_scaling=True)
+                gene_mask = (gene_score == 1.0)
+            else:
+                U, S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
+                init_fn = init_params
+                X = np.concatenate((U, S), 1)
+                # Dynamical Model Parameters
+                (alpha, beta, gamma,
+                 scaling,
+                 toff,
+                 u0, s0,
+                 sigma_u, sigma_s,
+                 T,
+                 gene_score) = init_fn(X, p, fit_scaling=True)
+                gene_mask = (gene_score == 1.0)
+                if filter_gene:
+                    adata._inplace_subset_var(gene_mask)
+                    U, S = U[:, gene_mask], S[:, gene_mask]
+                    G = adata.n_vars
+                    alpha = alpha[gene_mask]
+                    beta = beta[gene_mask]
+                    gamma = gamma[gene_mask]
+                    scaling = scaling[gene_mask]
+                    toff = toff[gene_mask]
+                    u0 = u0[gene_mask]
+                    s0 = s0[gene_mask]
+                    sigma_u = sigma_u[gene_mask]
+                    sigma_s = sigma_s[gene_mask]
+                    T = T[:, gene_mask]
             # Gene dyncamical mode initialization
             dyn_mask = (T > tmax*0.01) & (np.abs(T-toff) > tmax*0.01)
             w = np.sum(((T < toff) & dyn_mask), 0) / (np.sum(dyn_mask, 0) + 1e-10)
@@ -178,10 +202,11 @@ class decoder(nn.Module):
                 self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
                 self.toff = torch.nn.Parameter(torch.ones(G, device=device).float()*(tmax/2))
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.sigma_u = (nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                                if not discrete else None)
-                self.sigma_s = (nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-                                if not discrete else None)
+                if not discrete:
+                    self.sigma_u = (nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+                                    if not discrete else None)
+                    self.sigma_s = (nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                                    if not discrete else None)
                 self.t_init = None
                 self.logit_pw = nn.Parameter(torch.normal(mean=0, std=torch.ones(G, 2, device=device)).float())
             elif init_method == "tprior":
@@ -203,10 +228,11 @@ class decoder(nn.Module):
                 self.beta = nn.Parameter(torch.tensor(np.log(self.beta_init), device=device).float())
                 self.gamma = nn.Parameter(torch.tensor(np.log(self.gamma_init), device=device).float())
                 self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-                self.sigma_u = (nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                                if not discrete else None)
-                self.sigma_s = (nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-                                if not discrete else None)
+                if not discrete:
+                    self.sigma_u = (nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+                                    if not discrete else None)
+                    self.sigma_s = (nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                                    if not discrete else None)
                 self.ton = (nn.Parameter((torch.ones(G, device=device)*(-10)).float())
                             if init_ton_zero else
                             nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float()))
@@ -240,10 +266,11 @@ class decoder(nn.Module):
                             if init_ton_zero else
                             nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float()))
                 self.toff = nn.Parameter(torch.tensor(np.log(self.toff_init+1e-10), device=device).float())
-                self.sigma_u = (nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-                                if not discrete else None)
-                self.sigma_s = (nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
-                                if not discrete else None)
+                if not discrete:
+                    self.sigma_u = (nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
+                                    if not discrete else None)
+                    self.sigma_s = (nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
+                                    if not discrete else None)
                 self.logit_pw = nn.Parameter(torch.tensor(logit_pw, device=device).float())
         # Add variance in case of full vb
         if full_vb:
@@ -314,8 +341,9 @@ class decoder(nn.Module):
             self.gamma = nn.Parameter(torch.empty(G, device=device).float())
             self.scaling = nn.Parameter(torch.empty(G, device=device).float())
             self.ton = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_u = nn.Parameter(torch.empty(G, device=device).float())
-            self.sigma_s = nn.Parameter(torch.empty(G, device=device).float())
+            if not discrete:
+                self.sigma_u = nn.Parameter(torch.empty(G, device=device).float())
+                self.sigma_s = nn.Parameter(torch.empty(G, device=device).float())
 
             self.load_state_dict(torch.load(checkpoint, map_location=device))
         else:
@@ -1203,6 +1231,16 @@ class VAE(VanillaVAE):
             self.s1 = s1
             self.t1 = t1.reshape(-1, 1)
 
+    def _set_lr(self, p):
+        if self.is_discrete:
+            self.config["learning_rate"] = 10**(-8.3*p-2.25)
+            self.config["learning_rate_post"] = self.config["learning_rate"]
+            self.config["learning_rate_ode"] = 5*self.config["learning_rate"]
+        else:
+            self.config["learning_rate"] = 10**(-4*p-3)
+            self.config["learning_rate_post"] = self.config["learning_rate"]
+            self.config["learning_rate_ode"] = 8*self.config["learning_rate"]
+
     def train(self,
               adata,
               config={},
@@ -1237,13 +1275,7 @@ class VAE(VanillaVAE):
         if self.config["learning_rate"] is None:
             p = (np.sum(adata.layers["unspliced"].A > 0)
                  + (np.sum(adata.layers["spliced"].A > 0)))/adata.n_obs/adata.n_vars/2
-            # self.config["learning_rate"] = 10**(-8.3*p-2.25)
-            self.config["learning_rate"] = 10**(-4*p-3)
-            self.config["learning_rate_post"] = self.config["learning_rate"]
-            self.config["learning_rate_ode"] = 8*self.config["learning_rate"]
-            if self.is_discrete:
-                self.config["learning_rate"] = self.config["learning_rate"] * 2
-                self.config["learning_rate_post"] = self.config["learning_rate"] * 2
+            self._set_lr(p)
             print(f'Learning Rate based on Data Sparsity: {self.config["learning_rate"]:.4f}')
         print("--------------------------- Train a VeloVAE ---------------------------")
         # Get data loader
@@ -1404,8 +1436,8 @@ class VAE(VanillaVAE):
             sigma_s_prev = self.decoder.sigma_s.detach().cpu().numpy()
             u0_prev, s0_prev = None, None
             noise_change = np.inf
-            x0_change = np.inf
-            x0_change_prev = np.inf
+        x0_change = np.inf
+        x0_change_prev = np.inf
         param_post = list(self.decoder.net_rho2.parameters())+list(self.decoder.fc_out2.parameters())
         optimizer_post = torch.optim.Adam(param_post,
                                           lr=self.config["learning_rate_post"],
@@ -1867,8 +1899,9 @@ class VAE(VanillaVAE):
 
         adata.var[f"{key}_ton"] = self.decoder.ton.exp().detach().cpu().numpy()
         adata.var[f"{key}_scaling"] = np.exp(self.decoder.scaling.detach().cpu().numpy())
-        adata.var[f"{key}_sigma_u"] = np.exp(self.decoder.sigma_u.detach().cpu().numpy())
-        adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
+        if not self.is_discrete:
+            adata.var[f"{key}_sigma_u"] = np.exp(self.decoder.sigma_u.detach().cpu().numpy())
+            adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
         if self.is_discrete:
             U, S = np.array(adata.layers['unspliced'].todense()), np.array(adata.layers['spliced'].todense())
         else:

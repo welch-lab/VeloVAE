@@ -131,9 +131,9 @@ class decoder(nn.Module):
             
             if(init_method == "random"):
                 print("Random Initialization.")
-                scaling, scaling_s = get_gene_scale(U,S,None)
+                scaling, scaling_s = get_gene_scale(U, S, None)
                 self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
-                self.beta =  nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
+                self.beta = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
                 self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
                 self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
                 self.t_init = None
