@@ -12,6 +12,68 @@ def get_n_cpu(n_cell):
     return int(min(cpu_count(), max(1, n_cell/2000)))
 
 
+def get_velocity_metric_placeholder(cluster_edges):
+    cbdir_embed = dict.fromkeys(cluster_edges)
+    cbdir = dict.fromkeys(cluster_edges)
+    tscore = dict.fromkeys(cluster_edges)
+    iccoh = dict.fromkeys(cluster_edges)
+    return (iccoh, np.nan,
+            cbdir_embed, np.nan,
+            cbdir, np.nan,
+            tscore, np.nan)
+
+
+def get_velocity_metric(adata,
+                        key,
+                        vkey,
+                        cluster_key,
+                        cluster_edges,
+                        gene_mask=None,
+                        embed='umap',
+                        n_jobs=None):
+    if gene_mask is None:
+        gene_mask = np.ones((adata.n_vars), dtype=bool)
+
+    if cluster_edges is not None:
+        try:
+            from scvelo.tl import velocity_graph, velocity_embedding
+            n_jobs = get_n_cpu(adata.n_obs) if n_jobs is None else n_jobs
+            velocity_graph(adata, vkey=vkey, gene_subset=adata.var_names[gene_mask], n_jobs=n_jobs)
+            velocity_embedding(adata, vkey=vkey, basis=embed)
+        except ImportError:
+            print("Please install scVelo to compute velocity embedding.\n"
+            "Skipping metrics 'Cross-Boundary Direction Correctness' and 'In-Cluster Coherence'.")
+        iccoh, mean_iccoh = inner_cluster_coh(adata, cluster_key, vkey)
+        (cbdir_embed, mean_cbdir_embed,
+         tscore, mean_tscore) = calibrated_cross_boundary_correctness(adata,
+                                                                      cluster_key,
+                                                                      vkey,
+                                                                      f'{key}_time',
+                                                                      cluster_edges,
+                                                                      x_emb=f"X_{embed}")
+        (cbdir, mean_cbdir,
+         tscore, mean_tscore) = calibrated_cross_boundary_correctness(adata,
+                                                                      cluster_key,
+                                                                      vkey,
+                                                                      f'{key}_time',
+                                                                      cluster_edges,
+                                                                      x_emb="Ms",
+                                                                      gene_mask=gene_mask)
+    else:
+        mean_cbdir_embed = np.nan
+        mean_cbdir = np.nan
+        mean_tscore = np.nan
+        mean_iccoh = np.nan
+        cbdir_embed = dict.fromkeys([])
+        cbdir = dict.fromkeys([])
+        tscore = dict.fromkeys([])
+        iccoh = dict.fromkeys([])
+    return (iccoh, mean_iccoh,
+            cbdir_embed, mean_cbdir_embed,
+            cbdir, mean_cbdir,
+            tscore, mean_tscore)
+    
+
 def get_metric(adata,
                method,
                key,
@@ -47,7 +109,10 @@ def get_metric(adata,
     """
 
     stats = {}  # contains the performance metrics
-    gene_mask = adata.var[gene_key].to_numpy() if gene_key in adata.var else None
+    if gene_key is not None and gene_key in adata.var:
+        gene_mask = adata.var[gene_key].to_numpy()
+    else:
+        gene_mask = None
 
     if method == 'scVelo':
         (mse_train, mse_test,
@@ -135,44 +200,59 @@ def get_metric(adata,
             stats['corr'] = corr
 
     print("Computing velocity embedding using scVelo")
-    try:
-        from scvelo.tl import velocity_graph, velocity_embedding
-        n_jobs = get_n_cpu(adata.n_obs) if n_jobs is None else n_jobs
-        velocity_graph(adata, vkey=vkey, n_jobs=n_jobs)
-        velocity_embedding(adata, vkey=vkey, basis=embed)
-    except ImportError:
-        print("Please install scVelo to compute velocity embedding.\n"
-              "Skipping metrics 'Cross-Boundary Direction Correctness' and 'In-Cluster Coherence'.")
+    # Compute velocity metrics using a subset of genes defined by gene_mask
+    if gene_mask is not None:
+        (iccoh_sub, mean_iccoh_sub,
+         cbdir_sub_embed, mean_cbdir_sub_embed,
+         cbdir_sub, mean_cbdir_sub,
+         tscore_sub, mean_tscore_sub) = get_velocity_metric(adata,
+                                                            key,
+                                                            vkey,
+                                                            cluster_key,
+                                                            cluster_edges,
+                                                            gene_mask,
+                                                            embed,
+                                                            n_jobs)
+    else:
+        (iccoh_sub, mean_iccoh_sub,
+         cbdir_sub_embed, mean_cbdir_sub_embed,
+         cbdir_sub, mean_cbdir_sub,
+         tscore_sub, mean_tscore_sub) = get_velocity_metric_placeholder(cluster_edges)
+    stats['CBDir (Embed, Subset)'] = mean_cbdir_sub_embed
+    stats['CBDir (Subset)'] = mean_cbdir_sub
+    stats['Time Score (Subset)'] = mean_tscore_sub
+    stats['In-Cluster Coherence (Subset)'] = mean_iccoh_sub
 
-    # Filter extreme values
-    v_embed = adata.obsm[f'{vkey}_{embed}']
-    idx_extreme = np.where(np.any(np.isnan(v_embed), 1))[0]
-    if len(idx_extreme) > 0:
-        v_filt = np.stack([np.nanmean(v_embed[:, 0][adata.uns['neighbors']['indices'][idx_extreme]], 1),
-                           np.nanmean(v_embed[:, 1][adata.uns['neighbors']['indices'][idx_extreme]], 1)]).T
-        if np.any(np.isnan(v_filt)) or np.any(np.isinf(v_filt)):
-            v_filt[np.where(np.isnan(v_filt) or np.isinf(v_filt))[0]] = 0
-        v_embed[idx_extreme] = v_filt
-
-    # Compute velocity metrics
-    if len(cluster_edges) > 0:
-        _, mean_cbdir = cross_boundary_correctness(adata,
-                                                   cluster_key,
-                                                   vkey,
-                                                   cluster_edges,
-                                                   x_emb=f"X_{embed}")
-        stats['Cross-Boundary Direction Correctness (embed)'] = mean_cbdir
-        _, mean_cbdir = cross_boundary_correctness(adata,
-                                                   cluster_key,
-                                                   vkey,
-                                                   cluster_edges,
-                                                   x_emb="Ms",
-                                                   gene_mask=gene_mask)
-        stats['Cross-Boundary Direction Correctness'] = mean_cbdir
-    _, mean_iccoh = inner_cluster_coh(adata, cluster_key, vkey)
+    # Compute velocity metrics on all genes
+    (iccoh, mean_iccoh,
+     cbdir_embed, mean_cbdir_embed,
+     cbdir, mean_cbdir,
+     tscore, mean_tscore) = get_velocity_metric(adata,
+                                                key,
+                                                vkey,
+                                                cluster_key,
+                                                cluster_edges,
+                                                gene_mask,
+                                                embed,
+                                                n_jobs)
+    stats['CBDir (Embed)'] = mean_cbdir_embed
+    stats['CBDir'] = mean_cbdir
+    stats['Time Score'] = mean_tscore
     stats['In-Cluster Coherence'] = mean_iccoh
-
-    return stats
+    stats_type = pd.concat([pd.DataFrame.from_dict(cbdir_sub, orient='index'),
+                            pd.DataFrame.from_dict(cbdir_sub_embed, orient='index'),
+                            pd.DataFrame.from_dict(tscore_sub, orient='index'),
+                            pd.DataFrame.from_dict(cbdir, orient='index'),
+                            pd.DataFrame.from_dict(cbdir_embed, orient='index'),
+                            pd.DataFrame.from_dict(tscore, orient='index')],
+                            axis=1).T
+    stats_type.index = pd.Index(['CBDir (Subset)',
+                                 'CBDir (Embed, Subset)',
+                                 'Time Score (Subset)',
+                                 'CBDir',
+                                 'CBDir (Embed)',
+                                 'Time Score'])
+    return stats, stats_type
 
 
 def post_analysis(adata,
@@ -190,7 +270,8 @@ def post_analysis(adata,
                   frac=0.0,
                   embed="umap",
                   grid_size=(1, 1),
-                  save_path="figures",
+                  figure_path="figures",
+                  save=None,
                   **kwargs):
     """Main function for post analysis.
     This function computes performance metrics and generates plots based on user input.
@@ -232,16 +313,17 @@ def post_analysis(adata,
     grid_size : int tuple, optional
         Grid size for plotting the genes.
         n_row*n_col >= len(genes)
-    save_path : str, optional
+    figure_path : str, optional
         Path to save the figures.
-
+    save : str, optional
+        Path + output file name to save the AnnData object to a .h5ad file
     Returns
     -------
     stats_df : :class:`pandas.DataFrame`
         Contains the performance metrics of all methods.
-        Saves the figures to 'save_path'.
+        Saves the figures to 'figure_path'.
     """
-    make_dir(save_path)
+    make_dir(figure_path)
     # Retrieve data
     if raw_count:
         U, S = adata.layers["unspliced"].A, adata.layers["spliced"].A
@@ -280,6 +362,7 @@ def post_analysis(adata,
         print(genes)
 
     stats = {}
+    stats_type_list = []
     Uhat, Shat, V = {}, {}, {}
     That, Yhat = {}, {}
     vkeys = []
@@ -290,15 +373,18 @@ def post_analysis(adata,
     # Compute metrics and generate plots for each method
     for i, method in enumerate(methods):
         if compute_metrics:
-            stats_i = get_metric(adata,
-                                 method,
-                                 keys[i],
-                                 vkeys[i],
-                                 cluster_key,
-                                 gene_key,
-                                 cluster_edges,
-                                 embed,
-                                 n_jobs=kwargs['n_jobs'] if 'n_jobs' in kwargs else None)
+            stats_i, stats_type_i = get_metric(adata,
+                                               method,
+                                               keys[i],
+                                               vkeys[i],
+                                               cluster_key,
+                                               gene_key,
+                                               cluster_edges,
+                                               embed,
+                                               n_jobs=(kwargs['n_jobs']
+                                                       if 'n_jobs' in kwargs
+                                                       else None))
+            stats_type_list.append(stats_type_i)
             # avoid duplicate methods with different keys
             method_ = f"{method} ({keys[i]})" if method in stats else method
             stats[method_] = stats_i
@@ -365,6 +451,10 @@ def post_analysis(adata,
         print("---     Computing Peformance Metrics     ---")
         print(f"Dataset Size: {adata.n_obs} cells, {adata.n_vars} genes")
         stats_df = pd.DataFrame(stats)
+        stats_type_df = pd.concat(stats_type_list,
+                                  axis=1,
+                                  keys=methods,
+                                  names=['Model'])
         pd.set_option("display.precision", 3)
 
     print("---   Plotting  Results   ---")
@@ -372,7 +462,7 @@ def post_analysis(adata,
         plot_cluster(adata.obsm[f"X_{embed}"],
                      adata.obs[cluster_key].to_numpy(),
                      embed=embed,
-                     save=f"{save_path}/{test_id}_umap.png")
+                     save=f"{figure_path}/{test_id}_umap.png")
 
     # Generate plots
     if "time" in plot_type or "all" in plot_type:
@@ -390,7 +480,7 @@ def post_analysis(adata,
                        capture_time,
                        None,
                        down_sample=min(10, max(1, adata.n_obs//5000)),
-                       save=f"{save_path}/{test_id}_time.png")
+                       save=f"{figure_path}/{test_id}_time.png")
 
     if len(genes) == 0:
         return
@@ -416,7 +506,7 @@ def post_analysis(adata,
                         Uhat,
                         Shat,
                         Labels_phase_demo,
-                        path=save_path,
+                        path=figure_path,
                         figname=test_id,
                         format=format)
 
@@ -458,7 +548,7 @@ def post_analysis(adata,
                       frac=frac,
                       down_sample=min(20, max(1, adata.n_obs//2500)),
                       sparsity_correction=sparsity_correction,
-                      path=save_path,
+                      path=figure_path,
                       figname=test_id,
                       format=format)
 
@@ -479,12 +569,14 @@ def post_analysis(adata,
                                           legend_loc='on data' if len(colors) <= 10 else 'right margin',
                                           dpi=150,
                                           show=False,
-                                          save=f'{save_path}/{test_id}_{keys[i]}_stream.png')
+                                          save=f'{figure_path}/{test_id}_{keys[i]}_stream.png')
         except ImportError:
             print('Please install scVelo in order to generate stream plots')
             pass
 
     if compute_metrics:
-        stats_df.to_csv(f"{save_path}/metrics_{test_id}.csv", sep='\t')
-        return stats_df
+        stats_df.to_csv(f"{figure_path}/metrics_{test_id}.csv", sep='\t')
+        return stats_df, stats_type_df
+    if save is not None:
+        adata.write_h5ad(save)
     return
