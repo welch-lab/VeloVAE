@@ -1509,48 +1509,31 @@ def plot_sig_grid(Nr,
                         or ('FullVB' in methods[0])\
                             or (methods[0] in ['DeepVelo', 'Discrete PyroVelocity', 'PyroVelocity', 'VeloVI']):
                         K = min(10, max(len(that)//5000, 1))
-                        if 'Discrete' in methods[0]:
+                        
+                        if frac > 0 and frac < 1:
+                            plot_sig_loess_axis(ax_sig[3 * i],
+                                                that[::K],
+                                                Uhat[methods[0]][:, idx][::K],
+                                                Labels_demo[methods[0]][::K],
+                                                Legends[methods[0]],
+                                                frac=frac)
+                            plot_sig_loess_axis(ax_sig[3 * i + 1],
+                                                that[::K],
+                                                Shat[methods[0]][:, idx][::K],
+                                                Labels_demo[methods[0]][::K],
+                                                Legends[methods[0]],
+                                                frac=frac)
+                        elif 'Discrete' in methods[0]:
                             plot_sig_pred_axis(ax_sig[3*i], that[::K], Uhat[methods[0]][:, idx][::K])
                             plot_sig_pred_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:, idx][::K])
-                            plot_sig_axis(ax_sig[3 * i + 2],
-                                          t,
-                                          S[:, idx],
-                                          Labels[methods[0]],
-                                          Legends[methods[0]],
-                                          '.',
-                                          0.2,
-                                          down_sample,
-                                          color_map=color_map)
-                            plot_vel_axis(ax_sig[3 * i + 2],
-                                          t,
-                                          Shat[methods[0]][:, idx],
-                                          V[methods[0]][:, idx],
-                                          None,
-                                          None,
-                                          sparsity_correction=sparsity_correction,
-                                          color_map=color_map)
-                        else:
-                            if frac > 0 and frac < 1:
-                                plot_sig_loess_axis(ax_sig[3 * i],
-                                                    that[::K],
-                                                    Uhat[methods[0]][:, idx][::K],
-                                                    Labels_demo[methods[0]][::K],
-                                                    Legends[methods[0]],
-                                                    frac=frac)
-                                plot_sig_loess_axis(ax_sig[3 * i + 1],
-                                                    that[::K],
-                                                    Shat[methods[0]][:, idx][::K],
-                                                    Labels_demo[methods[0]][::K],
-                                                    Legends[methods[0]],
-                                                    frac=frac)
-                            plot_vel_axis(ax_sig[3 * i + 2],
-                                          t,
-                                          Shat[methods[0]][:, idx],
-                                          V[methods[0]][:, idx],
-                                          Labels[methods[0]],
-                                          Legends[methods[0]],
-                                          sparsity_correction=sparsity_correction,
-                                          color_map=color_map)
+                        plot_vel_axis(ax_sig[3 * i + 2],
+                                      t,
+                                      Shat[methods[0]][:, idx],
+                                      V[methods[0]][:, idx],
+                                      Labels[methods[0]],
+                                      Legends[methods[0]],
+                                      sparsity_correction=sparsity_correction,
+                                      color_map=color_map)
                     else:
                         plot_sig_pred_axis(ax_sig[3 * i],
                                            that,
@@ -1645,49 +1628,31 @@ def plot_sig_grid(Nr,
                                 or ('FullVB' in method)\
                                     or (methods[0] in ['DeepVelo', 'Discrete PyroVelocity', 'PyroVelocity', 'VeloVI']):
                                 K = min(10, max(len(that)//5000, 1))
-                                if 'Discrete' in method:
+                                if frac > 0 and frac < 1:
+                                    plot_sig_loess_axis(ax_sig[3 * i, M * j + k],
+                                                        that[::K],
+                                                        Uhat[method][:, idx][::K],
+                                                        Labels_demo[method][::K],
+                                                        Legends[method],
+                                                        frac=frac)
+                                    plot_sig_loess_axis(ax_sig[3 * i + 1, M * j + k],
+                                                        that[::K],
+                                                        Shat[method][:, idx][::K],
+                                                        Labels_demo[method][::K],
+                                                        Legends[method], frac=frac)
+                                elif 'Discrete' in method:
                                     plot_sig_pred_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:, idx][::K])
                                     plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:, idx][::K])
-                                    plot_sig_axis(ax_sig[3 * i + 2, M * j + k],
-                                                  t,
-                                                  S[:, idx],
-                                                  Labels[method],
-                                                  Legends[method],
-                                                  '.',
-                                                  0.1,
-                                                  down_sample,
-                                                  color_map=color_map)
-                                    plot_vel_axis(ax_sig[3 * i + 2, M * j + k],
-                                                  t,
-                                                  Shat[method][:, idx],
-                                                  V[method][:, idx],
-                                                  None,
-                                                  None,
-                                                  sparsity_correction=sparsity_correction,
-                                                  color_map=color_map)
-                                else:
-                                    if frac > 0 and frac < 1:
-                                        plot_sig_loess_axis(ax_sig[3 * i, M * j + k],
-                                                            that[::K],
-                                                            Uhat[method][:, idx][::K],
-                                                            Labels_demo[method][::K],
-                                                            Legends[method],
-                                                            frac=frac)
-                                        plot_sig_loess_axis(ax_sig[3 * i + 1, M * j + k],
-                                                            that[::K],
-                                                            Shat[method][:, idx][::K],
-                                                            Labels_demo[method][::K],
-                                                            Legends[method], frac=frac)
-                                    plot_vel_axis(ax_sig[3 * i + 2, M * j + k],
-                                                  that,
-                                                  Shat[method][:, idx],
-                                                  V[method][:, idx],
-                                                  Labels_demo[method],
-                                                  Legends[method],
-                                                  sparsity_correction=sparsity_correction,
-                                                  color_map=color_map)
+                                plot_vel_axis(ax_sig[3 * i + 2, M * j + k],
+                                              that,
+                                              Shat[method][:, idx],
+                                              V[method][:, idx],
+                                              Labels_demo[method],
+                                              Legends[method],
+                                              sparsity_correction=sparsity_correction,
+                                              color_map=color_map)
                             else:
-                                plot_sig_pred_axis(ax_sig[3*i, M*j+k],
+                                plot_sig_pred_axis(ax_sig[3 * i, M * j + k],
                                                    that,
                                                    Uhat[method][:, idx],
                                                    Labels_demo[method],
@@ -1703,7 +1668,7 @@ def plot_sig_grid(Nr,
                                                    '-',
                                                    1.0,
                                                    1)
-                                plot_vel_axis(ax_sig[3*i+2, M*j+k],
+                                plot_vel_axis(ax_sig[3 * i + 2, M * j + k],
                                               that,
                                               Shat[method][:, idx],
                                               V[method][:, idx],
