@@ -31,19 +31,17 @@ def get_velocity_metric(adata,
                         gene_mask=None,
                         embed='umap',
                         n_jobs=None):
-    if gene_mask is None:
-        gene_mask = np.ones((adata.n_vars), dtype=bool)
-
     if cluster_edges is not None:
         try:
             from scvelo.tl import velocity_graph, velocity_embedding
             n_jobs = get_n_cpu(adata.n_obs) if n_jobs is None else n_jobs
-            velocity_graph(adata, vkey=vkey, gene_subset=adata.var_names[gene_mask], n_jobs=n_jobs)
+            gene_subset = adata.var_names if gene_mask is None else adata.var_names[gene_mask]
+            velocity_graph(adata, vkey=vkey, gene_subset=gene_subset, n_jobs=n_jobs)
             velocity_embedding(adata, vkey=vkey, basis=embed)
         except ImportError:
             print("Please install scVelo to compute velocity embedding.\n"
             "Skipping metrics 'Cross-Boundary Direction Correctness' and 'In-Cluster Coherence'.")
-        iccoh, mean_iccoh = inner_cluster_coh(adata, cluster_key, vkey)
+        iccoh, mean_iccoh = inner_cluster_coh(adata, cluster_key, vkey, gene_mask)
         (cbdir_embed, mean_cbdir_embed,
          tscore, mean_tscore) = calibrated_cross_boundary_correctness(adata,
                                                                       cluster_key,
@@ -172,13 +170,13 @@ def get_metric(adata,
          run_time) = get_err_velovi(adata, key, gene_mask)
 
     if method in ['scVelo', 'UniTVelo', 'DeepVelo']:
-        logp_test = 'N/A'
-        mse_test = 'N/A'
-        logp_test = 'N/A'
-        mae_test = 'N/A'
+        logp_test = np.nan
+        mse_test = np.nan
+        logp_test = np.nan
+        mae_test = np.nan
 
     if method == 'DeepVelo':
-        logp_train = 'N/A'
+        logp_train = np.nan
 
     stats['MSE Train'] = mse_train
     stats['MSE Test'] = mse_test
@@ -190,7 +188,7 @@ def get_metric(adata,
 
     if 'tprior' in adata.obs:
         if method == 'DeepVelo':
-            stats['corr'] = 'N/A'
+            stats['corr'] = np.nan
         else:
             tprior = adata.obs['tprior'].to_numpy()
             t = (adata.obs["latent_time"].to_numpy()
@@ -220,7 +218,6 @@ def get_metric(adata,
          tscore_sub, mean_tscore_sub) = get_velocity_metric_placeholder(cluster_edges)
     stats['CBDir (Embed, Subset)'] = mean_cbdir_sub_embed
     stats['CBDir (Subset)'] = mean_cbdir_sub
-    stats['Time Score (Subset)'] = mean_tscore_sub
     stats['In-Cluster Coherence (Subset)'] = mean_iccoh_sub
 
     # Compute velocity metrics on all genes
@@ -232,7 +229,7 @@ def get_metric(adata,
                                                 vkey,
                                                 cluster_key,
                                                 cluster_edges,
-                                                gene_mask,
+                                                None,
                                                 embed,
                                                 n_jobs)
     stats['CBDir (Embed)'] = mean_cbdir_embed
@@ -241,14 +238,12 @@ def get_metric(adata,
     stats['In-Cluster Coherence'] = mean_iccoh
     stats_type = pd.concat([pd.DataFrame.from_dict(cbdir_sub, orient='index'),
                             pd.DataFrame.from_dict(cbdir_sub_embed, orient='index'),
-                            pd.DataFrame.from_dict(tscore_sub, orient='index'),
                             pd.DataFrame.from_dict(cbdir, orient='index'),
                             pd.DataFrame.from_dict(cbdir_embed, orient='index'),
                             pd.DataFrame.from_dict(tscore, orient='index')],
                             axis=1).T
     stats_type.index = pd.Index(['CBDir (Subset)',
                                  'CBDir (Embed, Subset)',
-                                 'Time Score (Subset)',
                                  'CBDir',
                                  'CBDir (Embed)',
                                  'Time Score'])
