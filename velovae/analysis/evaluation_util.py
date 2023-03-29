@@ -790,7 +790,7 @@ def get_err_velovi(adata, key, gene_mask):
 
 
 ##########################################################################
-# Evaluation Metrics from UniTVelo
+# Evaluation Metrics adapted from UniTVelo
 # Reference:
 # Gao, M., Qiao, C. & Huang, Y. UniTVelo: temporally unified RNA velocity
 # reinforces single-cell trajectory inference. Nat Commun 13, 6586 (2022).
@@ -1030,7 +1030,7 @@ def calibrated_cross_boundary_correctness(
     return scores, np.mean([sc for sc in scores_combined.values()]), p_fw, np.mean([p for p in p_fw.values()])
 
 
-def inner_cluster_coh(adata, k_cluster, k_velocity, return_raw=False):
+def inner_cluster_coh(adata, k_cluster, k_velocity, gene_mask=None, return_raw=False):
     # In-cluster Coherence Score.
     #
     # Args:
@@ -1059,7 +1059,7 @@ def inner_cluster_coh(adata, k_cluster, k_velocity, return_raw=False):
         same_cat_nodes = map(lambda nodes: keep_type(adata, nodes, cat, k_cluster), nbs)
 
         velocities = adata.layers[k_velocity]
-        nan_mask = ~np.isnan(velocities[0])
+        nan_mask = ~np.isnan(velocities[0]) if gene_mask is None else gene_mask
         velocities = velocities[:, nan_mask]
 
         cat_vels = velocities[sel]
