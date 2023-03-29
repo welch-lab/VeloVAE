@@ -24,6 +24,9 @@ from .vanilla_vae import VanillaVAE, kl_gaussian
 from .velocity import rna_velocity_vae
 P_MAX = 1e30
 GRAD_MAX = 1e7
+
+def _sigmoid(x):
+    return 1/(1+np.exp(-x))
 ##############################################################
 # VAE
 ##############################################################
@@ -37,8 +40,7 @@ class encoder(nn.Module):
                  dim_z,
                  dim_cond=0,
                  N1=500,
-                 N2=250,
-                 checkpoint=None):
+                 N2=250):
         super(encoder, self).__init__()
         self.fc1 = nn.Linear(Cin, N1)
         self.bn1 = nn.BatchNorm1d(num_features=N1)
@@ -48,8 +50,7 @@ class encoder(nn.Module):
         self.dpt2 = nn.Dropout(p=0.2)
 
         self.net = nn.Sequential(self.fc1, self.bn1, nn.LeakyReLU(), self.dpt1,
-                                 self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2,
-                                 )
+                                 self.fc2, self.bn2, nn.LeakyReLU(), self.dpt2)
 
         self.fc_mu_t = nn.Linear(N2+dim_cond, 1)
         self.spt1 = nn.Softplus()
@@ -59,10 +60,7 @@ class encoder(nn.Module):
         self.fc_std_z = nn.Linear(N2+dim_cond, dim_z)
         self.spt3 = nn.Softplus()
 
-        if checkpoint is not None:
-            self.load_state_dict(torch.load(checkpoint, map_location=device))
-        else:
-            self.init_weights()
+        self.init_weights()
 
     def init_weights(self):
         for m in self.net.modules():
@@ -124,75 +122,35 @@ class decoder(nn.Module):
                 lu, ls = get_cell_scale(U, S, train_idx, True, 50)
                 adata.obs["library_scale_u"] = lu
                 adata.obs["library_scale_s"] = ls
-                init_fn = init_params_raw
-                """
-                U, S = U[train_idx], S[train_idx]
-                noise = np.exp(np.random.normal(size=(len(train_idx), 2*G))*1e-3)
-                X = np.concatenate((U, S), 1) + noise
-                # Dynamical Model Parameters
-                (alpha, beta, gamma,
-                 scaling,
-                 toff,
-                 u0, s0,
-                 T) = init_fn(X, p, fit_scaling=True)
-                """
-                U, S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
-                init_fn = init_params
-                X = np.concatenate((U, S), 1)
-                # Dynamical Model Parameters
-                (alpha, beta, gamma,
-                 scaling,
-                 toff,
-                 u0, s0,
-                 sigma_u, sigma_s,
-                 T,
-                 gene_score) = init_fn(X, p, fit_scaling=True)
-                gene_mask = (gene_score == 1.0)
-            else:
-                U, S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
-                init_fn = init_params
-                X = np.concatenate((U, S), 1)
-                # Dynamical Model Parameters
-                (alpha, beta, gamma,
-                 scaling,
-                 toff,
-                 u0, s0,
-                 sigma_u, sigma_s,
-                 T,
-                 gene_score) = init_fn(X, p, fit_scaling=True)
-                gene_mask = (gene_score == 1.0)
-                if filter_gene:
-                    adata._inplace_subset_var(gene_mask)
-                    U, S = U[:, gene_mask], S[:, gene_mask]
-                    G = adata.n_vars
-                    alpha = alpha[gene_mask]
-                    beta = beta[gene_mask]
-                    gamma = gamma[gene_mask]
-                    scaling = scaling[gene_mask]
-                    toff = toff[gene_mask]
-                    u0 = u0[gene_mask]
-                    s0 = s0[gene_mask]
-                    sigma_u = sigma_u[gene_mask]
-                    sigma_s = sigma_s[gene_mask]
-                    T = T[:, gene_mask]
-            # Gene dyncamical mode initialization
-            dyn_mask = (T > tmax*0.01) & (np.abs(T-toff) > tmax*0.01)
-            w = np.sum(((T < toff) & dyn_mask), 0) / (np.sum(dyn_mask, 0) + 1e-10)
-            assign_type = kwargs['assign_type'] if 'assign_type' in kwargs else 'auto'
-            thred = kwargs['ks_test_thred'] if 'ks_test_thred' in kwargs else 0.05
-            n_cluster_thred = kwargs['n_cluster_thred'] if 'n_cluster_thred' in kwargs else 3
-            std_prior = kwargs['std_alpha_prior'] if 'std_alpha_prior' in kwargs else 0.1
-            if 'reverse_gene_mode' in kwargs:
-                w = (1 - assign_gene_mode(adata, w, assign_type, thred, std_prior, n_cluster_thred)
-                     if kwargs['reverse_gene_mode'] else
-                     assign_gene_mode(adata, w, assign_type, thred, std_prior, n_cluster_thred))
-            else:
-                w = assign_gene_mode(adata, w, assign_type, thred, std_prior, n_cluster_thred)
-            adata.var["w_init"] = w
-            logit_pw = 0.5*(np.log(w+1e-10) - np.log(1-w+1e-10))
-            logit_pw = np.stack([logit_pw, -logit_pw], 1)
-
-            print(f"Initial induction: {np.sum(w >= 0.5)}, repression: {np.sum(w < 0.5)}/{G}")
+                scaling_discrete = np.std(U[train_idx], 0) / (np.std(S[train_idx, 0]) + 1e-16)
+            # Get the ODE parameters
+            U, S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
+            X = np.concatenate((U, S), 1)
+            # Dynamical Model Parameters
+            (alpha, beta, gamma,
+             scaling,
+             toff,
+             u0, s0,
+             sigma_u, sigma_s,
+             T,
+             gene_score) = init_params(X, p, fit_scaling=True)
+            gene_mask = (gene_score == 1.0)
+            if discrete:
+                scaling = np.clip(scaling_discrete, 1e-6, None)
+            if filter_gene:
+                adata._inplace_subset_var(gene_mask)
+                U, S = U[:, gene_mask], S[:, gene_mask]
+                G = adata.n_vars
+                alpha = alpha[gene_mask]
+                beta = beta[gene_mask]
+                gamma = gamma[gene_mask]
+                scaling = scaling[gene_mask]
+                toff = toff[gene_mask]
+                u0 = u0[gene_mask]
+                s0 = s0[gene_mask]
+                sigma_u = sigma_u[gene_mask]
+                sigma_s = sigma_s[gene_mask]
+                T = T[:, gene_mask]
 
             if init_method == "random":
                 print("Random Initialization.")
@@ -208,12 +166,11 @@ class decoder(nn.Module):
                     self.sigma_s = (nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
                                     if not discrete else None)
                 self.t_init = None
-                self.logit_pw = nn.Parameter(torch.normal(mean=0, std=torch.ones(G, 2, device=device)).float())
             elif init_method == "tprior":
                 print("Initialization using prior time.")
                 t_prior = adata.obs[init_key].to_numpy()
                 t_prior = t_prior[train_idx]
-                std_t = (np.std(t_prior)+1e-3)*0.2
+                std_t = (np.std(t_prior)+1e-3)*0.05
                 self.t_init = np.random.uniform(t_prior-std_t, t_prior+std_t)
                 self.t_init -= self.t_init.min()
                 self.t_init = self.t_init
@@ -237,7 +194,6 @@ class decoder(nn.Module):
                             if init_ton_zero else
                             nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float()))
                 self.toff = nn.Parameter(torch.tensor(np.log(self.toff_init+1e-10), device=device).float())
-                self.logit_pw = nn.Parameter(torch.tensor(logit_pw, device=device).float())
             else:
                 print("Initialization using the steady-state and dynamical models.")
                 if init_key is not None:
@@ -271,7 +227,6 @@ class decoder(nn.Module):
                                     if not discrete else None)
                     self.sigma_s = (nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
                                     if not discrete else None)
-                self.logit_pw = nn.Parameter(torch.tensor(logit_pw, device=device).float())
         # Add variance in case of full vb
         if full_vb:
             sigma_param = np.log(0.05) * torch.ones(adata.n_vars, device=device)
@@ -310,6 +265,37 @@ class decoder(nn.Module):
         if not self.is_discrete:
             self.sigma_u.requires_grad = False
             self.sigma_s.requires_grad = False
+
+        # Gene dyncamical mode initialization
+        if init_method == 'tprior':
+            from scipy.stats import linregress
+            # _t_init = self.t_init.reshape(-1, 1)
+            # dyn_mask = (_t_init > tmax*0.01) & (np.abs(_t_init - self.toff_init) > tmax*0.01)
+            # w = np.sum(((_t_init < self.toff_init) & dyn_mask), 0) / (np.sum(dyn_mask, 0) + 1e-10)
+            # self.w_noisy = w
+            w = np.empty((G))
+            for i in range(G):
+                slope_u, intercept_u, r_u, p_u, se = linregress(self.t_init, U[:, i])
+                slope_s, intercept_s, r_s, p_s, se = linregress(self.t_init, S[:, i])
+                w[i] = _sigmoid(slope_u*0.5+slope_s*0.5)
+        else:
+            dyn_mask = (T > tmax*0.01) & (np.abs(T-toff) > tmax*0.01)
+            w = np.sum(((T < toff) & dyn_mask), 0) / (np.sum(dyn_mask, 0) + 1e-10)
+            assign_type = kwargs['assign_type'] if 'assign_type' in kwargs else 'auto'
+            thred = kwargs['ks_test_thred'] if 'ks_test_thred' in kwargs else 0.05
+            n_cluster_thred = kwargs['n_cluster_thred'] if 'n_cluster_thred' in kwargs else 3
+            std_prior = kwargs['std_alpha_prior'] if 'std_alpha_prior' in kwargs else 0.1
+            if 'reverse_gene_mode' in kwargs:
+                w = (1 - assign_gene_mode(adata, w, assign_type, thred, std_prior, n_cluster_thred)
+                     if kwargs['reverse_gene_mode'] else
+                     assign_gene_mode(adata, w, assign_type, thred, std_prior, n_cluster_thred))
+            else:
+                w = assign_gene_mode(adata, w, assign_type, thred, std_prior, n_cluster_thred)
+        print(f"Initial induction: {np.sum(w >= 0.5)}, repression: {np.sum(w < 0.5)}/{G}")
+        adata.var["w_init"] = w
+        logit_pw = 0.5*(np.log(w+1e-10) - np.log(1-w+1e-10))
+        logit_pw = np.stack([logit_pw, -logit_pw], 1)
+        self.logit_pw = nn.Parameter(torch.tensor(logit_pw, device=device).float())
 
         self.fc1 = nn.Linear(dim_z+dim_cond, N1).to(device)
         self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
@@ -559,6 +545,7 @@ class VAE(VanillaVAE):
         self.timer = 0
         self.is_discrete = discrete
         self.is_full_vb = full_vb
+        early_stop_thred = adata.n_vars*1e-4 if self.is_discrete else adata.n_vars*1e-3
 
         # Training Configuration
         self.config = {
@@ -596,7 +583,7 @@ class VAE(VanillaVAE):
             "save_epoch": 100,
             "n_warmup": 5,
             "early_stop": 5,
-            "early_stop_thred": adata.n_vars*1e-3,
+            "early_stop_thred": early_stop_thred,
             "train_test_split": 0.7,
             "neg_slope": 0.0,
             "k_alt": 1,
@@ -647,10 +634,11 @@ class VAE(VanillaVAE):
                                    dim_z,
                                    dim_cond,
                                    hidden_size[0],
-                                   hidden_size[1],
-                                   checkpoint=checkpoints[0]).float().to(self.device)
+                                   hidden_size[1]).float().to(self.device)
         except IndexError:
             print('Please provide two dimensions!')
+        if checkpoints[0] is not None:
+            self.encoder.load_state_dict(torch.load(checkpoints[0], map_location=device))
 
         self.tmax = tmax
         self.time_distribution = time_distribution
@@ -710,6 +698,17 @@ class VAE(VanillaVAE):
                 print(f"Over-Dispersion = {p_nb:.2f} => Using {count_distribution} to model count data.")
             elif count_distribution == "NB":
                 self.vae_risk = self.vae_risk_nb
+            elif count_distribution == "Generalized Poisson":  # unstable
+                U, S = adata.layers['unspliced'].A, adata.layers['spliced'].A
+                mu_u, var_u = np.quantile(U, 0.99, 0)/2, np.clip(np.var(U, 0), 1e-4, None)
+                mu_s, var_s = np.quantile(S, 0.99, 0)/2, np.clip(np.var(S, 0), 1e-4, None)
+                delta_u = np.clip(1 - np.sqrt(mu_u/var_u+1e-16), -10, None)
+                delta_s = np.clip(1 - np.sqrt(mu_s/var_s+1e-16), -10, None)
+
+                print(f"Number of underdispersed genes: {np.sum(delta_u<0):.3f}, {np.sum(delta_s<0):.3f}")
+                self.delta_u = torch.tensor(delta_u, device=self.device).float()
+                self.delta_s = torch.tensor(delta_s, device=self.device).float()
+                self.vae_risk = self.vae_risk_generalized_poisson
             else:
                 self.vae_risk = self.vae_risk_poisson
             mean_u = adata.var["mean_u"].to_numpy()
@@ -954,6 +953,17 @@ class VAE(VanillaVAE):
     def _kl_poisson(self, lamb_1, lamb_2):
         return lamb_1 * (torch.log(lamb_1) - torch.log(lamb_2)) + lamb_2 - lamb_1
 
+    def _kl_nb(self, m1, p1, m2, p2):
+        r1 = m1 * (1 - p1) / p1
+        r2 = m2 * (1 - p2) / p2
+        return r1*torch.log(p1) - r2*torch.log(p2)\
+            + m1*torch.log(p1) - m1*torch.log(p2)
+
+    def _kl_nb(self, m1, m2, p):
+        r1 = m1 * (1 - p) / p
+        r2 = m2 * (1 - p) / p
+        return (r1 - r2)*torch.log(p)
+
     def vae_risk_poisson(self,
                          q_tx, p_t,
                          q_zx, p_z,
@@ -973,7 +983,8 @@ class VAE(VanillaVAE):
         poisson_u = Poisson(F.relu(uhat)+eps)
         poisson_s = Poisson(F.relu(shat)+eps)
         if uhat.ndim == 3:  # stage 1
-            logp = poisson_u.log_prob(torch.stack([u, u], 1)) + poisson_s.log_prob(torch.stack([s, s], 1))
+            logp = poisson_u.log_prob(torch.stack([u, u], 1))\
+                + poisson_s.log_prob(torch.stack([s, s], 1))
             pw = F.softmax(self.decoder.logit_pw, dim=1).T
             logp = torch.sum(pw*logp, 1)
         else:
@@ -984,6 +995,45 @@ class VAE(VanillaVAE):
             logp = logp - self._kl_poisson(u1, uhat_fw) - self._kl_poisson(s1, shat_fw)
         if weight is not None:
             logp = logp*weight
+
+        err_rec = torch.mean(logp.sum(1))
+
+        return - err_rec + kl_term
+
+    def vae_risk_generalized_poisson(self,
+                                     q_tx, p_t,
+                                     q_zx, p_z,
+                                     u, s, uhat, shat,
+                                     uhat_fw=None, shat_fw=None,
+                                     u1=None, s1=None,
+                                     weight=None,
+                                     eps=1e-2):
+        kl_term = self._compute_kl_term(q_tx, p_t, q_zx, p_z)
+        # generalized poisson
+        theta_u = uhat * (1 - self.delta_u)
+        theta_s = shat * (1 - self.delta_s)
+        rec_fn = nn.Softplus()
+        assert not torch.any(torch.isnan(theta_u))
+        assert not torch.any(torch.isnan(theta_s))
+
+        if uhat.ndim == 3:  # stage 1
+            u_stack = torch.stack([u, u], 1)
+            s_stack = torch.stack([s, s], 1)
+            logp = torch.log(rec_fn(theta_u))-torch.log(rec_fn(theta_u + self.delta_u*u_stack))\
+                + u_stack*torch.log(rec_fn(theta_u + self.delta_u*u_stack))\
+                - theta_u - self.delta_u*u_stack\
+                + torch.log(rec_fn(theta_s))-torch.log(rec_fn(theta_s + self.delta_s*s_stack))\
+                + s_stack*torch.log(rec_fn(theta_s + self.delta_s*s_stack))\
+                - theta_s - self.delta_s*s_stack
+            pw = F.softmax(self.decoder.logit_pw, dim=1).T
+            logp = torch.sum(pw*logp, 1)
+        else:
+            logp = torch.log(rec_fn(theta_u))-torch.log(rec_fn(theta_u + self.delta_u*u))\
+                + u*torch.log(rec_fn(theta_u + self.delta_u*u))\
+                - theta_u - self.delta_u*u\
+                + torch.log(rec_fn(theta_s))-torch.log(rec_fn(theta_s + self.delta_s*s))\
+                + s*torch.log(rec_fn(theta_s + self.delta_s*s))\
+                - theta_s - self.delta_s*s
 
         err_rec = torch.mean(logp.sum(1))
 
@@ -1012,7 +1062,7 @@ class VAE(VanillaVAE):
             logp = nb_u.log_prob(u) + nb_s.log_prob(s)
         # velocity continuity loss
         if uhat_fw is not None and shat_fw is not None:
-            logp = logp - self._kl_poisson(u1, uhat_fw) - self._kl_poisson(s1, shat_fw)
+            logp = logp - self._kl_nb(uhat_fw, u1, p_nb_u) - self._kl_nb(shat_fw, s1, p_nb_s)
         if weight is not None:
             logp = logp*weight
         err_rec = torch.mean(torch.sum(logp, 1))
@@ -1344,27 +1394,6 @@ class VAE(VanillaVAE):
         optimizer_ode = torch.optim.Adam(param_ode, lr=self.config["learning_rate_ode"])
         print("*********                      Finished.                      *********")
 
-        # Debugging Plots (to be removed in the published version)
-        if self.decoder.t_init is not None and plot:
-            tplot = self.decoder.t_init
-            for i, idx in enumerate(gind):
-                alpha = self.decoder.alpha_init[idx]
-                beta = self.decoder.beta_init[idx]
-                gamma = self.decoder.gamma_init[idx]
-                ton = self.decoder.ton_init[idx]
-                toff = self.decoder.toff_init[idx]
-                scaling = self.decoder.scaling[idx].detach().cpu().exp().item()
-                upred, spred = ode_numpy(tplot, alpha, beta, gamma, ton, toff, scaling)
-                plot_sig_(tplot,
-                          X[self.train_idx, idx],
-                          X[self.train_idx, idx+adata.n_vars],
-                          cell_labels_raw[self.train_idx],
-                          tplot,
-                          upred,
-                          spred,
-                          title=gene_plot[i],
-                          save=f"{figure_path}/{gene_plot[i]}_init.png")
-
         # Main Training Process
         print("*********                    Start training                   *********")
         print("*********                      Stage  1                       *********")
@@ -1391,19 +1420,11 @@ class VAE(VanillaVAE):
                                                      optimizer,
                                                      self.config["k_alt"])
                 else:
-                    # from torch.profiler import profile, ProfilerActivity
-                    """
-                    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-                                 record_shapes=True,
-                                 profile_memory=True,
-                                 use_cuda=False) as prof:
-                    """
                     stop_training = self.train_epoch(data_loader,
                                                      test_set,
                                                      optimizer,
                                                      None,
                                                      self.config["k_alt"])
-                    # print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
 
             if plot and (epoch == 0 or (epoch+1) % self.config["save_epoch"] == 0):
                 elbo_train = self.test(train_set,
@@ -1450,7 +1471,6 @@ class VAE(VanillaVAE):
             if (not self.is_discrete) and (noise_change > 0.001) and (r < self.config['n_refine']-1):
                 self.update_std_noise(train_set.data)
             self.update_x0(X[:, :X.shape[1]//2], X[:, X.shape[1]//2:], self.config["n_bin"])
-            # self.decoder.init_weights(2)
             self.n_drop = 0
 
             for epoch in range(self.config["n_epochs_post"]):
@@ -1959,73 +1979,3 @@ class VAE(VanillaVAE):
 
         if file_name is not None:
             adata.write_h5ad(f"{file_path}/{file_name}")
-
-
-##############################################################
-# Pseudo Graph VAE (Message Passing)
-##############################################################
-class gcn_encoder(nn.Module):
-    """Encoder class for the GVAE model
-    """
-    def __init__(self,
-                 Cin,
-                 dim_z,
-                 dim_cond=0,
-                 N1=500,
-                 N2=250,
-                 checkpoint=None):
-        super(encoder, self).__init__()
-        self.lin_1 = nn.Linear(Cin, N1, bias=False)
-        self.bias_1 = nn.Parameter(torch.zeros(N1))
-
-        self.lin_mu_t = nn.Linear(N1+dim_cond, N2, bias=False)
-        self.bias_mu_t = nn.Parameter(torch.zeros(N2))
-        self.fc_mu_t = nn.Linear(N2, 1)
-        self.spt1 = nn.Softplus()
-
-        self.lin_std_t = nn.Linear(N1+dim_cond, N2, bias=False)
-        self.bias_std_t = nn.Parameter(torch.zeros(N2))
-        self.fc_std_t = nn.Linear(N2, 1)
-        self.spt2 = nn.Softplus()
-
-        self.lin_mu_z = nn.Linear(N1+dim_cond, N2, bias=False)
-        self.bias_mu_z = nn.Parameter(torch.zeros(N2))
-        self.fc_mu_z = nn.Linear(N2, dim_z)
-
-        self.lin_std_z = nn.Linear(N1+dim_cond, N2, bias=False)
-        self.bias_std_z = nn.Parameter(torch.zeros(N2))
-        self.fc_std_z = nn.Linear(N2, dim_z)
-        self.spt3 = nn.Softplus()
-
-        if checkpoint is not None:
-            self.load_state_dict(torch.load(checkpoint, map_location=device))
-        else:
-            self.init_weights()
-
-    def init_weights(self):
-        for m in [self.lin_1,
-                  self.lin_mu_t,
-                  self.lin_mu_z,
-                  self.lin_std_t,
-                  self.lin_std_z]:
-            nn.init.xavier_uniform_(m.weight)
-        for m in [self.fc_mu_t,
-                  self.fc_std_t,
-                  self.fc_mu_z,
-                  self.fc_std_z]:
-            nn.init.xavier_uniform_(m.weight)
-            nn.init.constant_(m.bias, 0)
-
-    def forward(self, data_in, condition=None):
-        # x_neighbors: N x N neighbors x G
-        h = self.lin_1(data_in).mean(1) + self.bias_1
-        if condition is not None:
-            h = torch.cat((h, condition), 1)
-        h_mu_t = self.lin_mu_t(h).mean(1) + self.bias_mu_t
-        h_std_t = self.lin_std_t(h).mean(1) + self.bias_std_t
-        h_mu_z = self.lin_mu_z(h).mean(1) + self.bias_mu_z
-        h_std_z = self.lin_std_z.mean(1) + self.bias_std_z
-        mu_tx, std_tx = self.spt1(self.fc_mu_t(h_mu_t)), self.spt2(self.fc_std_t(h_std_t))
-        mu_zx, std_zx = self.fc_mu_z(h_mu_z), self.spt3(self.fc_std_z(h_std_z))
-        return mu_tx, std_tx, mu_zx, std_zx
-
