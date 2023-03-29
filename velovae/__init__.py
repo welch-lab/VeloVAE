@@ -1,5 +1,5 @@
 from velovae.model import *
-from velovae.analysis.evaluation import *
+from velovae.analysis import *
 from .plotting import (get_colors,
                        plot_sig,
                        plot_sig_,
