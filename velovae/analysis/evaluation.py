@@ -412,9 +412,10 @@ def post_analysis(adata,
                 t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
                 Yhat[method_] = cell_labels
             elif method == 'BrODE':
-                t_i, y_brode, Uhat_i, Shat_i = get_pred_brode_demo(adata, keys[i], genes)
+                Uhat_i, Shat_i = get_pred_brode_demo(adata, keys[i], genes)
                 V[method_] = adata.layers[f"{keys[i]}_velocity"][:, gene_indices]
-                Yhat[method_] = y_brode
+                t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
+                Yhat[method_] = cell_labels
             elif method == "UniTVelo":
                 t_i, Uhat_i, Shat_i = get_pred_utv_demo(adata, genes, nplot)
                 V[method_] = adata.layers["velocity"][:, gene_indices]

@@ -473,44 +473,51 @@ def get_err_brode(adata, key, gene_mask=None):
     return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
 
 
-def get_pred_brode_demo(adata, key, genes=None, N=100):
-    t_trans = adata.uns[f"{key}_t_trans"]
-    t = adata.obs[f"{key}_time"].to_numpy()
-    y = adata.obs[f"{key}_label"].to_numpy()  # integer
-    par = np.argmax(adata.uns[f"{key}_w"], 1)
-    n_type = len(par)
-    t_demo = np.zeros((N*n_type))
-    y_demo = np.zeros((N*n_type)).astype(int)
-    for i in range(n_type):
-        y_demo[i*N:(i+1)*N] = i
-        t_demo[i*N:(i+1)*N] = np.linspace(t_trans[i], np.quantile(t[y == i], 0.95), N)
-    if genes is None:
-        alpha = adata.varm[f"{key}_alpha"].T
-        beta = adata.varm[f"{key}_beta"].T
-        gamma = adata.varm[f"{key}_gamma"].T
-        u0, s0 = adata.varm[f"{key}_u0"].T, adata.varm[f"{key}_s0"].T
-        scaling = adata.var[f"{key}_scaling"].to_numpy()
+def get_pred_brode_demo(adata, key, genes=None, N=None):
+    if isinstance(N, int):
+        t_trans = adata.uns[f"{key}_t_trans"]
+        t = adata.obs[f"{key}_time"].to_numpy()
+        y = adata.obs[f"{key}_label"].to_numpy()  # integer
+        par = np.argmax(adata.uns[f"{key}_w"], 1)
+        n_type = len(par)
+        t_demo = np.zeros((N*n_type))
+        y_demo = np.zeros((N*n_type)).astype(int)
+        for i in range(n_type):
+            y_demo[i*N:(i+1)*N] = i
+            t_demo[i*N:(i+1)*N] = np.linspace(t_trans[i], np.quantile(t[y == i], 0.95), N)
+        if genes is None:
+            alpha = adata.varm[f"{key}_alpha"].T
+            beta = adata.varm[f"{key}_beta"].T
+            gamma = adata.varm[f"{key}_gamma"].T
+            u0, s0 = adata.varm[f"{key}_u0"].T, adata.varm[f"{key}_s0"].T
+            scaling = adata.var[f"{key}_scaling"].to_numpy()
+        else:
+            gene_indices = np.array([np.where(adata.var_names == x)[0][0] for x in genes])
+            alpha = adata.varm[f"{key}_alpha"][gene_indices].T
+            beta = adata.varm[f"{key}_beta"][gene_indices].T
+            gamma = adata.varm[f"{key}_gamma"][gene_indices].T
+            u0, s0 = adata.varm[f"{key}_u0"][gene_indices].T, adata.varm[f"{key}_s0"][gene_indices].T
+            scaling = adata.var[f"{key}_scaling"][gene_indices].to_numpy()
+
+        Uhat_demo, Shat_demo = ode_br_numpy(t_demo.reshape(-1, 1),
+                                            y_demo,
+                                            par,
+                                            alpha=alpha,
+                                            beta=beta,
+                                            gamma=gamma,
+                                            t_trans=t_trans,
+                                            u0=u0,
+                                            s0=s0,
+                                            scaling=scaling)
+
+        return t_demo, y_demo, Uhat_demo, Shat_demo
     else:
-        gene_indices = np.array([np.where(adata.var_names == x)[0][0] for x in genes])
-        alpha = adata.varm[f"{key}_alpha"][gene_indices].T
-        beta = adata.varm[f"{key}_beta"][gene_indices].T
-        gamma = adata.varm[f"{key}_gamma"][gene_indices].T
-        u0, s0 = adata.varm[f"{key}_u0"][gene_indices].T, adata.varm[f"{key}_s0"][gene_indices].T
-        scaling = adata.var[f"{key}_scaling"][gene_indices].to_numpy()
-
-    Uhat_demo, Shat_demo = ode_br_numpy(t_demo.reshape(-1, 1),
-                                        y_demo,
-                                        par,
-                                        alpha=alpha,
-                                        beta=beta,
-                                        gamma=gamma,
-                                        t_trans=t_trans,
-                                        u0=u0,
-                                        s0=s0,
-                                        scaling=scaling)
-
-    return t_demo, y_demo, Uhat_demo, Shat_demo
-
+        if genes is None:
+            Uhat, Shat = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
+        else:
+            gene_indices = np.array([np.where(adata.var_names == x)[0][0] for x in genes])
+            Uhat, Shat = adata.layers[f"{key}_uhat"][:, gene_indices], adata.layers[f"{key}_shat"][:, gene_indices]
+        return Uhat, Shat
 
 # UniTVelo
 
@@ -930,6 +937,7 @@ def calibrated_cross_boundary_correctness(
     k_time,
     cluster_edges=None,
     return_raw=False,
+    sum_up=False,
     x_emb="X_umap",
     gene_mask=None,
     k_std_t=None,
@@ -948,6 +956,8 @@ def calibrated_cross_boundary_correctness(
     #        pairs of clusters has transition direction A->B
     #    return_raw (bool):
     #        return aggregated or raw scores.
+    #    sum_up (bool):
+    #        Whether sum or take the mean (default)
     #    x_emb (str):
     #        key to x embedding for visualization.
     #   gene_mask (numpy array):
@@ -1017,10 +1027,10 @@ def calibrated_cross_boundary_correctness(
             type_score.extend(dir_scores*p1+(-dir_scores)*p2)
 
         if len(type_score) == 0:
-            print(f'Warning: cell type transition pair ({u},{v}) does not exist in the KNN graph. Ignored.')
+            # print(f'Warning: cell type transition pair ({u},{v}) does not exist in the KNN graph. Ignored.')
             pass
         else:
-            scores[(u, v)] = np.nanmean(type_score)
+            scores[(u, v)] = np.nansum(type_score) if sum_up else np.nanmean(type_score)
             all_scores[(u, v)] = type_score
             p_fw[(u, v)] = n1 / (n1 + n2)
 
