@@ -8,14 +8,14 @@ from torch.utils.data import DataLoader
 from torch.distributions.negative_binomial import NegativeBinomial
 from torch.distributions.poisson import Poisson
 import time
-from velovae.plotting import plot_sig, plot_sig_, plot_time, plot_vel
+from velovae.plotting import plot_sig, plot_time, plot_vel
 from velovae.plotting import plot_train_loss, plot_test_loss
 
-from .model_util import hist_equal, init_params, init_params_raw, get_ts_global, reinit_params
+from .model_util import hist_equal, init_params, get_ts_global, reinit_params
 from .model_util import convert_time, get_gene_index
-from .model_util import pred_su, ode_numpy, knnx0, knnx0_bin
+from .model_util import pred_su, knnx0
 from .model_util import elbo_collapsed_categorical
-from .model_util import assign_gene_mode, find_dirichlet_param
+from .model_util import assign_gene_mode, assign_gene_mode_tprior, find_dirichlet_param
 from .model_util import get_cell_scale, get_dispersion
 
 from .transition_graph import encode_type
@@ -24,6 +24,7 @@ from .vanilla_vae import VanillaVAE, kl_gaussian
 from .velocity import rna_velocity_vae
 P_MAX = 1e30
 GRAD_MAX = 1e7
+
 
 def _sigmoid(x):
     return 1/(1+np.exp(-x))
@@ -151,7 +152,7 @@ class decoder(nn.Module):
                 sigma_u = sigma_u[gene_mask]
                 sigma_s = sigma_s[gene_mask]
                 T = T[:, gene_mask]
-
+            self.register_buffer('scaling', torch.tensor(np.log(scaling), device=device).float())
             if init_method == "random":
                 print("Random Initialization.")
                 self.alpha = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
@@ -159,7 +160,6 @@ class decoder(nn.Module):
                 self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
                 self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
                 self.toff = torch.nn.Parameter(torch.ones(G, device=device).float()*(tmax/2))
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 if not discrete:
                     self.sigma_u = (nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                                     if not discrete else None)
@@ -184,7 +184,6 @@ class decoder(nn.Module):
                 self.alpha = nn.Parameter(torch.tensor(np.log(self.alpha_init), device=device).float())
                 self.beta = nn.Parameter(torch.tensor(np.log(self.beta_init), device=device).float())
                 self.gamma = nn.Parameter(torch.tensor(np.log(self.gamma_init), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 if not discrete:
                     self.sigma_u = (nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
                                     if not discrete else None)
@@ -217,7 +216,6 @@ class decoder(nn.Module):
                 self.alpha = nn.Parameter(torch.tensor(np.log(self.alpha_init), device=device).float())
                 self.beta = nn.Parameter(torch.tensor(np.log(self.beta_init), device=device).float())
                 self.gamma = nn.Parameter(torch.tensor(np.log(self.gamma_init), device=device).float())
-                self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
                 self.ton = (nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float())
                             if init_ton_zero else
                             nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float()))
@@ -268,16 +266,7 @@ class decoder(nn.Module):
 
         # Gene dyncamical mode initialization
         if init_method == 'tprior':
-            from scipy.stats import linregress
-            # _t_init = self.t_init.reshape(-1, 1)
-            # dyn_mask = (_t_init > tmax*0.01) & (np.abs(_t_init - self.toff_init) > tmax*0.01)
-            # w = np.sum(((_t_init < self.toff_init) & dyn_mask), 0) / (np.sum(dyn_mask, 0) + 1e-10)
-            # self.w_noisy = w
-            w = np.empty((G))
-            for i in range(G):
-                slope_u, intercept_u, r_u, p_u, se = linregress(self.t_init, U[:, i])
-                slope_s, intercept_s, r_s, p_s, se = linregress(self.t_init, S[:, i])
-                w[i] = _sigmoid(slope_u*0.5+slope_s*0.5)
+            w = assign_gene_mode_tprior(adata, init_key, train_idx)
         else:
             dyn_mask = (T > tmax*0.01) & (np.abs(T-toff) > tmax*0.01)
             w = np.sum(((T < toff) & dyn_mask), 0) / (np.sum(dyn_mask, 0) + 1e-10)
@@ -506,7 +495,7 @@ class VAE(VanillaVAE):
             (1) random: random initialization
             (2) tprior: use the capture time to estimate rate parameters. Cell time will be
                         randomly sampled with the capture time as the mean. The variance can
-                        be controlled by changing 'time_overlap' in config.
+                        be controlled by changing 'std_t_scaling' in config.
             (3) steady: use the steady-state model to estimate gamma, alpha and assume beta = 1.
                         After this, a global cell time is estimated by taking the quantile over
                         all local times. Finally, rate parameters are reinitialized using the
@@ -558,10 +547,9 @@ class VAE(VanillaVAE):
             "tprior": tprior,
             "std_z_prior": std_z_prior,
             "tail": 0.01,
-            "time_overlap": 0.5,
+            "std_t_scaling": 0.05,
             "n_neighbors": 10,
             "dt": (0.03, 0.06),
-            "n_bin": None,
 
             # Training Parameters
             "n_epochs": 1000,
@@ -578,7 +566,6 @@ class VAE(VanillaVAE):
             "kl_w": 0.01,
             "reg_v": 0.0,
             "reg_a": 0.0,
-            "max_rate": 1e4,
             "test_iter": None,
             "save_epoch": 100,
             "n_warmup": 5,
@@ -586,12 +573,11 @@ class VAE(VanillaVAE):
             "early_stop_thred": early_stop_thred,
             "train_test_split": 0.7,
             "neg_slope": 0.0,
-            "k_alt": 1,
-            "train_scaling": False,
+            "k_alt": 0,
             "train_std": False,
             "train_ton": (init_method != 'tprior'),
             "weight_sample": False,
-            "vel_continuity_loss": False,
+            "vel_continuity_loss": 0,
 
             # hyperparameters for full vb
             "kl_param": 1.0,
@@ -604,6 +590,10 @@ class VAE(VanillaVAE):
             # Plotting
             "sparsify": 1
         }
+        # set any additional customized hyperparameter
+        for key in kwargs:
+            if key in self.config:
+                self.config[key] = kwargs[key]
 
         self.set_device(device)
         self.split_train_test(adata.n_obs)
@@ -953,12 +943,6 @@ class VAE(VanillaVAE):
     def _kl_poisson(self, lamb_1, lamb_2):
         return lamb_1 * (torch.log(lamb_1) - torch.log(lamb_2)) + lamb_2 - lamb_1
 
-    def _kl_nb(self, m1, p1, m2, p2):
-        r1 = m1 * (1 - p1) / p1
-        r2 = m2 * (1 - p2) / p2
-        return r1*torch.log(p1) - r2*torch.log(p2)\
-            + m1*torch.log(p1) - m1*torch.log(p2)
-
     def _kl_nb(self, m1, m2, p):
         r1 = m1 * (1 - p) / p
         r2 = m2 * (1 - p) / p
@@ -1186,7 +1170,7 @@ class VAE(VanillaVAE):
             self.counter = self.counter + 1
         return stop_training
 
-    def update_x0(self, U, S, n_bin=None):
+    def update_x0(self, U, S):
         ##########################################################################
         # Estimate the initial conditions using KNN
         # < Input Arguments >
@@ -1194,8 +1178,6 @@ class VAE(VanillaVAE):
         #     Input unspliced count matrix
         # 2   S [tensor (N,G)]
         #     Input spliced count matrix
-        # 3.  n_bin [int]
-        #     (Optional) Set to a positive integer if binned KNN is used.
         # < Output >
         # 1.  u0 [tensor (N,G)]
         #     Initial condition for u
@@ -1218,14 +1200,22 @@ class VAE(VanillaVAE):
         u1, s1, t1 = None, None, None
         # Compute initial conditions of cells without a valid pool of neighbors
         with torch.no_grad():
-            # w = F.softmax(self.decoder.logit_pw, 1).detach().cpu().numpy()[:, 0]
-            # tensor shape (1, 2, n_gene)
             init_mask = (t <= np.quantile(t, 0.01))
             u0_init = np.mean(U[init_mask], 0)
             s0_init = np.mean(S[init_mask], 0)
-        if n_bin is None:
-            print("Cell-wise KNN Estimation.")
-            u0, s0, t0 = knnx0(out["uhat"][self.train_idx],
+        u0, s0, t0 = knnx0(out["uhat"][self.train_idx],
+                           out["shat"][self.train_idx],
+                           t[self.train_idx],
+                           z[self.train_idx],
+                           t,
+                           z,
+                           dt,
+                           self.config["n_neighbors"],
+                           u0_init,
+                           s0_init,
+                           hist_eq=True)
+        if self.config["vel_continuity_loss"]:
+            u1, s1, t1 = knnx0(out["uhat"][self.train_idx],
                                out["shat"][self.train_idx],
                                t[self.train_idx],
                                z[self.train_idx],
@@ -1235,42 +1225,9 @@ class VAE(VanillaVAE):
                                self.config["n_neighbors"],
                                u0_init,
                                s0_init,
+                               forward=True,
                                hist_eq=True)
-            if self.config["vel_continuity_loss"]:
-                u1, s1, t1 = knnx0(out["uhat"][self.train_idx],
-                                   out["shat"][self.train_idx],
-                                   t[self.train_idx],
-                                   z[self.train_idx],
-                                   t,
-                                   z,
-                                   dt,
-                                   self.config["n_neighbors"],
-                                   u0_init,
-                                   s0_init,
-                                   forward=True,
-                                   hist_eq=True)
-                t1 = t1.reshape(-1, 1)
-        else:
-            print(f"Fast KNN Estimation with {n_bin} time bins.")
-            u0, s0, t0 = knnx0_bin(out["uhat"][self.train_idx],
-                                   out["shat"][self.train_idx],
-                                   t[self.train_idx],
-                                   z[self.train_idx],
-                                   t,
-                                   z,
-                                   dt,
-                                   self.config["n_neighbors"])
-            if self.config["vel_continuity_loss"]:
-                u1, s1, t1 = knnx0_bin(out["uhat"][self.train_idx],
-                                       out["shat"][self.train_idx],
-                                       t[self.train_idx],
-                                       z[self.train_idx],
-                                       t,
-                                       z,
-                                       dt,
-                                       self.config["n_neighbors"],
-                                       forward=True)
-                t1 = t1.reshape(-1, 1)
+
         print(f"Finished. Actual Time: {convert_time(time.time()-start)}")
         # return u0, s0, t0.reshape(-1,1), u1, s1, t1
         self.u0 = u0
@@ -1285,7 +1242,7 @@ class VAE(VanillaVAE):
         if self.is_discrete:
             self.config["learning_rate"] = 10**(-8.3*p-2.25)
             self.config["learning_rate_post"] = self.config["learning_rate"]
-            self.config["learning_rate_ode"] = 5*self.config["learning_rate"]
+            self.config["learning_rate_ode"] = 8*self.config["learning_rate"]
         else:
             self.config["learning_rate"] = 10**(-4*p-3)
             self.config["learning_rate_post"] = self.config["learning_rate"]
@@ -1382,9 +1339,6 @@ class VAE(VanillaVAE):
                      self.decoder.logit_pw]
         if self.config['train_ton']:
             param_ode.append(self.decoder.ton)
-        if self.config['train_scaling']:
-            self.decoder.scaling.requires_grad = True
-            param_ode = param_ode+[self.decoder.scaling]
         if self.config['train_std']:
             self.decoder.sigma_u.requires_grad = True
             self.decoder.sigma_s.requires_grad = True
@@ -1452,6 +1406,7 @@ class VAE(VanillaVAE):
         self.encoder.eval()
         self.use_knn = True
         self.train_stage = 2
+        self.decoder.logit_pw.requires_grad = False
         if not self.is_discrete:
             sigma_u_prev = self.decoder.sigma_u.detach().cpu().numpy()
             sigma_s_prev = self.decoder.sigma_s.detach().cpu().numpy()
@@ -1465,12 +1420,15 @@ class VAE(VanillaVAE):
                                           weight_decay=self.config["lambda_rho"])
         for r in range(self.config['n_refine']):
             print(f"*********             Velocity Refinement Round {r+1}              *********")
-            if (x0_change - x0_change_prev >= 0 and r > 1) or (x0_change < 0.01):
-                print(f"Stage 2: Early Stop Triggered at round {r}.")
-                break
+            self.config['early_stop_thred'] *= 0.95
+            stop_training = (x0_change - x0_change_prev >= -0.01 and r > 1) or (x0_change < 0.01)
             if (not self.is_discrete) and (noise_change > 0.001) and (r < self.config['n_refine']-1):
                 self.update_std_noise(train_set.data)
-            self.update_x0(X[:, :X.shape[1]//2], X[:, X.shape[1]//2:], self.config["n_bin"])
+                stop_training = False
+            if stop_training:
+                print(f"Stage 2: Early Stop Triggered at round {r}.")
+                break
+            self.update_x0(X[:, :X.shape[1]//2], X[:, X.shape[1]//2:])
             self.n_drop = 0
 
             for epoch in range(self.config["n_epochs_post"]):

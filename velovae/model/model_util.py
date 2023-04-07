@@ -9,7 +9,7 @@ from sklearn.neighbors import NearestNeighbors
 import pynndescent
 from tqdm.notebook import tqdm
 from sklearn.cluster import SpectralClustering, KMeans
-from scipy.stats import dirichlet, bernoulli, kstest
+from scipy.stats import dirichlet, bernoulli, kstest, linregress
 from scipy.linalg import svdvals
 
 """
@@ -685,14 +685,21 @@ def sample_dir_mix(w, yw, std_prior):
     return q
 
 
-def assign_gene_mode_auto(adata, w_noisy, thred=0.05, std_prior=0.1, n_cluster_thred=3):
+def assign_gene_mode_auto(adata,
+                          w_noisy,
+                          thred=0.05,
+                          std_prior=0.1,
+                          n_cluster_thred=3):
     # Compute gene correlation matrix
     Cs = np.corrcoef(adata.layers['Ms'].T)
     Cu = np.corrcoef(adata.layers['Mu'].T)
     C = 1+Cs*0.5+Cu*0.5
     C[np.isnan(C)] = 0.0
     # Spectral clustering
-    spc = SpectralClustering(get_nclusters(C, n_cluster_thred), affinity='precomputed', assign_labels='discretize')
+    spc = SpectralClustering(get_nclusters(C, n_cluster_thred),
+                             affinity='precomputed',
+                             assign_labels='discretize',
+                             random_state=42)
     y = spc.fit_predict(C)
     adata.var['init_mode'] = y
 
@@ -752,7 +759,12 @@ def assign_gene_mode_auto(adata, w_noisy, thred=0.05, std_prior=0.1, n_cluster_t
     return w
 
 
-def assign_gene_mode(adata, w_noisy, assign_type='binary', thred=0.05, std_prior=0.1, n_cluster_thred=3):
+def assign_gene_mode(adata,
+                     w_noisy,
+                     assign_type='binary',
+                     thred=0.05,
+                     std_prior=0.1,
+                     n_cluster_thred=3):
     # Assign one of ('inductive', 'repressive', 'mixture') to gene clusters
     # `assign_type' specifies which strategy to use
     if assign_type == 'binary':
@@ -760,12 +772,32 @@ def assign_gene_mode(adata, w_noisy, assign_type='binary', thred=0.05, std_prior
     elif assign_type == 'auto':
         return assign_gene_mode_auto(adata, w_noisy, thred, std_prior, n_cluster_thred)
     elif assign_type == 'inductive':
-        adata.varm['alpha_w'] = np.ones((adata.n_vars, 2))*np.array([13.8, 9.2])
-        return dirichlet([13.8, 9.2]).rvs(adata.n_vars)[:, 0]
+        alpha_ind = find_dirichlet_param(0.8, std_prior)
+        np.random.seed(42)
+        return dirichlet.rvs(alpha_ind, size=adata.n_vars)[:, 0]
     elif assign_type == 'repressive':
-        adata.varm['alpha_w'] = np.ones((adata.n_vars, 2))*np.array([9.2, 13.8])
-        return dirichlet([9.2, 13.8]).rvs(adata.n_vars)[:, 0]
+        alpha_rep = find_dirichlet_param(0.2, std_prior)
+        np.random.seed(42)
+        return dirichlet.rvs(alpha_rep, size=adata.n_vars)[:, 0]
 
+
+def assign_gene_mode_tprior(adata, tkey, train_idx, std_prior=0.05):
+    # Same as assign_gene_mode, but uses the informative time prior
+    # to determine inductive and repressive genes
+    tprior = adata.obs[tkey].to_numpy()[train_idx]
+    alpha_ind, alpha_rep = find_dirichlet_param(0.75, std_prior), find_dirichlet_param(0.25, std_prior)
+    w = np.empty((adata.n_vars))
+    slope = np.empty((adata.n_vars))
+    for i in range(adata.n_vars):
+        slope_u, intercept_u, r_u, p_u, se = linregress(tprior, adata.layers['Mu'][train_idx, i])
+        slope_s, intercept_s, r_s, p_s, se = linregress(tprior, adata.layers['Ms'][train_idx, i])
+        slope[i] = (slope_u*0.5+slope_s*0.5)
+    np.random.seed(42)
+    w[slope >= 0] = dirichlet.rvs(alpha_ind, size=np.sum(slope >= 0))[:, 0]
+    np.random.seed(42)
+    w[slope < 0] = dirichlet.rvs(alpha_rep, size=np.sum(slope < 0))[:, 0]
+    # return 1/(1+np.exp(-slope))
+    return w
 
 ############################################################
 # Vanilla VAE
@@ -1102,13 +1134,13 @@ Geoffrey Schiebinger, Jian Shu, Marcin Tabaka, Brian Cleary, Vidya Subramanian,
 ############################################################
 #  KNN-Related Functions
 ############################################################
-def _hist_equal(t, t_query, perc=0.95, n_bin=101):
+def _hist_equal(t, t_query, perc=0.95, n_bin=51):
     # Perform histogram equalization across all local times.
     tmax = t.max() - t.min()
     t_ub = np.quantile(t, perc)
     t_lb = t.min()
     delta_t = (t_ub - t_lb)/(n_bin-1)
-    bins = [t_lb+i*delta_t for i in range(n_bin)]+[t.max()]
+    bins = [t_lb+i*delta_t for i in range(n_bin)]+[t.max()+0.01]
     pdf_t, edges = np.histogram(t, bins, density=True)
     pt, edges = np.histogram(t, bins, density=False)
 
@@ -1164,7 +1196,7 @@ def knnx0(U, S,
     #         Whether to look for ancestors or descendants
     # 12.     hist_eq [bool]
     #         Whether to perform histogram equalization to time.
-    #         The purpose is to preserve more resolution in 
+    #         The purpose is to preserve more resolution in
     #         densely populated time intervals.
     ############################################################
     Nq = len(t_query)
@@ -1177,8 +1209,9 @@ def knnx0(U, S,
 
     n1 = 0
     len_avg = 0
-    if hist_eq:
+    if hist_eq:  # time histogram equalization
         t, t_query = _hist_equal(t, t_query)
+    # Used as the default u/s counts at the final time point
     t_98 = np.quantile(t, 0.98)
     p = 0.98
     while not np.any(t >= t_98) and p > 0.01:
@@ -1196,8 +1229,8 @@ def knnx0(U, S,
             t_ub, t_lb = t_query[i] - dt_r, t_query[i] - dt_l
         indices = np.where((t >= t_lb) & (t < t_ub))[0]  # filter out cells in the bin
         k_ = len(indices)
-        delta_t = t.std() * 0.25  # increment / decrement of the time window boundary
-        while k_ < k and t_lb > t.min() - dt_r and t_ub < t.max() + dt_r:
+        delta_t = dt[1] - dt[0]  # increment / decrement of the time window boundary
+        while k_ < k and t_lb > t.min() - (dt[1] - dt[0]) and t_ub < t.max() + (dt[1] - dt[0]):
             if forward:
                 t_lb = t_query[i]
                 t_ub = t_ub + delta_t
