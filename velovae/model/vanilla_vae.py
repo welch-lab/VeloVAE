@@ -141,9 +141,6 @@ class decoder(nn.Module):
             self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
             self.ton = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
             self.toff = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float()+self.ton.detach())
-            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
-            self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-            self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
         elif init_method == "tprior":
             print("Initialization using prior time.")
             t_prior = adata.obs[init_key].to_numpy()
@@ -159,11 +156,8 @@ class decoder(nn.Module):
             self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
             self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
             self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
-            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
             self.ton = nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
             self.toff = nn.Parameter(torch.tensor(np.log(toff+1e-10), device=device).float())
-            self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-            self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
         else:
             print("Initialization using the steady-state and dynamical models.")
             if init_key is not None:
@@ -182,15 +176,12 @@ class decoder(nn.Module):
             self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
             self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
             self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
-            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).float())
             self.ton = nn.Parameter(torch.tensor(np.log(ton+1e-10), device=device).float())
             self.toff = nn.Parameter(torch.tensor(np.log(toff+1e-10), device=device).float())
-            self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).float())
-            self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).float())
 
-        self.scaling.requires_grad = False
-        self.sigma_u.requires_grad = False
-        self.sigma_s.requires_grad = False
+        self.register_buffer('scaling', torch.tensor(np.log(scaling), device=device).float())
+        self.register_buffer('sigma_u', torch.tensor(np.log(sigma_u), device=device).float())
+        self.register_buffer('sigma_s', torch.tensor(np.log(sigma_s), device=device).float())
 
     def forward(self, t, neg_slope=0.0):
         Uhat, Shat = ode(t,
@@ -237,7 +228,6 @@ class VanillaVAE():
                  init_method="steady",
                  init_key=None,
                  tprior=None,
-                 time_distribution="gaussian",
                  checkpoints=None):
         """VeloVAE with latent time only
 
@@ -249,16 +239,11 @@ class VanillaVAE():
         device : {'cpu','gpu'}, optional
         hidden_size : tuple, optional
             Width of the first and second hidden layer
-        init_type : str, optional
-            The stem cell type. Used to estimated the initial conditions.
-            This is not commonly used in practice and please consider leaving it to default.
         init_key : str, optional
             column in the AnnData object containing the capture time
         tprior : str, optional
             key in adata.obs that stores the capture time.
             Used for informative time prior
-        time_distribution : str, optional
-            Should be either "gaussian" or "uniform.
         checkpoints : string list
             Contains the path to saved encoder and decoder models. Should be a .pt file.
         """
@@ -274,7 +259,7 @@ class VanillaVAE():
             "init_key": init_key,
             "tprior": tprior,
             "tail": 0.01,
-            "time_overlap": 0.5,
+            "std_t_scaling": 0.05,
 
             # Training Parameters
             "n_epochs": 2000,
@@ -291,8 +276,6 @@ class VanillaVAE():
             "train_test_split": 0.7,
             "k_alt": 1,
             "neg_slope": 0.0,
-            "train_scaling": False,
-            "train_std": False,
             "weight_sample": False,
 
             # Plotting
@@ -317,9 +300,8 @@ class VanillaVAE():
         except IndexError:
             print('Please provide two dimensions!')
         self.tmax = torch.tensor(tmax, device=self.device)
-        self.time_distribution = time_distribution
         # Time prior
-        self.get_prior(adata, time_distribution, tmax, tprior)
+        self.get_prior(adata, tmax, tprior)
         # class attributes for training
         self.loss_train, self.loss_test = [], []
         self.counter = 0  # Count the number of iterations
@@ -327,64 +309,36 @@ class VanillaVAE():
         self.train_stage = 1
         self.timer = time.time() - t_start
 
-    def get_prior(self, adata, time_distribution, tmax, tprior=None):
+    def get_prior(self, adata, tmax, tprior=None):
         """Compute the parameters of time prior distribution
 
         Arguments
         ---------
         adata : :class:`anndata.AnnData`
-        time_distribution : {'gaussian', 'uniform'}
         tmax : float
             Maximum time
         tprior : str, optional
             Key in adata.obs storing the capture time
         """
-        if time_distribution == "gaussian":
-            print("Gaussian Prior.")
-            self.kl_time = kl_gaussian
-            self.sample = self.reparameterize
-            if tprior is None:
-                self.p_t = torch.stack([torch.ones(adata.n_obs, 1, device=self.device)*tmax*0.5,
-                                        torch.ones(adata.n_obs, 1, device=self.device)*tmax
-                                        * self.config["time_overlap"]]).float()
-            else:
-                print('Using informative time prior.')
-                t = adata.obs[tprior].to_numpy()
-                t = t/t.max()*tmax
-                t_cap = np.sort(np.unique(t))
-                std_t = np.zeros((len(t)))
-                std_t[t == t_cap[0]] = (t_cap[1] - t_cap[0])*(0.5+0.5*self.config["time_overlap"])
-                for i in range(1, len(t_cap)-1):
-                    std_t[t == t_cap[i]] = 0.5*(t_cap[i] - t_cap[i-1])*(0.5+0.5*self.config["time_overlap"]) \
-                        + 0.5*(t_cap[i+1] - t_cap[i])*(0.5+0.5*self.config["time_overlap"])
-                std_t[t == t_cap[-1]] = (t_cap[-1] - t_cap[-2])*(0.5+0.5*self.config["time_overlap"])
-                self.p_t = torch.stack([torch.tensor(t, device=self.device).view(-1, 1),
-                                        torch.tensor(std_t, device=self.device).view(-1, 1)]).float()
+        self.kl_time = kl_gaussian
+        self.sample = self.reparameterize
+        if tprior is None:
+            self.p_t = torch.stack([torch.ones(adata.n_obs, 1, device=self.device)*tmax*0.5,
+                                    torch.ones(adata.n_obs, 1, device=self.device)*tmax
+                                    * self.config["std_t_scaling"]]).float()
         else:
-            print("Tailed Uniform Prior.")
-            self.kl_time = kl_uniform
-            self.sample = self.reparameterize_uniform
-            if tprior is None:
-                self.p_t = torch.stack([torch.zeros(adata.n_obs, 1, device=self.device),
-                                        torch.ones(adata.n_obs, 1, device=self.device)*tmax]).float()
-            else:
-                print('Using informative time prior.')
-                t = adata.obs[tprior].to_numpy()
-                t = t/t.max()*tmax
-                t_cap = np.sort(np.unique(t))
-                t_start = np.zeros((len(t)))
-                t_end = np.zeros((len(t)))
-                for i in range(len(t_cap)-1):
-                    t_end[t == t_cap[i]] = t_cap[i] + (t_cap[i+1] - t_cap[i])*(0.5+0.5*self.config["time_overlap"])
-                t_end[t == t_cap[-1]] = t_cap[-1] + (t_cap[-1] - t_cap[-2])*(0.5+0.5*self.config["time_overlap"])
-
-                for i in range(1, len(t_cap)):
-                    t_start[t == t_cap[i]] = max(0, t_cap[i] - (t_cap[i] - t_cap[i-1])
-                                                 * (0.5+0.5*self.config["time_overlap"]))
-                t_start[t == t_cap[0]] = max(0, t_cap[0] - (t_cap[1] - t_cap[0]) *
-                                             (0.5+0.5*self.config["time_overlap"]))
-                self.p_t = torch.stack([torch.tensor(t, device=self.device).unsqueeze(-1),
-                                        torch.tensor(t_end, device=self.device).unsqueeze(-1)]).float()
+            print('Using informative time prior.')
+            t = adata.obs[tprior].to_numpy()
+            t = t/t.max()*tmax
+            t_cap = np.sort(np.unique(t))
+            std_t = np.zeros((len(t)))
+            std_t[t == t_cap[0]] = (t_cap[1] - t_cap[0])*(0.5+0.5*self.config["std_t_scaling"])
+            for i in range(1, len(t_cap)-1):
+                std_t[t == t_cap[i]] = 0.5*(t_cap[i] - t_cap[i-1])*(0.5+0.5*self.config["std_t_scaling"]) \
+                    + 0.5*(t_cap[i+1] - t_cap[i])*(0.5+0.5*self.config["std_t_scaling"])
+            std_t[t == t_cap[-1]] = (t_cap[-1] - t_cap[-2])*(0.5+0.5*self.config["std_t_scaling"])
+            self.p_t = torch.stack([torch.tensor(t, device=self.device).view(-1, 1),
+                                    torch.tensor(std_t, device=self.device).view(-1, 1)]).float()
 
     def set_device(self, device):
         """Set the device of the model.
@@ -539,11 +493,6 @@ class VanillaVAE():
             else:
                 self.config[key] = config[key]
                 print(f"Warning: unknown hyperparameter: {key}")
-        if self.config["train_scaling"]:
-            self.decoder.scaling.requires_grad = True
-        if self.config["train_std"]:
-            self.decoder.sigma_u.requires_grad = True
-            self.decoder.sigma_s.requires_grad = True
 
     def split_train_test(self, N):
         # Randomly select indices as training samples.
@@ -617,10 +566,6 @@ class VanillaVAE():
         print("*********                 Creating optimizers                 *********")
         param_nn = list(self.encoder.parameters())
         param_ode = self.decoder.get_ode_param_list()
-        if self.config['train_scaling']:
-            param_ode = param_ode+[self.decoder.scaling]
-        if self.config['train_std']:
-            param_ode = param_ode+[self.decoder.sigma_u, self.decoder.sigma_s]
 
         optimizer = torch.optim.Adam(param_nn, lr=self.config["learning_rate"], weight_decay=self.config["lambda"])
         optimizer_ode = torch.optim.Adam(param_ode, lr=self.config["learning_rate_ode"])
@@ -1106,7 +1051,7 @@ class CycleVAE(VanillaVAE):
             "init_key": init_key,
             "tprior": tprior,
             "tail": 0.01,
-            "time_overlap": 0.5,
+            "std_t_scaling": 0.05,
 
             # Training Parameters
             "n_epochs": 2000,
@@ -1123,8 +1068,6 @@ class CycleVAE(VanillaVAE):
             "train_test_split": 0.7,
             "k_alt": 1,
             "neg_slope": 0.0,
-            "train_scaling": False,
-            "train_std": False,
             "weight_sample": False,
 
             # Plotting
