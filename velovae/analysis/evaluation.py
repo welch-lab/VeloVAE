@@ -106,7 +106,15 @@ def get_metric(adata,
         Stores the performance metrics. Rows are metric names and columns are method names
     """
 
-    stats = {}  # contains the performance metrics
+    stats = {
+        'MSE Train': np.nan,
+        'MSE Test': np.nan,
+        'MAE Train': np.nan,
+        'MAE Test': np.nan,
+        'LL Train': np.nan,
+        'LL Test': np.nan,
+        'Training Time': np.nan
+    }  # contains the performance metrics
     if gene_key is not None and gene_key in adata.var:
         gene_mask = adata.var[gene_key].to_numpy()
     else:
@@ -168,15 +176,6 @@ def get_metric(adata,
          mae_train, mae_test,
          logp_train, logp_test,
          run_time) = get_err_velovi(adata, key, gene_mask)
-
-    if method in ['scVelo', 'UniTVelo', 'DeepVelo']:
-        logp_test = np.nan
-        mse_test = np.nan
-        logp_test = np.nan
-        mae_test = np.nan
-
-    if method == 'DeepVelo':
-        logp_train = np.nan
 
     stats['MSE Train'] = mse_train
     stats['MSE Test'] = mse_test
@@ -241,7 +240,7 @@ def get_metric(adata,
                             pd.DataFrame.from_dict(cbdir, orient='index'),
                             pd.DataFrame.from_dict(cbdir_embed, orient='index'),
                             pd.DataFrame.from_dict(tscore, orient='index')],
-                            axis=1).T
+                           axis=1).T
     stats_type.index = pd.Index(['CBDir (Subset)',
                                  'CBDir (Embed, Subset)',
                                  'CBDir',
@@ -258,7 +257,7 @@ def post_analysis(adata,
                   compute_metrics=True,
                   raw_count=False,
                   genes=[],
-                  plot_type=[],
+                  plot_type=['time', 'gene', 'stream'],
                   cluster_key="clusters",
                   cluster_edges=[],
                   nplot=500,
@@ -287,13 +286,19 @@ def post_analysis(adata,
         Key in .var for gene filtering. Usually set to select velocity genes.
     compute_metrics : bool, optional
         Whether to compute the performance metrics for the methods
+    raw_count : bool, optional
+        Whether to plot raw count numbers. Used for discrete models.
     genes : string list, optional
-        Genes to plot. Used when plot_type contains "phase" or "signal"
+        Genes to plot. Used when plot_type contains "phase" or "gene"
     plot_type : string list, optional
         Type of plots to generate.
-        Currently supports phase, signal (u/s/v vs. t), time and cell type
+        Currently supports phase, gene (u/s/v vs. t), time and cell type
     cluster_key : str, optional
         Key in .obs containing the cell type labels
+    cluster_edges : list of tuples, optional
+        List of ground-truth cell type ancestor-descendant relations, e.g. (A, B)
+        means cell type A is the ancestor of type B. This is used for computing
+        velocity metrics.
     nplot : int, optional
         (Optional) Number of data points in the prediction (or for each cell type in VeloVAE and BrODE).
         This is to save computation. For plotting the prediction, we don't need
@@ -315,7 +320,11 @@ def post_analysis(adata,
     Returns
     -------
     stats_df : :class:`pandas.DataFrame`
-        Contains the performance metrics of all methods.
+        Contains the dataset-wise performance metrics of all methods.
+        Saves the figures to 'figure_path'.
+    stats_df_type : :class:`pandas.DataFrame`
+        Contains the performance metrics of each pair of ancestor 
+        and desendant cell types.
         Saves the figures to 'figure_path'.
     """
     make_dir(figure_path)
@@ -384,7 +393,7 @@ def post_analysis(adata,
             method_ = f"{method} ({keys[i]})" if method in stats else method
             stats[method_] = stats_i
         # Compute prediction for the purpose of plotting (a fixed number of plots)
-        if 'phase' in plot_type or 'signal' in plot_type or 'all' in plot_type:
+        if 'phase' in plot_type or 'gene' in plot_type or 'all' in plot_type:
             # avoid duplicate methods with different keys
             method_ = f"{method} ({keys[i]})" if method in V else method
             # Integer-encoded cell type
@@ -423,8 +432,8 @@ def post_analysis(adata,
             elif method == "DeepVelo":
                 t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
                 V[method_] = adata.layers["velocity"][:, gene_indices]
-                Uhat_i = adata.layers["Mu"][:, gene_indices]+adata.layers["velocity_unspliced"][:, gene_indices]
-                Shat_i = adata.layers["Mu"][:, gene_indices]+V[method]
+                Uhat_i = adata.layers["Mu"][:, gene_indices]
+                Shat_i = adata.layers["Ms"][:, gene_indices]
                 Yhat[method_] = None
             elif method in ["PyroVelocity", "Continuous PyroVelocity"]:
                 t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
@@ -437,6 +446,12 @@ def post_analysis(adata,
                 Uhat_i = adata.layers[f'{keys[i]}_uhat'][:, gene_indices]
                 Shat_i = adata.layers[f'{keys[i]}_shat'][:, gene_indices]
                 V[method_] = adata.layers[f"{keys[i]}_velocity"][:, gene_indices]
+                Yhat[method_] = cell_labels
+            elif method == "cellDancer":
+                t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
+                Uhat_i = adata.layers["Mu"][:, gene_indices]
+                Shat_i = adata.layers["Ms"][:, gene_indices]
+                V[method_] = adata.layers[f"{keykeys[i]}_velocity"][:, gene_indices]
                 Yhat[method_] = cell_labels
 
             That[method_] = t_i
@@ -506,7 +521,7 @@ def post_analysis(adata,
                         figname=test_id,
                         format=format)
 
-    if 'signal' in plot_type or 'all' in plot_type:
+    if 'gene' in plot_type or 'all' in plot_type:
         T = {}
         Labels_sig = {}
         Legends_sig = {}
@@ -575,4 +590,4 @@ def post_analysis(adata,
         return stats_df, stats_type_df
     if save is not None:
         adata.write_h5ad(save)
-    return
+    return None, None
