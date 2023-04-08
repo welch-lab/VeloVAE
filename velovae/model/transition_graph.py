@@ -2,6 +2,7 @@ import numpy as np
 from copy import deepcopy
 import scanpy as sc
 from .model_util import knn_transition_prob
+from ..analysis.evaluation_util import calibrated_cross_boundary_correctness
 
 #######################################################################
 # Functions to encode string-type data as integers
@@ -301,7 +302,15 @@ def edmond_chu_liu(graph, r):
 
 
 class TransGraph():
-    def __init__(self, adata, tkey, embed_key, cluster_key, train_idx=None, k=5, res=0.005):
+    def __init__(self,
+                 adata,
+                 tkey,
+                 embed_key,
+                 cluster_key,
+                 vkey=None,
+                 train_idx=None,
+                 k=5,
+                 res=0.005):
         """Class constructor
 
         Arguments
@@ -313,26 +322,48 @@ class TransGraph():
             Key in adata.obs storing the cell state
         cluster_key : str
             Key in adata.obs storing the cell type annotation
+        vkey : str, optional
+            Key in adata.layers or adata.obsm storing RNA velocity (raw or embedding)
+            If set to any none-empty key, cell-type transition graph will be built
+            based on CBDir instead of time-windowed KNN.
         train_idx : `numpy array`, optional
             List of cell indices in the training data
         k : int, optional
-            Number of neighbors used in Louvain clustering during graph partition
+            Number of neighbors used in Louvain clustering during graph partition.
+            Effective only if vkey is None.
         res : int, optional
             Resolution parameter used in Louvain clustering during graph partition
+            Effective only if vkey is None.
         """
         cell_labels_raw = (adata.obs[cluster_key].to_numpy()
                            if train_idx is None else
                            adata.obs[cluster_key][train_idx].to_numpy())
-        self.t = adata.obs[tkey].to_numpy() if train_idx is None else adata.obs[tkey][train_idx].to_numpy()
-        self.z = adata.obsm[embed_key] if train_idx is None else adata.obsm[embed_key][train_idx]
-
         cell_types_raw = np.unique(cell_labels_raw)
         self.label_dic, self.label_dic_rev = encode_type(cell_types_raw)
 
         self.n_type = len(cell_types_raw)
         self.cell_labels = np.array([self.label_dic[x] for x in cell_labels_raw])
         self.cell_types = np.array([self.label_dic[cell_types_raw[i]] for i in range(self.n_type)])
+        self.t = adata.obs[tkey].to_numpy() if train_idx is None else adata.obs[tkey][train_idx].to_numpy()
+        self.z = adata.obsm[embed_key] if train_idx is None else adata.obsm[embed_key][train_idx]
+        self.use_vel_graph = vkey is not None
+        if vkey is None:
+            self._time_based_partition(adata,
+                                       train_idx,
+                                       k,
+                                       res)
+        else:
+            self._velocity_based_partition(adata,
+                                           tkey,
+                                           embed_key,
+                                           cluster_key,
+                                           vkey)
 
+    def _time_based_partition(self,
+                              adata,
+                              train_idx=None,
+                              k=5,
+                              res=0.005):
         # Partition the graph
         print("Graph Partition")
         if "partition" not in adata.obs:
@@ -353,14 +384,124 @@ class TransGraph():
         self.n_lineage = len(self.partition_cluster)
 
         print("Number of partitions: ", len(lineages))
+        return
 
-    def compute_transition_deterministic(self, adata, n_par=2, dt=(0.01, 0.05), k=5, soft_assign=True):
+    def _count_lineage(self, cbdir):
+        partition = np.array(range(len(self.cell_types)))
+        for pair in cbdir:
+            root = min(self.label_dic[pair[0]], self.label_dic[pair[1]])
+            partition[partition == partition[self.label_dic[pair[0]]]] = root
+            partition[partition == partition[self.label_dic[pair[0]]]] = root
+        self.partition = partition
+        self.partition_cluster = np.unique(partition)
+        self.n_lineage = len(self.partition_cluster)
+        return
+
+    def _velocity_based_partition(self,
+                                  adata,
+                                  tkey,
+                                  embed_key,
+                                  cluster_key,
+                                  vkey):
+        self.cbdir, _, self.tscore, _ = calibrated_cross_boundary_correctness(adata,
+                                                                              cluster_key,
+                                                                              vkey,
+                                                                              tkey,
+                                                                              cluster_edges=None,
+                                                                              x_emb='Ms',
+                                                                              sum_up=True)
+        self._count_lineage(self.cbdir)
+        return
+
+    def _get_init_time(self):
+        # Estimate initial time
+        self.t_init = np.zeros((self.n_type))
+        for i in (self.cell_types):
+            self.t_init[i] = np.quantile(self.t[self.cell_labels == i], 0.01)
+
+    def _time_based_graph(self,
+                          n_par=2,
+                          dt=(0.01, 0.05),
+                          k=5,
+                          soft_assign=True):
+        self._get_init_time()
+        # Compute cell-type transition probability
+        print("Computing type-to-type transition probability")
+        range_t = np.quantile(self.t, 0.99) - np.quantile(self.t, 0.01)
+        P_raw = knn_transition_prob(self.t,
+                                    self.z,
+                                    self.t,
+                                    self.z,
+                                    self.cell_labels,
+                                    self.n_type,
+                                    [dt[0]*range_t, dt[1]*range_t],
+                                    k,
+                                    soft_assign)
+
+        psum = P_raw.sum(1)
+        P_raw = P_raw/psum.reshape(-1, 1)
+        P = np.zeros(P_raw.shape)
+        for i in range(P.shape[0]):
+            idx_sort = np.flip(np.argsort(P_raw[i]))
+            count = 0
+            for j in range(P.shape[1]):
+                if (not idx_sort[j] == i) and (self.t_init[idx_sort[j]] <= self.t_init[i]):
+                    P[i, idx_sort[j]] = P_raw[i, idx_sort[j]]
+                    count = count + 1
+                if count == n_par:
+                    break
+            assert P[i, i] == 0
+            for j in range(P.shape[1]):  # Prevents disconnected parts in the same partition
+                if self.t_init[j] < self.t_init[i]:
+                    P[i, j] += 1e-3
+
+        psum = P.sum(1)
+        psum[psum == 0] = 1
+        P = P/psum.reshape(-1, 1)
+
+        self.w = P
+        return P_raw
+
+    def _velocity_based_graph(self, n_par=2):
+        self._get_init_time()
+        P_raw = np.zeros((self.n_type, self.n_type))
+        for pair in self.cbdir:
+            i, j = self.label_dic[pair[1]], self.label_dic[pair[0]]
+            if self.tscore[pair] > 0.5:
+                P_raw[i, j] = np.clip(self.cbdir[pair], 1e-16, None)
+
+        P = np.zeros(P_raw.shape)
+        for i in range(P.shape[0]):
+            idx_sort = np.flip(np.argsort(P_raw[i]))
+            count = 0
+            for j in range(P.shape[1]):
+                if (not idx_sort[j] == i) and (self.t_init[idx_sort[j]] <= self.t_init[i]):
+                    P[i, idx_sort[j]] = P_raw[i, idx_sort[j]]
+                    count = count + 1
+                if count == n_par:
+                    break
+            assert P[i, i] == 0
+            for j in range(P.shape[1]):  # Prevents disconnected parts in the same partition
+                if self.t_init[j] < self.t_init[i]:
+                    P[i, j] += 1e-3
+
+        psum = P.sum(1)
+        psum[psum == 0] = 1
+        P = P/psum.reshape(-1, 1)
+
+        self.w = P
+        return P_raw
+
+    def compute_transition_deterministic(self,
+                                         n_par=2,
+                                         dt=(0.01, 0.05),
+                                         k=5,
+                                         soft_assign=True):
         """Compute a type-to-type transition based a cell-to-cell transition matrix
 
         Arguments
         ---------
 
-        adata : :class:`anndata.AnnData`
         n_par : int
             Number of parents to keep in graph pruning.
         dt : tuple
@@ -382,45 +523,13 @@ class TransGraph():
         out : `numpy array`
             Cell type transition probability matrix
         """
-        # Estimate initial time
-        t_init = np.zeros((self.n_type))
-        for i in (self.cell_types):
-            t_init[i] = np.quantile(self.t[self.cell_labels == i], 0.01)
-        # Compute cell-type transition probability
-        print("Computing type-to-type transition probability")
-        range_t = np.quantile(self.t, 0.99) - np.quantile(self.t, 0.01)
-        P_raw = knn_transition_prob(self.t,
-                                    self.z,
-                                    self.t,
-                                    self.z,
-                                    self.cell_labels,
-                                    self.n_type,
-                                    [dt[0]*range_t, dt[1]*range_t],
-                                    k,
-                                    soft_assign)
-
-        psum = P_raw.sum(1)
-        P_raw = P_raw/psum.reshape(-1, 1)
-        P = np.zeros(P_raw.shape)
-        for i in range(P.shape[0]):
-            idx_sort = np.flip(np.argsort(P_raw[i]))
-            count = 0
-            for j in range(P.shape[1]):
-                if (not idx_sort[j] == i) and (t_init[idx_sort[j]] <= t_init[i]):
-                    P[i, idx_sort[j]] = P_raw[i, idx_sort[j]]
-                    count = count + 1
-                if count == n_par:
-                    break
-            assert P[i, i] == 0
-            for j in range(P.shape[1]):  # Prevents disconnected parts in the same partition
-                if t_init[j] < t_init[i]:
-                    P[i, j] += 1e-3
-
-        psum = P.sum(1)
-        psum[psum == 0] = 1
-        P = P/psum.reshape(-1, 1)
-
-        self.w = P
+        if self.use_vel_graph:
+            P_raw = self._velocity_based_graph(n_par)
+        else:
+            P_raw = self._time_based_graph(n_par,
+                                           dt,
+                                           k,
+                                           soft_assign)
 
         # For each partition, get the MST
         print("Obtaining the MST in each partition")
@@ -428,10 +537,10 @@ class TransGraph():
 
         for lineage in self.partition_cluster:
             vs_part = np.where(self.partition == lineage)[0]
-            mask = (P[vs_part][:, vs_part] == 0)
-            graph_part = np.log(P[vs_part][:, vs_part]+1e-10)
+            mask = (self.w[vs_part][:, vs_part] == 0)
+            graph_part = np.log(self.w[vs_part][:, vs_part]+1e-10)
             graph_part[mask] = -np.inf
-            root = vs_part[np.argmin(t_init[vs_part])]
+            root = vs_part[np.argmin(self.t_init[vs_part])]
             root = np.where(vs_part == root)[0][0]
             graph_part[root, root] = 1.0
             adj_list = adj_matrix_to_list(graph_part)
@@ -448,6 +557,7 @@ class TransGraph():
                 graph_part = np.log(P_part+1e-10)
                 graph_part[mask] = -np.inf
                 graph_part[root, root] = 0.0
+                print(graph_part)
                 # adj_list = adj_matrix_to_list(graph_part)
                 # if(not check_connected(adj_list, root, len(vs_part))):
                 #     print("Warning: the full graph is disconnected! Using the fully-connected graph instead.")
