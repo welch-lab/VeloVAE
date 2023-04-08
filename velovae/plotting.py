@@ -6,6 +6,8 @@ import pynndescent
 import umap
 from loess import loess_1d
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from sklearn.neighbors import NearestNeighbors
+from scipy.stats import norm
 
 
 #######################################################################################
@@ -673,6 +675,82 @@ def plot_mtx(K, xlabel=None, ylabel=None, xticklabels=None, yticklabels=None, sa
 
 
 #########################################################################
+# Velocity quiver plot on the phase portrait
+# Reference: 
+# Shengyu Li#, Pengzhi Zhang#, Weiqing Chen, Lingqun Ye, 
+# Kristopher W. Brannan, Nhat-Tu Le, Jun-ichi Abe, John P. Cooke, 
+# Guangyu Wang. A relay velocity model infers cell-dependent RNA velocity. 
+# Nature Biotechnology (2023) https://doi.org/10.1038/s41587-023-01728-5
+#########################################################################
+def pick_grid_points(x, grid_size=(30,30), percentile=25):
+    def gaussian_kernel(X, mu = 0, sigma=1):
+        return np.exp(-(X - mu)**2 / (2*sigma**2)) / np.sqrt(2*np.pi*sigma**2)
+    grs = []
+    for dim_i in range(x.shape[1]):
+        m, M = np.min(x[:, dim_i]), np.max(x[:, dim_i])
+        m = m - 0.025 * np.abs(M - m)
+        M = M + 0.025 * np.abs(M - m)
+        gr = np.linspace(m, M, grid_size[dim_i])
+        grs.append(gr)
+    meshes_tuple = np.meshgrid(*grs)
+    gridpoints_coordinates = np.vstack([i.flat for i in meshes_tuple]).T
+    gridpoints_coordinates = gridpoints_coordinates + norm.rvs(loc=0, scale=0.15, size=gridpoints_coordinates.shape)
+    
+    np.random.seed(10) # set random seed
+    
+    nn = NearestNeighbors()
+
+    neighbors_1 = min((x.shape[0]-1), 20)
+    nn.fit(x)
+    dist, ixs = nn.kneighbors(gridpoints_coordinates, neighbors_1)
+
+    ix_choice = ixs[:,0].flat[:]
+    ix_choice = np.unique(ix_choice)
+
+    nn = NearestNeighbors()
+
+    neighbors_2 = min((x.shape[0]-1), 20)
+    nn.fit(x)
+    dist, ixs = nn.kneighbors(x[ix_choice], neighbors_2)
+
+    density_extimate = gaussian_kernel(dist, mu=0, sigma=0.5).sum(1)
+    bool_density = density_extimate > np.percentile(density_extimate, percentile)
+    ix_choice = ix_choice[bool_density]
+    return ix_choice
+
+
+def plot_phase_vel(adata,
+                   gene,
+                   key,
+                   dt=0.05,
+                   grid_size=(30, 30),
+                   percentile=25,
+                   save=None):
+    fig, ax = plt.subplots(figsize=(12, 8))
+    gidx = np.where(adata.var_names == gene)[0][0]
+    scaling = adata.var[f'{key}_scaling'].iloc[gidx]
+    t = adata.obs[f'{key}_time'].to_numpy()
+    vu = adata.layers[f'{key}_velocity_u'][:, gidx]
+    vs = adata.layers[f'{key}_velocity'][:, gidx]
+    u = adata.layers['Mu'][:, gidx]/scaling
+    s = adata.layers['Ms'][:, gidx]
+    x = np.stack([s, u]).T
+    _plot_heatmap(ax, t, x, 'time')
+    grid_points = pick_grid_points(x, grid_size, percentile)
+    ax.quiver(s[grid_points],
+              u[grid_points],
+              dt*vs[grid_points],
+              dt*vu[grid_points],
+              angles='xy',
+              scale=None,
+              scale_units='inches',
+              headwidth=5.0,
+              headlength=8.0,
+              color='k')
+    save_fig(fig, save)
+
+
+#########################################################################
 # Post Analysis
 #########################################################################
 def _plot_heatmap(ax,
@@ -682,6 +760,7 @@ def _plot_heatmap(ax,
                   colorbar_ticklabels=None,
                   markersize=5,
                   cmap='plasma',
+                  show_color_bar=True,
                   axis_off=True):
     ax.scatter(X_embed[:, 0],
                X_embed[:, 1],
@@ -1239,10 +1318,22 @@ def plot_sig_pred_axis(ax,
         for i in range(len(legends)):
             mask = labels == i
             if np.any(mask):
+                idx_ordered = np.argsort(t[mask][::D])
                 if show_legend:
-                    ax.plot(t[mask][::D], x[mask][::D], marker, linewidth=5, color='k', alpha=a, label=legends[i])
+                    ax.plot(t[mask][::D][idx_ordered],
+                            x[mask][::D][idx_ordered],
+                            marker,
+                            linewidth=5,
+                            color='k',
+                            alpha=a,
+                            label=legends[i])
                 else:
-                    ax.plot(t[mask][::D], x[mask][::D], marker, linewidth=5, color='k', alpha=a)
+                    ax.plot(t[mask][::D][idx_ordered],
+                            x[mask][::D][idx_ordered],
+                            marker,
+                            linewidth=5,
+                            color='k',
+                            alpha=a)
     ymin, ymax = ax.get_ylim()
     ax.set_yticks([0, ymax])
     if title is not None:
@@ -1535,7 +1626,7 @@ def plot_sig_grid(Nr,
                                       sparsity_correction=sparsity_correction,
                                       color_map=color_map)
                     else:
-                        plot_sig_pred_axis(ax_sig[3 * i],
+                        plot_sig_pred_axis(ax_sig[3*i],
                                            that,
                                            Uhat[methods[0]][:, idx],
                                            Labels_demo[methods[0]],
@@ -1543,7 +1634,7 @@ def plot_sig_grid(Nr,
                                            '-',
                                            1.0,
                                            1)
-                        plot_sig_pred_axis(ax_sig[3 * i + 1],
+                        plot_sig_pred_axis(ax_sig[3*i+1],
                                            that,
                                            Shat[methods[0]][:, idx],
                                            Labels_demo[methods[0]],
@@ -1551,7 +1642,7 @@ def plot_sig_grid(Nr,
                                            '-',
                                            1.0,
                                            1)
-                        plot_vel_axis(ax_sig[3 * i + 2],
+                        plot_vel_axis(ax_sig[3*i+2],
                                       that,
                                       Shat[methods[0]][:, idx],
                                       V[methods[0]][:, idx],
@@ -1652,7 +1743,7 @@ def plot_sig_grid(Nr,
                                               sparsity_correction=sparsity_correction,
                                               color_map=color_map)
                             else:
-                                plot_sig_pred_axis(ax_sig[3 * i, M * j + k],
+                                plot_sig_pred_axis(ax_sig[3*i, M*j+k],
                                                    that,
                                                    Uhat[method][:, idx],
                                                    Labels_demo[method],
