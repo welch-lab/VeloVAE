@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import os
-import matplotlib.pyplot as plt
 from ..plotting import get_colors
 
 class PerfLogger:
@@ -30,7 +29,8 @@ class PerfLogger:
                         "CBDir (Subset)",
                         "CBDir (Embed)",
                         "CBDir (Embed, Subset)",
-                        "Time Score"]
+                        "Time Score",
+                        "corr"]
         self.metrics_type = ["CBDir",
                              "CBDir (Subset)",
                              "CBDir (Embed)",
@@ -89,8 +89,8 @@ class PerfLogger:
                 self.df_type.loc[row, (data_name, pair)] = res_type.loc[row[0], (row[1], pair)].values[0]
         # update number of models
         self.n_model = len(self.df.iloc[0].index)
-        self.df.sort_index()
-        self.df_type.sort_index()
+        self.df.sort_index(inplace=True)
+        self.df_type.sort_index(inplace=True)
         return
 
     def plot(self, figure_path=None, bbox_to_anchor=(1.25, 1.0)):
@@ -124,7 +124,8 @@ class PerfLogger:
                 ax.set_xlabel("")
                 fig = ax.get_figure()
                 fig.tight_layout()
-                fig.savefig(f'{figure_path}/perf_{fig_name}_{dataset}.png', bbox_inches='tight')
+                if figure_path is not None:
+                    fig.savefig(f'{figure_path}/perf_{fig_name}_{dataset}.png', bbox_inches='tight')
         return
 
     def save(self, file_name=None):
