@@ -154,7 +154,6 @@ class decoder(nn.Module):
                 self.beta = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
                 self.gamma = nn.Parameter(torch.normal(0.0, 0.01, size=(G,), device=device).float())
                 self.ton = torch.nn.Parameter(torch.ones(G, device=device).float()*(-10))
-                self.toff = torch.nn.Parameter(torch.ones(G, device=device).float()*(tmax/2))
                 self.t_init = None
             elif init_method == "tprior":
                 print("Initialization using prior time.")
@@ -177,7 +176,6 @@ class decoder(nn.Module):
                 self.ton = (nn.Parameter((torch.ones(G, device=device)*(-10)).float())
                             if init_ton_zero else
                             nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float()))
-                self.toff = nn.Parameter(torch.tensor(np.log(self.toff_init+1e-10), device=device).float())
             else:
                 print("Initialization using the steady-state and dynamical models.")
                 if init_key is not None:
@@ -204,7 +202,6 @@ class decoder(nn.Module):
                 self.ton = (nn.Parameter((torch.ones(adata.n_vars, device=device)*(-10)).float())
                             if init_ton_zero else
                             nn.Parameter(torch.tensor(np.log(self.ton_init+1e-10), device=device).float()))
-                self.toff = nn.Parameter(torch.tensor(np.log(self.toff_init+1e-10), device=device).float())
             self.register_buffer('scaling', torch.tensor(np.log(scaling), device=device).float())
             # Add Gaussian noise in case of continuous model
             if not discrete:
@@ -514,7 +511,7 @@ class VAE(VanillaVAE):
             "kl_t": 1.0,
             "kl_z": 1.0,
             "kl_w": 0.01,
-            "reg_v": 1.0,
+            "reg_v": 0.0,
             "test_iter": None,
             "save_epoch": 100,
             "n_warmup": 5,
@@ -1232,7 +1229,6 @@ class VAE(VanillaVAE):
                      self.decoder.gamma,
                      self.decoder.u0,
                      self.decoder.s0,
-                     self.decoder.toff,
                      self.decoder.logit_pw]
         if self.config['train_ton']:
             param_ode.append(self.decoder.ton)
@@ -1488,6 +1484,9 @@ class VAE(VanillaVAE):
                 if uhat.ndim == 3:
                     lu_scale = lu_scale.unsqueeze(-1)
                     ls_scale = ls_scale.unsqueeze(-1)
+                if uhat_fw is not None and shat_fw is not None:
+                    uhat_fw = uhat_fw*lu_scale
+                    shat_fw = uhat_fw*ls_scale
                 loss = self.vae_risk((mu_tx, std_tx), p_t,
                                      (mu_zx, std_zx), p_z,
                                      data_in[:, :G], data_in[:, G:],
@@ -1570,6 +1569,9 @@ class VAE(VanillaVAE):
                 if uhat.ndim == 3:
                     lu_scale = lu_scale.unsqueeze(-1)
                     ls_scale = ls_scale.unsqueeze(-1)
+                if uhat_fw is not None and shat_fw is not None:
+                    uhat_fw = uhat_fw*lu_scale
+                    shat_fw = uhat_fw*ls_scale
                 loss = self.vae_risk((mu_tx, std_tx), p_t,
                                      (mu_zx, std_zx), p_z,
                                      data_in[:, :G], data_in[:, G:],
