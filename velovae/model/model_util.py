@@ -723,7 +723,7 @@ def assign_gene_mode_auto(adata,
             cluster_type[i] = 0
             res_3, pval_3 = kstest(w_noisy[y == i], q_neutral)
             if pval_3 < thred:
-                km = KMeans(2)
+                km = KMeans(2, n_init='auto')
                 yw = km.fit_predict(w_noisy[y == i].reshape(-1, 1))
                 w[y == i] = sample_dir_mix(w_noisy[y == i], yw, std_prior)
             else:
