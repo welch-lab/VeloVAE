@@ -500,7 +500,7 @@ class VAE(VanillaVAE):
 
             # Training Parameters
             "n_epochs": 1000,
-            "n_epochs_post": 1000,
+            "n_epochs_post": 500,
             "n_refine": 20,
             "batch_size": 128,
             "learning_rate": None,
@@ -760,13 +760,76 @@ class VAE(VanillaVAE):
 
         return mu_t, std_t, mu_z, std_z, uhat, shat, uhat_fw, shat_fw, vu, vs, vu_fw, vs_fw
 
-    def loss_vel(self, x0, xhat, v):
+    def _cos_sim(self,
+                 u0,
+                 uhat,
+                 vu,
+                 s0,
+                 shat,
+                 vs):
         ##############################################################
         # Velocity correlation loss, optionally
         # added to the total loss function
         ##############################################################
         cossim = nn.CosineSimilarity(dim=1)
-        return cossim(xhat-x0, v).mean()
+        delta_x = torch.cat([uhat-u0, shat-s0], 1)
+        v = torch.cat([vu, vs], 1)
+        return cossim(delta_x, v).mean()
+
+    def _cos_sim_us(self,
+                    u0,
+                    uhat,
+                    vu,
+                    s0,
+                    shat,
+                    vs):
+        ##############################################################
+        # Velocity correlation loss, optionally
+        # added to the total loss function
+        ##############################################################
+        cossim = nn.CosineSimilarity(dim=1)
+        return cossim(uhat-u0, vu).mean() + cossim(shat-s0, vs).mean()
+
+    def _cos_sim_gene(self,
+                      u0,
+                      uhat,
+                      vu,
+                      s0,
+                      shat,
+                      vs):
+        ##############################################################
+        # Velocity correlation loss, optionally
+        # added to the total loss function
+        ##############################################################
+        cossim = nn.CosineSimilarity(dim=0)
+        delta_x = torch.stack([uhat-u0, shat-s0])
+        return cossim(delta_x, torch.stack([vu, vs])).mean()
+
+    def loss_vel(self,
+                 uhat, shat,
+                 vu, vs,
+                 u0, s0,
+                 uhat_fw=None, shat_fw=None,
+                 vu_fw=None, vs_fw=None,
+                 u1=None, s1=None):
+        # Add velocity regularization
+        loss_v = 0
+        if u0 is not None and s0 is not None and self.config["reg_v"] > 0:
+            scaling = self.decoder.scaling.exp()
+            loss_v = loss_v + self.config["reg_v"] * self._cos_sim(u0/scaling,
+                                                                   uhat/scaling,
+                                                                   vu,
+                                                                   s0,
+                                                                   shat,
+                                                                   vs)
+            if vu_fw is not None and vs_fw is not None:
+                loss_v = loss_v + self.config["reg_v"] * self._cos_sim(uhat/scaling,
+                                                                       u1/scaling,
+                                                                       vu_fw,
+                                                                       shat,
+                                                                       s1,
+                                                                       vs_fw)
+        return loss_v
 
     def _compute_kl_term(self, q_tx, p_t, q_zx, p_z):
         ##############################################################
@@ -808,8 +871,12 @@ class VAE(VanillaVAE):
     def vae_risk_gaussian(self,
                           q_tx, p_t,
                           q_zx, p_z,
-                          u, s, uhat, shat,
+                          u, s,
+                          uhat, shat,
+                          vu=None, vs=None,
+                          u0=None, s0=None,
                           uhat_fw=None, shat_fw=None,
+                          vu_fw=None, vs_fw=None,
                           u1=None, s1=None,
                           weight=None):
         """Training objective function for the continuous model.
@@ -868,6 +935,13 @@ class VAE(VanillaVAE):
 
         err_rec = torch.mean(torch.sum(logp, 1))
 
+        err_rec = err_rec + self.loss_vel(uhat, shat,
+                                          vu, vs,
+                                          u0, s0,
+                                          uhat_fw, shat_fw,
+                                          vu_fw, vs_fw,
+                                          u1, s1)
+
         return - err_rec + kl_term
 
     def _kl_poisson(self, lamb_1, lamb_2):
@@ -881,8 +955,12 @@ class VAE(VanillaVAE):
     def vae_risk_poisson(self,
                          q_tx, p_t,
                          q_zx, p_z,
-                         u, s, uhat, shat,
+                         u, s, 
+                         uhat, shat,
+                         vu=None, vs=None,
+                         u0=None, s0=None,
                          uhat_fw=None, shat_fw=None,
+                         vu_fw=None, vs_fw=None,
                          u1=None, s1=None,
                          weight=None,
                          eps=1e-2):
@@ -914,14 +992,23 @@ class VAE(VanillaVAE):
             logp = logp*weight
 
         err_rec = torch.mean(logp.sum(1))
+        err_rec = err_rec + self.loss_vel(uhat, shat,
+                                          vu, vs,
+                                          u0, s0,
+                                          uhat_fw, shat_fw,
+                                          vu_fw, vs_fw,
+                                          u1, s1)
 
         return - err_rec + kl_term
 
     def vae_risk_nb(self,
                     q_tx, p_t,
                     q_zx, p_z,
-                    u, s, uhat, shat,
+                    u, s,
+                    uhat, shat,
+                    vu=None, vs=None,
                     uhat_fw=None, shat_fw=None,
+                    vu_fw=None, vs_fw=None,
                     u1=None, s1=None,
                     weight=None,
                     eps=1e-2):
@@ -947,6 +1034,12 @@ class VAE(VanillaVAE):
         if weight is not None:
             logp = logp*weight
         err_rec = torch.mean(torch.sum(logp, 1))
+        err_rec = err_rec + self.loss_vel(uhat, shat,
+                                          vu, vs,
+                                          u0, s0,
+                                          uhat_fw, shat_fw,
+                                          vu_fw, vs_fw,
+                                          u1, s1)
 
         return - err_rec + kl_term
 
@@ -1038,17 +1131,13 @@ class VAE(VanillaVAE):
                                  (mu_zx, std_zx), self.p_z[:, self.train_idx[idx], :],
                                  u, s,
                                  uhat*lu_scale, shat*ls_scale,
+                                 vu, vs,
+                                 u0, s0,
                                  uhat_fw, shat_fw,
+                                 vu_fw, vs_fw,
                                  u1, s1,
                                  None)
-            # Add velocity regularization
-            if self.use_knn and self.config["reg_v"] > 0:
-                scaling = self.decoder.scaling.exp()
-                loss = loss - self.config["reg_v"] *\
-                    (self.loss_vel(u0/scaling, uhat/scaling*lu_scale, vu) + self.loss_vel(s0, shat*ls_scale, vs))
-                if vu_fw is not None and vs_fw is not None:
-                    loss = loss - self.config["reg_v"]\
-                        * (self.loss_vel(uhat/scaling, uhat_fw/scaling, vu_fw) + self.loss_vel(shat, shat_fw, vs_fw))
+
             loss.backward()
             # gradient clipping
             torch.nn.utils.clip_grad_value_(self.encoder.parameters(), GRAD_MAX)
@@ -1223,13 +1312,13 @@ class VAE(VanillaVAE):
         print("*********                 Creating optimizers                 *********")
         param_nn = list(self.encoder.parameters())\
             + list(self.decoder.net_rho.parameters())\
-            + list(self.decoder.fc_out1.parameters())
+            + list(self.decoder.fc_out1.parameters())\
+            + [self.decoder.logit_pw]
         param_ode = [self.decoder.alpha,
                      self.decoder.beta,
                      self.decoder.gamma,
                      self.decoder.u0,
-                     self.decoder.s0,
-                     self.decoder.logit_pw]
+                     self.decoder.s0]
         if self.config['train_ton']:
             param_ode.append(self.decoder.ton)
 
@@ -1491,7 +1580,10 @@ class VAE(VanillaVAE):
                                      (mu_zx, std_zx), p_z,
                                      data_in[:, :G], data_in[:, G:],
                                      uhat*lu_scale, shat*ls_scale,
+                                     vu, vs,
+                                     u0, s0,
                                      uhat_fw, shat_fw,
+                                     vu_fw, vs_fw,
                                      u1, s1,
                                      None)
                 elbo = elbo - (B/N)*loss
@@ -1576,7 +1668,10 @@ class VAE(VanillaVAE):
                                      (mu_zx, std_zx), p_z,
                                      data_in[:, :G], data_in[:, G:],
                                      uhat*lu_scale, shat*ls_scale,
+                                     vu, vs,
+                                     u0, s0,
                                      uhat_fw, shat_fw,
+                                     vu_fw, vs_fw,
                                      u1, s1,
                                      None)
                 elbo = elbo - ((N-B*Nb)/N)*loss
