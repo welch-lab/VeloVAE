@@ -1259,9 +1259,7 @@ def knnx0(U, S,
     return u0, s0, t0
 
 
-def knnx0_index(U,
-                S,
-                t,
+def knnx0_index(t,
                 z,
                 t_query,
                 z_query,
@@ -1275,11 +1273,11 @@ def knnx0_index(U,
     # Same functionality as knnx0, but returns the neighbor index
     ############################################################
     Nq = len(t_query)
-    neighbor_index = []
-    if hist_eq:
-        t, t_query = _hist_equal(t, t_query)
     n1 = 0
     len_avg = 0
+    if hist_eq:
+        t, t_query = _hist_equal(t, t_query)
+    neighbor_index = []
     for i in tqdm_notebook(range(Nq)):
         if adaptive > 0:
             dt_r, dt_l = adaptive*std_t[i], adaptive*std_t[i] + (dt[1]-dt[0])
@@ -1291,15 +1289,23 @@ def knnx0_index(U,
             t_ub, t_lb = t_query[i] - dt_r, t_query[i] - dt_l
         indices = np.where((t >= t_lb) & (t < t_ub))[0]
         k_ = len(indices)
-        len_avg = len_avg+k_
-        if k_ > 0:
-            if k_ < k:
-                neighbor_index.append(indices)
+        delta_t = dt[1] - dt[0]  # increment / decrement of the time window boundary
+        while k_ < k and t_lb > t.min() - (dt[1] - dt[0]) and t_ub < t.max() + (dt[1] - dt[0]):
+            if forward:
+                t_lb = t_query[i]
+                t_ub = t_ub + delta_t
             else:
-                knn_model = NearestNeighbors(n_neighbors=k)
-                knn_model.fit(z[indices])
-                dist, ind = knn_model.kneighbors(z_query[i:i+1])
-                neighbor_index.append(indices[ind.squeeze()].astype(int))
+                t_lb = t_lb - delta_t
+                t_ub = t_query[i]
+            indices = np.where((t >= t_lb) & (t < t_ub))[0]  # filter out cells in the bin
+            k_ = len(indices)
+        len_avg = len_avg + k_
+        if k_ > 0:
+            k_neighbor = k if k_ > k else max(1, k_//2)
+            knn_model = NearestNeighbors(n_neighbors=k_neighbor)
+            knn_model.fit(z[indices])
+            dist, ind = knn_model.kneighbors(z_query[i:i+1])
+            neighbor_index.append(indices[ind.squeeze()].astype(int))
         else:
             neighbor_index.append([])
             n1 = n1+1
@@ -1308,17 +1314,37 @@ def knnx0_index(U,
     return neighbor_index
 
 
-def get_x0(U, S, t, neighbor_index):
-    N = len(neighbor_index)
-    u0 = np.zeros((N, U.shape[1]))
-    s0 = np.zeros((N, S.shape[1]))
-    t0 = np.ones((N))*(t.min() - (t.max()-t.min())*1e-2)
+def get_x0(U,
+           S,
+           t,
+           dt,
+           neighbor_index,
+           u0_init=None,
+           s0_init=None,
+           forward=False):
+    N = len(neighbor_index)  # training + validation
+    u0 = (np.zeros((N, U.shape[1])) if u0_init is None
+          else np.tile(u0_init, (N, 1)))
+    s0 = (np.zeros((N, S.shape[1])) if s0_init is None
+          else np.tile(s0_init, (N, 1)))
+    t0 = np.ones((N))*(t.min() - dt[0])
+    # Used as the default u/s counts at the final time point
+    t_98 = np.quantile(t, 0.98)
+    p = 0.98
+    while not np.any(t >= t_98) and p > 0.01:
+        p = p - 0.01
+        t_98 = np.quantile(t, p)
+    u_end, s_end = U[t >= t_98].mean(0), S[t >= t_98].mean(0)
 
     for i in range(N):
         if len(neighbor_index[i]) > 0:
             u0[i] = U[neighbor_index[i]].mean(0)
             s0[i] = S[neighbor_index[i]].mean(0)
             t0[i] = t[neighbor_index[i]].mean()
+        elif forward:
+            u0[i] = u_end
+            s0[i] = s_end
+            t0[i] = t_98 + (t_98-t.min()) * 0.01
     return u0, s0, t0
 
 

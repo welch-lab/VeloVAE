@@ -12,7 +12,7 @@ from velovae.plotting import plot_train_loss, plot_test_loss
 
 from .model_util import hist_equal, init_params, get_ts_global, reinit_params
 from .model_util import convert_time, get_gene_index
-from .model_util import pred_su, knnx0
+from .model_util import pred_su, knnx0_index, get_x0
 from .model_util import elbo_collapsed_categorical
 from .model_util import assign_gene_mode, assign_gene_mode_tprior, find_dirichlet_param
 from .model_util import get_cell_scale, get_dispersion
@@ -590,6 +590,11 @@ class VAE(VanillaVAE):
         self.u0 = None
         self.s0 = None
         self.t0 = None
+        self.x0_index = None
+        self.u1 = None
+        self.s1 = None
+        self.t1 = None
+        self.x1_index = None
         self.lu_scale = (
             torch.tensor(np.log(adata.obs['library_scale_u'].to_numpy()), device=self.device).unsqueeze(-1).float()
             if self.is_discrete else torch.zeros(adata.n_obs, 1, device=self.device).float()
@@ -1172,7 +1177,6 @@ class VAE(VanillaVAE):
         # 3. t0 [tensor (N,1)]
         #    Initial time
         ##########################################################################
-        start = time.time()
         self.set_mode('eval')
         out, elbo = self.pred_all(np.concatenate((U, S), 1),
                                   self.cell_labels,
@@ -1189,32 +1193,40 @@ class VAE(VanillaVAE):
             init_mask = (t <= np.quantile(t, 0.01))
             u0_init = np.mean(U[init_mask], 0)
             s0_init = np.mean(S[init_mask], 0)
-        u0, s0, t0 = knnx0(out["uhat"][self.train_idx],
-                           out["shat"][self.train_idx],
-                           t[self.train_idx],
-                           z[self.train_idx],
-                           t,
-                           z,
-                           dt,
-                           self.config["n_neighbors"],
-                           u0_init,
-                           s0_init,
-                           hist_eq=True)
+        if self.x0_index is None:
+            self.x0_index = knnx0_index(t[self.train_idx],
+                                        z[self.train_idx],
+                                        t,
+                                        z,
+                                        dt,
+                                        self.config["n_neighbors"],
+                                        hist_eq=True)
+        u0, s0, t0 = get_x0(out["uhat"][self.train_idx],
+                            out["shat"][self.train_idx],
+                            t[self.train_idx],
+                            dt,
+                            self.x0_index,
+                            u0_init,
+                            s0_init)
         if self.config["vel_continuity_loss"]:
-            u1, s1, t1 = knnx0(out["uhat"][self.train_idx],
-                               out["shat"][self.train_idx],
-                               t[self.train_idx],
-                               z[self.train_idx],
-                               t,
-                               z,
-                               dt,
-                               self.config["n_neighbors"],
-                               u0_init,
-                               s0_init,
-                               forward=True,
-                               hist_eq=True)
+            if self.x1_index is None:
+                self.x1_index = knnx0_index(t[self.train_idx],
+                                            z[self.train_idx],
+                                            t,
+                                            z,
+                                            dt,
+                                            self.config["n_neighbors"],
+                                            forward=True,
+                                            hist_eq=True)
+            u1, s1, t1 = get_x0(out["uhat"][self.train_idx],
+                                out["shat"][self.train_idx],
+                                t[self.train_idx],
+                                dt,
+                                self.x1_index,
+                                None,
+                                None,
+                                forward=True)
 
-        print(f"Finished. Actual Time: {convert_time(time.time()-start)}")
         # return u0, s0, t0.reshape(-1,1), u1, s1, t1
         self.u0 = u0
         self.s0 = s0
@@ -1312,13 +1324,13 @@ class VAE(VanillaVAE):
         print("*********                 Creating optimizers                 *********")
         param_nn = list(self.encoder.parameters())\
             + list(self.decoder.net_rho.parameters())\
-            + list(self.decoder.fc_out1.parameters())\
-            + [self.decoder.logit_pw]
+            + list(self.decoder.fc_out1.parameters())
         param_ode = [self.decoder.alpha,
                      self.decoder.beta,
                      self.decoder.gamma,
                      self.decoder.u0,
-                     self.decoder.s0]
+                     self.decoder.s0,
+                     self.decoder.logit_pw]
         if self.config['train_ton']:
             param_ode.append(self.decoder.ton)
 
@@ -1430,9 +1442,9 @@ class VAE(VanillaVAE):
                           f"Total Time = {convert_time(time.time()-start)}")
 
                 if stop_training:
-                    print(f"*********       "
+                    print(f"*********     "
                           f"Round {r+1}: Early Stop Triggered at epoch {epoch+count_epoch+1}."
-                          f"       *********")
+                          f"     *********")
                     break
             count_epoch += (epoch+1)
             if not self.is_discrete:
@@ -1443,13 +1455,13 @@ class VAE(VanillaVAE):
                 sigma_u_prev = self.decoder.sigma_u.detach().cpu().numpy()
                 sigma_s_prev = self.decoder.sigma_s.detach().cpu().numpy()
                 noise_change = norm_delta_sigma/norm_sigma
-                print(f"Change in noise variance: {noise_change}")
+                print(f"Change in noise variance: {noise_change:.4f}")
             if r > 0:
                 x0_change_prev = x0_change
                 norm_delta_x0 = np.sqrt(((self.u0 - u0_prev)**2 + (self.s0 - s0_prev)**2).sum(1).mean())
                 std_x = np.sqrt((self.u0.var(0) + self.s0.var(0)).sum())
                 x0_change = norm_delta_x0/std_x
-                print(f"Change in x0: {x0_change}")
+                print(f"Change in x0: {x0_change:.4f}")
             u0_prev = self.u0
             s0_prev = self.s0
 
