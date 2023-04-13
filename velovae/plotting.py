@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import igraph as ig
 import pynndescent
 import umap
-from loess import loess_1d
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from sklearn.neighbors import NearestNeighbors
 from scipy.stats import norm
@@ -1351,6 +1350,7 @@ def plot_sig_loess_axis(ax,
                         D=1,
                         show_legend=False,
                         title=None,):
+    from loess import loess_1d
     for i in range(len(legends)):
         mask = labels == i
         if np.any(mask):
@@ -1619,7 +1619,7 @@ def plot_sig_grid(Nr,
                             plot_sig_pred_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:, idx][::K])
                         plot_vel_axis(ax_sig[3 * i + 2],
                                       t,
-                                      Shat[methods[0]][:, idx],
+                                      S[:, idx],
                                       V[methods[0]][:, idx],
                                       Labels[methods[0]],
                                       Legends[methods[0]],
@@ -1643,10 +1643,10 @@ def plot_sig_grid(Nr,
                                            1.0,
                                            1)
                         plot_vel_axis(ax_sig[3*i+2],
-                                      that,
-                                      Shat[methods[0]][:, idx],
+                                      t,
+                                      S[:, idx],
                                       V[methods[0]][:, idx],
-                                      Labels_demo[methods[0]],
+                                      Labels[methods[0]],
                                       Legends[methods[0]],
                                       sparsity_correction=sparsity_correction,
                                       color_map=color_map)
@@ -1735,10 +1735,10 @@ def plot_sig_grid(Nr,
                                     plot_sig_pred_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:, idx][::K])
                                     plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:, idx][::K])
                                 plot_vel_axis(ax_sig[3 * i + 2, M * j + k],
-                                              that,
-                                              Shat[method][:, idx],
+                                              t,
+                                              S[:, idx],
                                               V[method][:, idx],
-                                              Labels_demo[method],
+                                              Labels[method],
                                               Legends[method],
                                               sparsity_correction=sparsity_correction,
                                               color_map=color_map)
@@ -1759,11 +1759,11 @@ def plot_sig_grid(Nr,
                                                    '-',
                                                    1.0,
                                                    1)
-                                plot_vel_axis(ax_sig[3 * i + 2, M * j + k],
-                                              that,
-                                              Shat[method][:, idx],
+                                plot_vel_axis(ax_sig[3*i+2, M*j+k],
+                                              t,
+                                              S[:, idx],
                                               V[method][:, idx],
-                                              Labels_demo[method],
+                                              Labels[method],
                                               Legends[method],
                                               sparsity_correction=sparsity_correction,
                                               color_map=color_map)
@@ -1780,18 +1780,12 @@ def plot_sig_grid(Nr,
                         ax_sig[3*i+1,  M*j+k].set_xticks([])
                         ax_sig[3*i+2,  M*j+k].set_xticks([])
 
-                        tmin, tmax = ax_sig[3*i,  M*j+k].get_xlim()
-                        umin, umax = ax_sig[3*i,  M*j+k].get_ylim()
                         ax_sig[3*i,  M*j+k].set_ylabel("U", fontsize=30, rotation=0)
                         ax_sig[3*i,  M*j+k].yaxis.set_label_coords(-0.03, 0.5)
 
-                        tmin, tmax = ax_sig[3*i+1,  M*j+k].get_xlim()
-                        smin, smax = ax_sig[3*i+1,  M*j+k].get_ylim()
                         ax_sig[3*i+1,  M*j+k].set_ylabel("S", fontsize=30, rotation=0)
                         ax_sig[3*i+1,  M*j+k].yaxis.set_label_coords(-0.03, 0.5)
 
-                        tmin, tmax = ax_sig[3*i+2,  M*j+k].get_xlim()
-                        smin, smax = ax_sig[3*i+2,  M*j+k].get_ylim()
                         ax_sig[3*i+2,  M*j+k].set_ylabel("S", fontsize=30, rotation=0)
                         ax_sig[3*i+2,  M*j+k].yaxis.set_label_coords(-0.03, 0.5)
 

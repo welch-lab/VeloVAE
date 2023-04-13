@@ -1628,7 +1628,7 @@ def sample_genes(adata, n, key, mode='top', q=0.5):
         return np.random.choice(adata.var_names, n, replace=False)
     val_sorted = adata.var[key].sort_values(ascending=False)
     genes_sorted = val_sorted.index.to_numpy()
-    if mode == 'threshold':
+    if mode == 'quantile':
         N = np.sum(val_sorted.to_numpy() >= q)
         return np.random.choice(genes_sorted[:N], min(n, N), replace=False)
     return genes_sorted[:n]

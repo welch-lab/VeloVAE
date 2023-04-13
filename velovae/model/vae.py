@@ -1400,7 +1400,7 @@ class VAE(VanillaVAE):
                                           lr=self.config["learning_rate_post"],
                                           weight_decay=self.config["lambda_rho"])
         for r in range(self.config['n_refine']):
-            print(f"*********             Velocity Refinement Round {r+1}              *********")
+            print(f"*********             Velocity Refinement Round {r+1}             *********")
             self.config['early_stop_thred'] *= 0.95
             stop_training = (x0_change - x0_change_prev >= -0.01 and r > 1) or (x0_change < 0.01)
             if (not self.is_discrete) and (noise_change > 0.001) and (r < self.config['n_refine']-1):
@@ -1444,7 +1444,7 @@ class VAE(VanillaVAE):
                 if stop_training:
                     print(f"*********     "
                           f"Round {r+1}: Early Stop Triggered at epoch {epoch+count_epoch+1}."
-                          f"     *********")
+                          f"    *********")
                     break
             count_epoch += (epoch+1)
             if not self.is_discrete:

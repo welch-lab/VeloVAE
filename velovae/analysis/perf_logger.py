@@ -30,6 +30,7 @@ class PerfLogger:
                         "CBDir (Embed)",
                         "CBDir (Embed, Subset)",
                         "Time Score",
+                        "Vel Consistency",
                         "corr"]
         self.metrics_type = ["CBDir",
                              "CBDir (Subset)",

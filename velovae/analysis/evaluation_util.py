@@ -1085,6 +1085,33 @@ def inner_cluster_coh(adata, k_cluster, k_velocity, gene_mask=None, return_raw=F
     return scores, np.mean([sc for sc in scores.values()])
 
 
+def _pearson_corr(v, v_neighbor):
+    return np.corrcoef(v, v_neighbor)[0, 1:]
+
+
+def velocity_consistency(adata, vkey, gene_mask=None):
+    # Velocity Consistency as reported in scVelo paper
+    #
+    # Args:
+    #    adata (Anndata):
+    #        Anndata object.
+    #    vkey (str):
+    #        key to the velocity matrix in adata.obsm.
+    #
+    # Returns:
+    #    float:
+    #        averaged score over all cells.
+    nbs = adata.uns['neighbors']['indices']
+
+    velocities = adata.layers[vkey]
+    nan_mask = ~np.isnan(velocities[0]) if gene_mask is None else gene_mask
+    velocities = velocities[:, nan_mask]
+
+    consistency_score = [_pearson_corr(velocities[ith], velocities[nbs[ith]]).mean()
+                         for ith in range(adata.n_obs)]
+    adata.obs[f'{vkey}_consistency'] = consistency_score
+    return np.mean(consistency_score)
+
 ##########################################################################
 # End of Reference
 ##########################################################################

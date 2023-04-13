@@ -20,7 +20,8 @@ def get_velocity_metric_placeholder(cluster_edges):
     return (iccoh, np.nan,
             cbdir_embed, np.nan,
             cbdir, np.nan,
-            tscore, np.nan)
+            tscore, np.nan,
+            np.nan)
 
 
 def get_velocity_metric(adata,
@@ -31,6 +32,7 @@ def get_velocity_metric(adata,
                         gene_mask=None,
                         embed='umap',
                         n_jobs=None):
+    mean_constcy_score = velocity_consistency(adata, vkey, gene_mask)
     if cluster_edges is not None:
         try:
             from scvelo.tl import velocity_graph, velocity_embedding
@@ -69,7 +71,8 @@ def get_velocity_metric(adata,
     return (iccoh, mean_iccoh,
             cbdir_embed, mean_cbdir_embed,
             cbdir, mean_cbdir,
-            tscore, mean_tscore)
+            tscore, mean_tscore,
+            mean_constcy_score)
     
 
 def get_metric(adata,
@@ -176,7 +179,14 @@ def get_metric(adata,
          mae_train, mae_test,
          logp_train, logp_test,
          run_time) = get_err_velovi(adata, key, gene_mask)
-
+    else:
+        mse_train, mse_test = np.nan, np.nan
+        mae_train, mae_test = np.nan, np.nan
+        logp_train, logp_test = np.nan, np.nan
+        try:
+            run_time = adata.uns[f'{key}_run_time']
+        except KeyError:
+            run_time = np.nan
     stats['MSE Train'] = mse_train
     stats['MSE Test'] = mse_test
     stats['MAE Train'] = mae_train
@@ -195,6 +205,8 @@ def get_metric(adata,
                  adata.obs[f"{key}_time"].to_numpy())
             corr, pval = spearmanr(t, tprior)
             stats['corr'] = corr
+    else:
+        stats['corr'] = np.nan
 
     print("Computing velocity embedding using scVelo")
     # Compute velocity metrics using a subset of genes defined by gene_mask
@@ -202,39 +214,44 @@ def get_metric(adata,
         (iccoh_sub, mean_iccoh_sub,
          cbdir_sub_embed, mean_cbdir_sub_embed,
          cbdir_sub, mean_cbdir_sub,
-         tscore_sub, mean_tscore_sub) = get_velocity_metric(adata,
-                                                            key,
-                                                            vkey,
-                                                            cluster_key,
-                                                            cluster_edges,
-                                                            gene_mask,
-                                                            embed,
-                                                            n_jobs)
+         tscore_sub, mean_tscore_sub,
+         mean_vel_consistency_sub) = get_velocity_metric(adata,
+                                                         key,
+                                                         vkey,
+                                                         cluster_key,
+                                                         cluster_edges,
+                                                         gene_mask,
+                                                         embed,
+                                                         n_jobs)
     else:
         (iccoh_sub, mean_iccoh_sub,
          cbdir_sub_embed, mean_cbdir_sub_embed,
          cbdir_sub, mean_cbdir_sub,
-         tscore_sub, mean_tscore_sub) = get_velocity_metric_placeholder(cluster_edges)
+         tscore_sub, mean_tscore_sub,
+         mean_vel_consistency_sub) = get_velocity_metric_placeholder(cluster_edges)
     stats['CBDir (Embed, Subset)'] = mean_cbdir_sub_embed
     stats['CBDir (Subset)'] = mean_cbdir_sub
     stats['In-Cluster Coherence (Subset)'] = mean_iccoh_sub
+    stats['Vel Consistency (Subset)'] = mean_vel_consistency_sub
 
     # Compute velocity metrics on all genes
     (iccoh, mean_iccoh,
      cbdir_embed, mean_cbdir_embed,
      cbdir, mean_cbdir,
-     tscore, mean_tscore) = get_velocity_metric(adata,
-                                                key,
-                                                vkey,
-                                                cluster_key,
-                                                cluster_edges,
-                                                None,
-                                                embed,
-                                                n_jobs)
+     tscore, mean_tscore,
+     mean_vel_consistency) = get_velocity_metric(adata,
+                                                 key,
+                                                 vkey,
+                                                 cluster_key,
+                                                 cluster_edges,
+                                                 None,
+                                                 embed,
+                                                 n_jobs)
     stats['CBDir (Embed)'] = mean_cbdir_embed
     stats['CBDir'] = mean_cbdir
     stats['Time Score'] = mean_tscore
     stats['In-Cluster Coherence'] = mean_iccoh
+    stats['Vel Consistency'] = mean_vel_consistency
     stats_type = pd.concat([pd.DataFrame.from_dict(cbdir_sub, orient='index'),
                             pd.DataFrame.from_dict(cbdir_sub_embed, orient='index'),
                             pd.DataFrame.from_dict(cbdir, orient='index'),
