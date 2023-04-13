@@ -417,7 +417,7 @@ class TransGraph():
         # Estimate initial time
         self.t_init = np.zeros((self.n_type))
         for i in (self.cell_types):
-            self.t_init[i] = np.quantile(self.t[self.cell_labels == i], 0.01)
+            self.t_init[i] = np.quantile(self.t[self.cell_labels == i], 0.05)
 
     def _time_based_graph(self,
                           n_par=2,
@@ -467,9 +467,10 @@ class TransGraph():
         P_raw = np.zeros((self.n_type, self.n_type))
         for pair in self.cbdir:
             i, j = self.label_dic[pair[1]], self.label_dic[pair[0]]
-            if self.tscore[pair] > 0.5:
-                P_raw[i, j] = np.clip(self.cbdir[pair], 1e-16, None)
-
+            if self.tscore[pair] < 0.5 and self.cbdir[pair] < 0:
+                P_raw[i, j] = (1-self.tscore[pair])*(-self.cbdir[pair])
+            else:
+                P_raw[i, j] = self.tscore[pair]*np.clip(self.cbdir[pair], 1e-16, None)
         P = np.zeros(P_raw.shape)
         for i in range(P.shape[0]):
             idx_sort = np.flip(np.argsort(P_raw[i]))

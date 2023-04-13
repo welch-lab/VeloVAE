@@ -44,19 +44,19 @@ class decoder(nn.Module):
         # Transition Graph
         partition_k = kwargs['partition_k'] if 'partition_k' in kwargs else 5
         partition_res = kwargs['partition_res'] if 'partition_res' in kwargs else 0.005
-        tgraph = TransGraph(adata,
-                            tkey,
-                            embed_key,
-                            cluster_key,
-                            vkey,
-                            train_idx,
-                            k=partition_k,
-                            res=partition_res)
+        self.tgraph = TransGraph(adata,
+                                 tkey,
+                                 embed_key,
+                                 cluster_key,
+                                 vkey,
+                                 train_idx,
+                                 k=partition_k,
+                                 res=partition_res)
 
         n_par = kwargs['n_par'] if 'n_par' in kwargs else 2
         dt = kwargs['dt'] if 'dt' in kwargs else (0.01, 0.05)
         k = kwargs['k'] if 'k' in kwargs else 5
-        w = tgraph.compute_transition_deterministic(n_par, dt, k)
+        w = self.tgraph.compute_transition_deterministic(n_par, dt, k)
 
         self.w = torch.tensor(w, device=device)
         self.par = torch.argmax(self.w, 1)
