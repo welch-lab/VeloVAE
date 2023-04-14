@@ -1300,17 +1300,24 @@ def knnx0_index(t,
             indices = np.where((t >= t_lb) & (t < t_ub))[0]  # filter out cells in the bin
             k_ = len(indices)
         len_avg = len_avg + k_
-        if k_ > 0:
+        if k_ > 1:
             k_neighbor = k if k_ > k else max(1, k_//2)
             knn_model = NearestNeighbors(n_neighbors=k_neighbor)
             knn_model.fit(z[indices])
             dist, ind = knn_model.kneighbors(z_query[i:i+1])
-            neighbor_index.append(indices[ind.squeeze()].astype(int))
+            neighbor_index.append(indices[ind.flatten()].astype(int))
+        elif k_ == 1:
+             neighbor_index.append(indices)
         else:
             neighbor_index.append([])
             n1 = n1+1
     print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
     print(f"Average Set Size: {len_avg//Nq}")
+    for i in range(len(neighbor_index)):
+        try:
+            temp = len(neighbor_index[i])
+        except TypeError:
+            print(neighbor_index[i])
     return neighbor_index
 
 

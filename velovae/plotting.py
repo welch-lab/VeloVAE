@@ -1598,7 +1598,7 @@ def plot_sig_grid(Nr,
                 try:
                     if ('VeloVAE' in methods[0])\
                         or ('FullVB' in methods[0])\
-                            or (methods[0] in ['DeepVelo', 'Discrete PyroVelocity', 'PyroVelocity', 'VeloVI']):
+                            or (methods[0] in ['DeepVelo', 'Discrete PyroVelocity', 'PyroVelocity', 'VeloVI', 'cellDancer']):
                         K = min(10, max(len(that)//5000, 1))
                         
                         if frac > 0 and frac < 1:
@@ -1717,16 +1717,17 @@ def plot_sig_grid(Nr,
                         try:
                             if ('VeloVAE' in method)\
                                 or ('FullVB' in method)\
-                                    or (methods[0] in ['DeepVelo', 'Discrete PyroVelocity', 'PyroVelocity', 'VeloVI']):
+                                    or (methods[0] in ['DeepVelo', 'Discrete PyroVelocity', 'PyroVelocity', 'VeloVI', 'cellDancer']):
+                                # These methods don't have line prediction
                                 K = min(10, max(len(that)//5000, 1))
                                 if frac > 0 and frac < 1:
-                                    plot_sig_loess_axis(ax_sig[3 * i, M * j + k],
+                                    plot_sig_loess_axis(ax_sig[3*i, M*j+k],
                                                         that[::K],
                                                         Uhat[method][:, idx][::K],
                                                         Labels_demo[method][::K],
                                                         Legends[method],
                                                         frac=frac)
-                                    plot_sig_loess_axis(ax_sig[3 * i + 1, M * j + k],
+                                    plot_sig_loess_axis(ax_sig[3*i+1, M*j+k],
                                                         that[::K],
                                                         Shat[method][:, idx][::K],
                                                         Labels_demo[method][::K],
@@ -1734,7 +1735,7 @@ def plot_sig_grid(Nr,
                                 elif 'Discrete' in method:
                                     plot_sig_pred_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:, idx][::K])
                                     plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:, idx][::K])
-                                plot_vel_axis(ax_sig[3 * i + 2, M * j + k],
+                                plot_vel_axis(ax_sig[3*i+2, M*j+k],
                                               t,
                                               S[:, idx],
                                               V[method][:, idx],
@@ -1742,7 +1743,7 @@ def plot_sig_grid(Nr,
                                               Legends[method],
                                               sparsity_correction=sparsity_correction,
                                               color_map=color_map)
-                            else:
+                            else:  # plot line prediction
                                 plot_sig_pred_axis(ax_sig[3*i, M*j+k],
                                                    that,
                                                    Uhat[method][:, idx],

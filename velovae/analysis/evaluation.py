@@ -468,7 +468,7 @@ def post_analysis(adata,
                 t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
                 Uhat_i = adata.layers["Mu"][:, gene_indices]
                 Shat_i = adata.layers["Ms"][:, gene_indices]
-                V[method_] = adata.layers[f"{keykeys[i]}_velocity"][:, gene_indices]
+                V[method_] = adata.layers[f"{keys[i]}_velocity"][:, gene_indices]
                 Yhat[method_] = cell_labels
 
             That[method_] = t_i
