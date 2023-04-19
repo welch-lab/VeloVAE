@@ -198,6 +198,9 @@ def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
 
     t = adata.obs[f"{key}_time"].to_numpy()
     y = adata.obs[f"{key}_label"].to_numpy()
+    rate_decay = (adata.varm[f"{key}_rate_decay"]
+                  if f"{key}_rate_decay" in adata.varm else
+                  None)
 
     if use_raw:
         U, S = adata.layers['Mu'], adata.layers['Ms']
@@ -219,15 +222,28 @@ def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
             adata.layers["Shat"] = S
 
     V = np.zeros(S.shape)
+    Vu = np.zeros(S.shape)
     for i in range(alpha.shape[0]):
         denom = 1+np.exp(-(t[y == i].reshape(-1, 1) - t_trans[parents[i]])*k)
         soft_coeff = 1 / denom  # smooth transition at the switch-on time
-        V[y == i] = (beta[i]*U[y == i] - gamma[i]*S[y == i]) * soft_coeff
+        if rate_decay is None:
+            Vu[y == i] = (alpha[i] - beta[i]*U[y == i]) * soft_coeff
+            V[y == i] = (beta[i]*U[y == i] - gamma[i]*S[y == i]) * soft_coeff
+        else:  # smooth the rate parameters at any differentiation point
+            tau = np.clip(t[y == i].reshape(-1, 1) - t_trans[i], 0, None).reshape(-1, 1, 1)
+            w = np.exp(-tau*rate_decay)
+            alpha_sm = alpha[parents[i]]*w[:, :, 0] + alpha[i]*(1-w[:, :, 0])
+            beta_sm = beta[parents[i]]*w[:, :, 1] + beta[i]*(1-w[:, :, 1])
+            gamma_sm = gamma[parents[i]]*w[:, :, 2] + gamma[i]*(1-w[:, :, 2])
+            Vu[y == i] = (alpha_sm - beta_sm*U[y == i])
+            V[y == i] = (beta_sm*U[y == i] - gamma_sm*S[y == i])
     adata.layers[f"{key}_velocity"] = V
+    adata.layers[f"{key}_velocity_u"] = Vu
     if use_scv_genes:
         gene_mask = np.isnan(adata.var['fit_scaling'].to_numpy())
         V[:, gene_mask] = np.nan
-    return V, U, S
+        Vu[:, gene_mask] = np.nan
+    return Vu, V, U, S
 
 
 def rna_velocity_cyclevae(adata,

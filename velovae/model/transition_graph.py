@@ -347,17 +347,16 @@ class TransGraph():
         self.t = adata.obs[tkey].to_numpy() if train_idx is None else adata.obs[tkey][train_idx].to_numpy()
         self.z = adata.obsm[embed_key] if train_idx is None else adata.obsm[embed_key][train_idx]
         self.use_vel_graph = vkey is not None
-        if vkey is None:
-            self._time_based_partition(adata,
-                                       train_idx,
-                                       k,
-                                       res)
-        else:
-            self._velocity_based_partition(adata,
-                                           tkey,
-                                           embed_key,
-                                           cluster_key,
-                                           vkey)
+        self._time_based_partition(adata,
+                                   train_idx,
+                                   k,
+                                   res)
+        if vkey is not None:
+            self._get_velocity_flow(adata,
+                                    tkey,
+                                    embed_key,
+                                    cluster_key,
+                                    vkey)
 
     def _time_based_partition(self,
                               adata,
@@ -397,12 +396,12 @@ class TransGraph():
         self.n_lineage = len(self.partition_cluster)
         return
 
-    def _velocity_based_partition(self,
-                                  adata,
-                                  tkey,
-                                  embed_key,
-                                  cluster_key,
-                                  vkey):
+    def _get_velocity_flow(self,
+                           adata,
+                           tkey,
+                           embed_key,
+                           cluster_key,
+                           vkey):
         self.cbdir, _, self.tscore, _ = calibrated_cross_boundary_correctness(adata,
                                                                               cluster_key,
                                                                               vkey,
@@ -410,7 +409,6 @@ class TransGraph():
                                                                               cluster_edges=None,
                                                                               x_emb='Ms',
                                                                               sum_up=True)
-        self._count_lineage(self.cbdir)
         return
 
     def _get_init_time(self):
