@@ -978,8 +978,8 @@ def reinit_type_params(U, S, t, ts, cell_labels, cell_types, init_types):
     for i, type_ in enumerate(cell_types):
         mask_type = cell_labels == type_
         # Determine induction or repression
-        t_head = np.quantile(t[mask_type], 0.02)
-        t_mid = (t_head+np.quantile(t[mask_type], 0.98))*0.5
+        t_head = np.quantile(t[mask_type], 0.05)
+        t_mid = (t_head+np.quantile(t[mask_type], 0.95))*0.5
 
         u_head = np.mean(U[(t >= t[mask_type].min()) & (t < t_head), :], axis=0)
         u_mid = np.mean(U[(t >= t_mid*0.98) & (t <= t_mid*1.02), :], axis=0)
@@ -1038,27 +1038,45 @@ def ode_br(t, y, par, neg_slope=0.0, **kwargs):
     """
     alpha, beta, gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma']  # tensor shape: (N type, G)
     t_trans = kwargs['t_trans']
-    u0, s0 = kwargs['u0'], kwargs['s0']  # tensor shape: (N type, G)
+    u0, s0 = kwargs['u0'], kwargs['s0']  # tensor shape: (N type, G), u0 unscaled
     scaling = kwargs["scaling"]
 
     Ntype, G = alpha.shape
 
     tau0 = F.leaky_relu((t_trans - t_trans[par]).view(-1, 1), neg_slope)
-    u0_hat, s0_hat = pred_su(tau0, u0[par], s0[par], alpha[par], beta[par], gamma[par])
+    if kwargs['rate_decay'] is not None:
+        w_par = torch.exp(-kwargs['rate_decay']*tau0.view(-1, 1, 1))
+        alpha_par_sm = alpha*w_par[:, :, 0]+alpha[par]*(1-w_par[:, :, 0])
+        beta_par_sm = beta*w_par[:, :, 1]+beta[par]*(1-w_par[:, :, 1])
+        gamma_par_sm = gamma*w_par[:, :, 2]+gamma[par]*(1-w_par[:, :, 2])
+        u0_hat, s0_hat = pred_su(tau0, u0[par]/scaling, s0[par], alpha_par_sm, beta_par_sm, gamma_par_sm)
+    else:
+        u0_hat, s0_hat = pred_su(tau0, u0[par]/scaling, s0[par], alpha[par], beta[par], gamma[par])
 
     # For cells with time violation, we use its parent type
-    mask = (t >= t_trans[y].view(-1, 1)).float()
+    
     par_batch = par[y]
-    u0_batch = u0_hat[y] * mask + u0_hat[par_batch] * (1-mask)
-    s0_batch = s0_hat[y] * mask + s0_hat[par_batch] * (1-mask)  # tensor shape: (N type, G)
-    tau = F.leaky_relu(t - t_trans[y].view(-1, 1), neg_slope) * mask \
-        + F.leaky_relu(t - t_trans[par_batch].view(-1, 1), neg_slope) * (1-mask)
-    uhat, shat = pred_su(tau,
-                         u0_batch,
-                         s0_batch,
-                         alpha[y] * mask + alpha[par_batch] * (1-mask),
-                         beta[y] * mask + beta[par_batch] * (1-mask),
-                         gamma[y] * mask + gamma[par_batch] * (1-mask))
+    if kwargs['rate_decay'] is not None:
+        tau = F.leaky_relu(t - t_trans[y].view(-1, 1), neg_slope)
+        w = torch.exp(-kwargs['rate_decay']*tau.view(-1, 1, 1))
+        uhat, shat = pred_su(tau,
+                             u0_hat[y],
+                             s0_hat[y],
+                             alpha[y] * (1-w[:, :, 0]) + alpha[par_batch] * w[:, :, 0],
+                             beta[y] * (1-w[:, :, 1]) + beta[par_batch] * w[:, :, 1],
+                             gamma[y] * (1-w[:, :, 2]) + gamma[par_batch] * w[:, :, 2])
+    else:
+        mask = (t >= t_trans[y].view(-1, 1)).float()
+        tau = F.leaky_relu(t - t_trans[y].view(-1, 1), neg_slope) * mask \
+            + F.leaky_relu(t - t_trans[par_batch].view(-1, 1), neg_slope) * (1-mask)
+        u0_batch = u0_hat[y] * mask + u0_hat[par_batch] * (1-mask)
+        s0_batch = s0_hat[y] * mask + s0_hat[par_batch] * (1-mask)  # tensor shape: (N type, G)
+        uhat, shat = pred_su(tau,
+                             u0_batch,
+                             s0_batch,
+                             alpha[y] * mask + alpha[par_batch] * (1-mask),
+                             beta[y] * mask + beta[par_batch] * (1-mask),
+                             gamma[y] * mask + gamma[par_batch] * (1-mask))
     return uhat * scaling, shat
 
 
@@ -1090,23 +1108,46 @@ def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
     N = t.shape[0]
 
     tau0 = np.clip((t_trans - t_trans[par]).reshape(-1, 1), 0, None)
-    u0_hat, s0_hat = pred_su_numpy(tau0, u0[par],
-                                   s0[par],
-                                   alpha[par],
-                                   beta[par],
-                                   gamma[par])  # array shape: (N type, G)
+    if kwargs['rate_decay'] is not None:
+        w_par = np.exp(-kwargs['rate_decay']*tau0.reshape(-1, 1, 1))  # n type x G x 3
+        alpha_par_sm = alpha*w_par[:, :, 0]+alpha[par]*(1-w_par[:, :, 0])
+        beta_par_sm = beta*w_par[:, :, 1]+beta[par]*(1-w_par[:, :, 1])
+        gamma_par_sm = gamma*w_par[:, :, 2]+gamma[par]*(1-w_par[:, :, 2])
+        u0_hat, s0_hat = pred_su_numpy(tau0,
+                                       u0[par]/scaling,
+                                       s0[par],
+                                       alpha_par_sm,
+                                       beta_par_sm,
+                                       gamma_par_sm)
+    else:
+        u0_hat, s0_hat = pred_su_numpy(tau0,
+                                       u0[par]/scaling,
+                                       s0[par],
+                                       alpha[par],
+                                       beta[par],
+                                       gamma[par])  # array shape: (N type, G)
 
     uhat, shat = np.zeros((N, G)), np.zeros((N, G))
     for i in range(Ntype):
-        mask = (t[y == i] >= t_trans[i])
-        tau = np.clip(t[y == i].reshape(-1, 1) - t_trans[i], 0, None) * mask \
-            + np.clip(t[y == i].reshape(-1, 1) - t_trans[par[i]], 0, None) * (1-mask)
-        uhat_i, shat_i = pred_su_numpy(tau,
-                                       u0_hat[i]*mask+u0_hat[par[i]]*(1-mask),
-                                       s0_hat[i]*mask+s0_hat[par[i]]*(1-mask),
-                                       alpha[i],
-                                       beta[i],
-                                       gamma[i])
+        if kwargs['rate_decay'] is not None:
+            tau = np.clip(t[y == i].reshape(-1, 1) - t_trans[i], 0, None)
+            w = np.exp(-kwargs['rate_decay']*tau.reshape(-1, 1, 1))
+            uhat_i, shat_i = pred_su_numpy(tau,
+                                           u0_hat[i],
+                                           s0_hat[i],
+                                           alpha[i]*(1-w[:, :, 0])+alpha[par[i]]*w[:, :, 0],
+                                           beta[i]*(1-w[:, :, 1])+beta[par[i]]*w[:, :, 1],
+                                           gamma[i]*(1-w[:, :, 2])+gamma[par[i]]*w[:, :, 2])
+        else:
+            mask = (t[y == i] >= t_trans[i])
+            tau = np.clip(t[y == i].reshape(-1, 1) - t_trans[i], 0, None) * mask \
+                + np.clip(t[y == i].reshape(-1, 1) - t_trans[par[i]], 0, None) * (1-mask)
+            uhat_i, shat_i = pred_su_numpy(tau,
+                                           u0_hat[i]*mask+u0_hat[par[i]]*(1-mask),
+                                           s0_hat[i]*mask+s0_hat[par[i]]*(1-mask),
+                                           alpha[i],
+                                           beta[i],
+                                           gamma[i])
         uhat[y == i] = uhat_i
         shat[y == i] = shat_i
     return uhat*scaling, shat
