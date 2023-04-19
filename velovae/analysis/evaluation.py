@@ -438,10 +438,11 @@ def post_analysis(adata,
                 t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
                 Yhat[method_] = cell_labels
             elif method == 'BrODE':
-                Uhat_i, Shat_i = get_pred_brode_demo(adata, keys[i], genes)
+                t_i, y_i, Uhat_i, Shat_i = get_pred_brode_demo(adata, keys[i], genes, N=100)
                 V[method_] = adata.layers[f"{keys[i]}_velocity"][:, gene_indices]
-                t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
-                Yhat[method_] = cell_labels
+                #t_i = adata.obs[f'{keys[i]}_time'].to_numpy()
+                #Yhat[method_] = cell_labels
+                Yhat[method_] = y_i
             elif method == "UniTVelo":
                 t_i, Uhat_i, Shat_i = get_pred_utv_demo(adata, genes, nplot)
                 V[method_] = adata.layers["velocity"][:, gene_indices]
@@ -586,7 +587,7 @@ def post_analysis(adata,
             from scvelo.pl import velocity_embedding_stream
             colors = get_colors(len(cell_types_raw))
             for i, vkey in enumerate(vkeys):
-                if f"{vkey}_graph" not in adata.uns:
+                if f"{vkey}_graph" not in adata.uns or (not compute_metrics):
                     velocity_graph(adata, vkey=vkey, n_jobs=get_n_cpu(adata.n_obs))
                 velocity_embedding_stream(adata,
                                           basis=embed,

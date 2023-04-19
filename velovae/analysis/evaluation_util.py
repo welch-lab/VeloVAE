@@ -480,11 +480,10 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
         y = adata.obs[f"{key}_label"].to_numpy()  # integer
         par = np.argmax(adata.uns[f"{key}_w"], 1)
         n_type = len(par)
-        t_demo = np.zeros((N*n_type))
-        y_demo = np.zeros((N*n_type)).astype(int)
-        for i in range(n_type):
-            y_demo[i*N:(i+1)*N] = i
-            t_demo[i*N:(i+1)*N] = np.linspace(t_trans[i], np.quantile(t[y == i], 0.95), N)
+        t_demo = np.concatenate([np.linspace(t_trans[i], t[y == i].max()*1.05, N) for i in range(n_type)])
+        y_demo = np.concatenate([(i*np.ones((N))).astype(int) for i in range(n_type)])
+        rate_decay = adata.varm[f'{key}_rate_decay']
+
         if genes is None:
             alpha = adata.varm[f"{key}_alpha"].T
             beta = adata.varm[f"{key}_beta"].T
@@ -498,6 +497,7 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
             gamma = adata.varm[f"{key}_gamma"][gene_indices].T
             u0, s0 = adata.varm[f"{key}_u0"][gene_indices].T, adata.varm[f"{key}_s0"][gene_indices].T
             scaling = adata.var[f"{key}_scaling"][gene_indices].to_numpy()
+            rate_decay = rate_decay[gene_indices]
 
         Uhat_demo, Shat_demo = ode_br_numpy(t_demo.reshape(-1, 1),
                                             y_demo,
@@ -508,7 +508,8 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
                                             t_trans=t_trans,
                                             u0=u0,
                                             s0=s0,
-                                            scaling=scaling)
+                                            scaling=scaling,
+                                            rate_decay=rate_decay)
 
         return t_demo, y_demo, Uhat_demo, Shat_demo
     else:
@@ -916,12 +917,15 @@ def cross_boundary_correctness(
 
 
 def _combine_scores(scores, cell_types):
+    # scores contains flow from any cell type to other cell types
+    # This function determines the flow direction for each pair
+    # of cell types
     scores_combined = {}
     for i in range(len(cell_types)):
         u = cell_types[i]
         for j in range(i):
             v = cell_types[j]
-            if not (u, v) in scores:
+            if not ((u, v) in scores and (v, u) in scores):
                 continue
             if scores[(u, v)] > scores[(v, u)]:
                 scores_combined[(u, v)] = scores[(u, v)]
