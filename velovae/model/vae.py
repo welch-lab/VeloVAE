@@ -21,7 +21,7 @@ from .transition_graph import encode_type
 from .training_data import SCData
 from .vanilla_vae import VanillaVAE, kl_gaussian
 from .velocity import rna_velocity_vae
-P_MAX = 1e30
+P_MAX = 1e4
 GRAD_MAX = 1e7
 
 
@@ -946,7 +946,6 @@ class VAE(VanillaVAE):
                                           uhat_fw, shat_fw,
                                           vu_fw, vs_fw,
                                           u1, s1)
-
         return - err_rec + kl_term
 
     def _kl_poisson(self, lamb_1, lamb_2):
@@ -1189,10 +1188,9 @@ class VAE(VanillaVAE):
         dt = (self.config["dt"][0]*(t.max()-t.min()), self.config["dt"][1]*(t.max()-t.min()))
         u1, s1, t1 = None, None, None
         # Compute initial conditions of cells without a valid pool of neighbors
-        with torch.no_grad():
-            init_mask = (t <= np.quantile(t, 0.01))
-            u0_init = np.mean(U[init_mask], 0)
-            s0_init = np.mean(S[init_mask], 0)
+        init_mask = (t <= np.quantile(t, 0.01))
+        u0_init = np.mean(U[init_mask], 0)
+        s0_init = np.mean(S[init_mask], 0)
         if self.x0_index is None:
             self.x0_index = knnx0_index(t[self.train_idx],
                                         z[self.train_idx],
@@ -1823,11 +1821,11 @@ class VAE(VanillaVAE):
         std_u = (out["uhat"]-train_data[:, :G]).std(0)
         std_s = (out["shat"]-train_data[:, G:]).std(0)
         self.decoder.register_buffer('sigma_u',
-                                     torch.tensor(np.log(std_u),
+                                     torch.tensor(np.log(std_u+1e-16),
                                                   dtype=torch.float,
                                                   device=self.device))
         self.decoder.register_buffer('sigma_s',
-                                     torch.tensor(np.log(std_s),
+                                     torch.tensor(np.log(std_s+1e-16),
                                                   dtype=torch.float,
                                                   device=self.device))
         return
