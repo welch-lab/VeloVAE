@@ -415,9 +415,12 @@ def get_pred_brode(adata, key):
         alpha = adata.varm[f"{key}_alpha"]
         beta = adata.varm[f"{key}_beta"]
         gamma = adata.varm[f"{key}_gamma"]
+        u0_root, s0_root = adata.varm[f"{key}_u0_root"].T, adata.varm[f"{key}_s0_root"].T
         t_trans = adata.uns[f"{key}_t_trans"]
         scaling = adata.var[f"{key}_scaling"].to_numpy()
         par = np.argmax(adata.uns[f"{key}_w"], 1)
+        rate_transition = (adata.varm[f'{key}_rate_transition']
+                           if f'{key}_rate_transition' in adata.varm else None)
 
         t = adata.obs[f"{key}_time"].to_numpy()
         y = adata.obs[f"{key}_label"]
@@ -428,8 +431,11 @@ def get_pred_brode(adata, key):
                                   alpha=alpha,
                                   beta=beta,
                                   gamma=gamma,
+                                  u0_root=u0_root,
+                                  s0_root=s0_root,
                                   t_trans=t_trans,
-                                  scaling=scaling)
+                                  scaling=scaling,
+                                  rate_transition=rate_transition)
         Uhat = Uhat*scaling
     else:
         Uhat, Shat = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
@@ -482,22 +488,24 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
         n_type = len(par)
         t_demo = np.concatenate([np.linspace(t_trans[i], t[y == i].max()*1.05, N) for i in range(n_type)])
         y_demo = np.concatenate([(i*np.ones((N))).astype(int) for i in range(n_type)])
-        rate_decay = adata.varm[f'{key}_rate_decay']
+        rate_transition = (adata.varm[f'{key}_rate_transition']
+                           if f'{key}_rate_transition' in adata.varm else None)
 
         if genes is None:
             alpha = adata.varm[f"{key}_alpha"].T
             beta = adata.varm[f"{key}_beta"].T
             gamma = adata.varm[f"{key}_gamma"].T
-            u0, s0 = adata.varm[f"{key}_u0"].T, adata.varm[f"{key}_s0"].T
+            u0_root, s0_root = adata.varm[f"{key}_u0_root"].T, adata.varm[f"{key}_s0_root"].T
             scaling = adata.var[f"{key}_scaling"].to_numpy()
         else:
             gene_indices = np.array([np.where(adata.var_names == x)[0][0] for x in genes])
             alpha = adata.varm[f"{key}_alpha"][gene_indices].T
             beta = adata.varm[f"{key}_beta"][gene_indices].T
             gamma = adata.varm[f"{key}_gamma"][gene_indices].T
-            u0, s0 = adata.varm[f"{key}_u0"][gene_indices].T, adata.varm[f"{key}_s0"][gene_indices].T
+            u0_root, s0_root = adata.varm[f"{key}_u0_root"][gene_indices].T, adata.varm[f"{key}_s0_root"][gene_indices].T
             scaling = adata.var[f"{key}_scaling"][gene_indices].to_numpy()
-            rate_decay = rate_decay[gene_indices]
+            if rate_transition is not None:
+                rate_transition = rate_transition[gene_indices]
 
         Uhat_demo, Shat_demo = ode_br_numpy(t_demo.reshape(-1, 1),
                                             y_demo,
@@ -506,10 +514,10 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
                                             beta=beta,
                                             gamma=gamma,
                                             t_trans=t_trans,
-                                            u0=u0,
-                                            s0=s0,
+                                            u0_root=u0_root,
+                                            s0_root=s0_root,
                                             scaling=scaling,
-                                            rate_decay=rate_decay)
+                                            rate_transition=rate_transition)
 
         return t_demo, y_demo, Uhat_demo, Shat_demo
     else:

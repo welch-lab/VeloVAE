@@ -1033,54 +1033,104 @@ def reinit_type_params(U, S, t, ts, cell_labels, cell_types, init_types):
     return alpha, beta, gamma, u0, s0
 
 
-def ode_br(t, y, par, neg_slope=0.0, **kwargs):
+def get_x0_tree(par, neg_slope=0.0, eps=1e-6, **kwargs):
+    # Compute initial conditions by sequentially traversing the tree
+    # Returns scaled u0
+    alpha, beta, gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma']  # tensor shape: (N type, G)
+    t_trans = kwargs['t_trans']
+    scaling = kwargs["scaling"]
+
+    n_type, G = alpha.shape
+    u0 = torch.empty(n_type, G, dtype=torch.float32, device=alpha.device)
+    s0 = torch.empty(n_type, G, dtype=torch.float32, device=alpha.device)
+    self_idx = torch.tensor(range(n_type), dtype=par.dtype, device=alpha.device)
+    roots = torch.where(par == self_idx)[0]  # the parent of any root is itself
+    u0_root, s0_root = kwargs['u0_root'], kwargs['s0_root']  # tensor shape: (n roots, G), u0 unscaled
+    u0[roots] = u0_root/scaling
+    s0[roots] = s0_root
+    par[roots] = -1  # avoid revisiting the root in the while loop
+    count = len(roots)
+    progenitors = roots
+
+    while count < n_type:
+        cur_level = torch.cat([torch.where(par == x)[0] for x in progenitors])
+        tau0 = F.leaky_relu(t_trans[cur_level] - t_trans[par[cur_level]], neg_slope).view(-1, 1)
+
+        u0_hat, s0_hat = pred_su(tau0,
+                                 u0[par[cur_level]],
+                                 s0[par[cur_level]],
+                                 alpha[par[cur_level]],
+                                 beta[par[cur_level]],
+                                 gamma[par[cur_level]])
+        u0[cur_level] = u0_hat
+        s0[cur_level] = s0_hat
+        progenitors = cur_level
+        count += len(cur_level)
+    par[roots] = roots
+    return u0, s0
+
+
+def ode_br(t, y, par, neg_slope=0.0, eps=1e-6, **kwargs):
     """(PyTorch Version) Branching ODE solution.
     """
     alpha, beta, gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma']  # tensor shape: (N type, G)
     t_trans = kwargs['t_trans']
-    u0, s0 = kwargs['u0'], kwargs['s0']  # tensor shape: (N type, G), u0 unscaled
     scaling = kwargs["scaling"]
 
-    Ntype, G = alpha.shape
-
-    tau0 = F.leaky_relu((t_trans - t_trans[par]).view(-1, 1), neg_slope)
-    if kwargs['rate_decay'] is not None:
-        w_par = torch.exp(-kwargs['rate_decay']*tau0.view(-1, 1, 1))
-        alpha_par_sm = alpha*w_par[:, :, 0]+alpha[par]*(1-w_par[:, :, 0])
-        beta_par_sm = beta*w_par[:, :, 1]+beta[par]*(1-w_par[:, :, 1])
-        gamma_par_sm = gamma*w_par[:, :, 2]+gamma[par]*(1-w_par[:, :, 2])
-        u0_hat, s0_hat = pred_su(tau0, u0[par]/scaling, s0[par], alpha_par_sm, beta_par_sm, gamma_par_sm)
-    else:
-        u0_hat, s0_hat = pred_su(tau0, u0[par]/scaling, s0[par], alpha[par], beta[par], gamma[par])
-
+    u0, s0 = get_x0_tree(par, neg_slope, **kwargs)
     # For cells with time violation, we use its parent type
-    
     par_batch = par[y]
-    if kwargs['rate_decay'] is not None:
-        tau = F.leaky_relu(t - t_trans[y].view(-1, 1), neg_slope)
-        w = torch.exp(-kwargs['rate_decay']*tau.view(-1, 1, 1))
-        uhat, shat = pred_su(tau,
-                             u0_hat[y],
-                             s0_hat[y],
-                             alpha[y] * (1-w[:, :, 0]) + alpha[par_batch] * w[:, :, 0],
-                             beta[y] * (1-w[:, :, 1]) + beta[par_batch] * w[:, :, 1],
-                             gamma[y] * (1-w[:, :, 2]) + gamma[par_batch] * w[:, :, 2])
-    else:
-        mask = (t >= t_trans[y].view(-1, 1)).float()
-        tau = F.leaky_relu(t - t_trans[y].view(-1, 1), neg_slope) * mask \
-            + F.leaky_relu(t - t_trans[par_batch].view(-1, 1), neg_slope) * (1-mask)
-        u0_batch = u0_hat[y] * mask + u0_hat[par_batch] * (1-mask)
-        s0_batch = s0_hat[y] * mask + s0_hat[par_batch] * (1-mask)  # tensor shape: (N type, G)
-        uhat, shat = pred_su(tau,
-                             u0_batch,
-                             s0_batch,
-                             alpha[y] * mask + alpha[par_batch] * (1-mask),
-                             beta[y] * mask + beta[par_batch] * (1-mask),
-                             gamma[y] * mask + gamma[par_batch] * (1-mask))
+    mask = (t >= t_trans[y].view(-1, 1)).float()
+    tau = F.leaky_relu(t - t_trans[y].view(-1, 1), neg_slope) * mask \
+        + F.leaky_relu(t - t_trans[par_batch].view(-1, 1), neg_slope) * (1-mask)
+    u0_batch = u0[y] * mask + u0[par_batch] * (1-mask)
+    s0_batch = s0[y] * mask + s0[par_batch] * (1-mask)  # tensor shape: (N type, G)
+    uhat, shat = pred_su(tau,
+                         u0_batch,
+                         s0_batch,
+                         alpha[y] * mask + alpha[par_batch] * (1-mask),
+                         beta[y] * mask + beta[par_batch] * (1-mask),
+                         gamma[y] * mask + gamma[par_batch] * (1-mask))
     return uhat * scaling, shat
 
 
-def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
+def get_x0_tree_numpy(par, eps=1e-6, **kwargs):
+    # Compute initial conditions by sequentially traversing the tree
+    # Returns scaled u0
+    alpha, beta, gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma']  # tensor shape: (N type, G)
+    t_trans = kwargs['t_trans']
+    scaling = kwargs["scaling"]
+
+    n_type, G = alpha.shape
+    u0 = np.empty((n_type, G))
+    s0 = np.empty((n_type, G))
+    self_idx = np.array(range(n_type))
+    roots = np.where(par == self_idx)[0]  # the parent of any root is itself
+    u0_root, s0_root = kwargs['u0_root'], kwargs['s0_root']  # tensor shape: (n roots, G), u0 unscaled
+    u0[roots] = u0_root/scaling
+    s0[roots] = s0_root
+    par[roots] = -1
+    count = len(roots)
+    progenitors = roots
+
+    while count < n_type:
+        cur_level = np.concatenate([np.where(par == x)[0] for x in progenitors])
+        tau0 = np.clip(t_trans[cur_level] - t_trans[par[cur_level]], 0, None).reshape(-1, 1)
+        u0_hat, s0_hat = pred_su_numpy(tau0,
+                                       u0[par[cur_level]],
+                                       s0[par[cur_level]],
+                                       alpha[par[cur_level]],
+                                       beta[par[cur_level]],
+                                       gamma[par[cur_level]])
+        u0[cur_level] = u0_hat
+        s0[cur_level] = s0_hat
+        progenitors = cur_level
+        count += len(cur_level)
+    par[roots] = roots
+    return u0, s0
+
+
+def ode_br_numpy(t, y, par, eps=1e-6, **kwargs):
     """
     (Numpy Version)
     Branching ODE solution.
@@ -1101,53 +1151,21 @@ def ode_br_numpy(t, y, par, neg_slope=0.0, **kwargs):
     """
     alpha, beta, gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma']  # array shape: (N type, G)
     t_trans = kwargs['t_trans']
-    u0, s0 = kwargs['u0'], kwargs['s0']  # array shape: (N type, G)
     scaling = kwargs["scaling"]
 
-    Ntype, G = alpha.shape
-    N = t.shape[0]
-
-    tau0 = np.clip((t_trans - t_trans[par]).reshape(-1, 1), 0, None)
-    if kwargs['rate_decay'] is not None:
-        w_par = np.exp(-kwargs['rate_decay']*tau0.reshape(-1, 1, 1))  # n type x G x 3
-        alpha_par_sm = alpha*w_par[:, :, 0]+alpha[par]*(1-w_par[:, :, 0])
-        beta_par_sm = beta*w_par[:, :, 1]+beta[par]*(1-w_par[:, :, 1])
-        gamma_par_sm = gamma*w_par[:, :, 2]+gamma[par]*(1-w_par[:, :, 2])
-        u0_hat, s0_hat = pred_su_numpy(tau0,
-                                       u0[par]/scaling,
-                                       s0[par],
-                                       alpha_par_sm,
-                                       beta_par_sm,
-                                       gamma_par_sm)
-    else:
-        u0_hat, s0_hat = pred_su_numpy(tau0,
-                                       u0[par]/scaling,
-                                       s0[par],
-                                       alpha[par],
-                                       beta[par],
-                                       gamma[par])  # array shape: (N type, G)
-
-    uhat, shat = np.zeros((N, G)), np.zeros((N, G))
-    for i in range(Ntype):
-        if kwargs['rate_decay'] is not None:
-            tau = np.clip(t[y == i].reshape(-1, 1) - t_trans[i], 0, None)
-            w = np.exp(-kwargs['rate_decay']*tau.reshape(-1, 1, 1))
-            uhat_i, shat_i = pred_su_numpy(tau,
-                                           u0_hat[i],
-                                           s0_hat[i],
-                                           alpha[i]*(1-w[:, :, 0])+alpha[par[i]]*w[:, :, 0],
-                                           beta[i]*(1-w[:, :, 1])+beta[par[i]]*w[:, :, 1],
-                                           gamma[i]*(1-w[:, :, 2])+gamma[par[i]]*w[:, :, 2])
-        else:
-            mask = (t[y == i] >= t_trans[i])
-            tau = np.clip(t[y == i].reshape(-1, 1) - t_trans[i], 0, None) * mask \
-                + np.clip(t[y == i].reshape(-1, 1) - t_trans[par[i]], 0, None) * (1-mask)
-            uhat_i, shat_i = pred_su_numpy(tau,
-                                           u0_hat[i]*mask+u0_hat[par[i]]*(1-mask),
-                                           s0_hat[i]*mask+s0_hat[par[i]]*(1-mask),
-                                           alpha[i],
-                                           beta[i],
-                                           gamma[i])
+    u0, s0 = get_x0_tree_numpy(par, **kwargs)
+    n_type, G = alpha.shape
+    uhat, shat = np.zeros((len(y), G)), np.zeros((len(y), G))
+    for i in range(n_type):
+        mask = (t[y == i] >= t_trans[i])
+        tau = np.clip(t[y == i].reshape(-1, 1) - t_trans[i], 0, None) * mask \
+            + np.clip(t[y == i].reshape(-1, 1) - t_trans[par[i]], 0, None) * (1-mask)
+        uhat_i, shat_i = pred_su_numpy(tau,
+                                       u0[i]*mask+u0[par[i]]*(1-mask),
+                                       s0[i]*mask+s0[par[i]]*(1-mask),
+                                       alpha[i]*mask+alpha[[par[i]]]*(1-mask),
+                                       beta[i]*mask+beta[[par[i]]]*(1-mask),
+                                       gamma[i]*mask+gamma[[par[i]]]*(1-mask))
         uhat[y == i] = uhat_i
         shat[y == i] = shat_i
     return uhat*scaling, shat

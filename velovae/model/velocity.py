@@ -190,17 +190,14 @@ def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
     beta = adata.varm[f"{key}_beta"].T
     gamma = adata.varm[f"{key}_gamma"].T
     t_trans = adata.uns[f"{key}_t_trans"]
-    u0 = adata.varm[f"{key}_u0"].T
-    s0 = adata.varm[f"{key}_s0"].T
+    u0_root = adata.varm[f"{key}_u0_root"].T
+    s0_root = adata.varm[f"{key}_s0_root"].T
     scaling = adata.var[f"{key}_scaling"].to_numpy()
     w = adata.uns[f"{key}_w"]
     parents = np.argmax(w, 1)
 
     t = adata.obs[f"{key}_time"].to_numpy()
     y = adata.obs[f"{key}_label"].to_numpy()
-    rate_decay = (adata.varm[f"{key}_rate_decay"]
-                  if f"{key}_rate_decay" in adata.varm else
-                  None)
 
     if use_raw:
         U, S = adata.layers['Mu'], adata.layers['Ms']
@@ -216,8 +213,8 @@ def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
                                 beta=beta,
                                 gamma=gamma,
                                 t_trans=t_trans,
-                                u0=u0,
-                                s0=s0)
+                                u0_root=u0_root,
+                                s0_root=s0_root)
             adata.layers["Uhat"] = U
             adata.layers["Shat"] = S
 
@@ -226,17 +223,8 @@ def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
     for i in range(alpha.shape[0]):
         denom = 1+np.exp(-(t[y == i].reshape(-1, 1) - t_trans[parents[i]])*k)
         soft_coeff = 1 / denom  # smooth transition at the switch-on time
-        if rate_decay is None:
-            Vu[y == i] = (alpha[i] - beta[i]*U[y == i]) * soft_coeff
-            V[y == i] = (beta[i]*U[y == i] - gamma[i]*S[y == i]) * soft_coeff
-        else:  # smooth the rate parameters at any differentiation point
-            tau = np.clip(t[y == i].reshape(-1, 1) - t_trans[i], 0, None).reshape(-1, 1, 1)
-            w = np.exp(-tau*rate_decay)
-            alpha_sm = alpha[parents[i]]*w[:, :, 0] + alpha[i]*(1-w[:, :, 0])
-            beta_sm = beta[parents[i]]*w[:, :, 1] + beta[i]*(1-w[:, :, 1])
-            gamma_sm = gamma[parents[i]]*w[:, :, 2] + gamma[i]*(1-w[:, :, 2])
-            Vu[y == i] = (alpha_sm - beta_sm*U[y == i])
-            V[y == i] = (beta_sm*U[y == i] - gamma_sm*S[y == i])
+        Vu[y == i] = (alpha[i] - beta[i]*U[y == i]) * soft_coeff
+        V[y == i] = (beta[i]*U[y == i] - gamma[i]*S[y == i]) * soft_coeff
     adata.layers[f"{key}_velocity"] = V
     adata.layers[f"{key}_velocity_u"] = Vu
     if use_scv_genes:

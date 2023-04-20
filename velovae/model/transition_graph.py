@@ -385,17 +385,6 @@ class TransGraph():
         print("Number of partitions: ", len(lineages))
         return
 
-    def _count_lineage(self, cbdir):
-        partition = np.array(range(len(self.cell_types)))
-        for pair in cbdir:
-            root = min(self.label_dic[pair[0]], self.label_dic[pair[1]])
-            partition[partition == partition[self.label_dic[pair[0]]]] = root
-            partition[partition == partition[self.label_dic[pair[0]]]] = root
-        self.partition = partition
-        self.partition_cluster = np.unique(partition)
-        self.n_lineage = len(self.partition_cluster)
-        return
-
     def _get_velocity_flow(self,
                            adata,
                            tkey,

@@ -11,6 +11,8 @@ from .model_util import ode_br, encode_type, str2int, int2str
 from .training_data import SCTimedData
 from .transition_graph import TransGraph
 from .velocity import rna_velocity_brode
+P_MAX = 1e4
+GRAD_MAX = 1e7
 
 
 class decoder(nn.Module):
@@ -23,7 +25,6 @@ class decoder(nn.Module):
                  vkey=None,
                  param_key=None,
                  device=torch.device('cpu'),
-                 rate_transition=False,
                  p=98,
                  checkpoint=None,
                  **kwargs):
@@ -59,18 +60,20 @@ class decoder(nn.Module):
         dt = kwargs['dt'] if 'dt' in kwargs else (0.01, 0.05)
         k = kwargs['k'] if 'k' in kwargs else 5
         w = self.tgraph.compute_transition_deterministic(n_par, dt, k)
+        par = np.argmax(w, 1)
+        roots = np.where(par == np.array(range(len(par))))[0]
 
         self.w = torch.tensor(w, device=device)
         self.par = torch.argmax(self.w, 1)
 
         # Dynamical Model Parameters
         if checkpoint is not None:
-            self.alpha = nn.Parameter(torch.empty(G, device=device).double())
-            self.beta = nn.Parameter(torch.empty(G, device=device).double())
-            self.gamma = nn.Parameter(torch.empty(G, device=device).double())
-            self.scaling = nn.Parameter(torch.empty(G, device=device).double())
-            self.sigma_u = nn.Parameter(torch.empty(G, device=device).double())
-            self.sigma_s = nn.Parameter(torch.empty(G, device=device).double())
+            self.alpha = nn.Parameter(torch.empty(G, device=device).float())
+            self.beta = nn.Parameter(torch.empty(G, device=device).float())
+            self.gamma = nn.Parameter(torch.empty(G, device=device).float())
+            self.scaling = nn.Parameter(torch.empty(G, device=device).float())
+            self.sigma_u = nn.Parameter(torch.empty(G, device=device).float())
+            self.sigma_s = nn.Parameter(torch.empty(G, device=device).float())
 
             self.load_state_dict(torch.load(checkpoint, map_location=device))
         else:
@@ -108,26 +111,21 @@ class decoder(nn.Module):
                                                             cell_types_int,
                                                             cell_types_int)
 
-            self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).double())
-            self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).double())
-            self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).double())
-            self.t_trans = nn.Parameter(torch.tensor(np.log(t_trans+1e-10), device=device).double())
-            self.u0 = nn.Parameter(torch.tensor(np.log(u0*scaling), device=device).double())
-            self.s0 = nn.Parameter(torch.tensor(np.log(s0), device=device).double())
-            self.scaling = nn.Parameter(torch.tensor(np.log(scaling), device=device).double())
-            self.sigma_u = nn.Parameter(torch.tensor(np.log(sigma_u), device=device).double())
-            self.sigma_s = nn.Parameter(torch.tensor(np.log(sigma_s), device=device).double())
-        self.has_rate_transition = rate_transition
-        self.rate_transition = nn.Parameter(torch.empty(G, 3, device=device).double())
-        nn.init.normal_(self.rate_transition, 2.0, 1.0)
+            self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
+            self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
+            self.gamma = nn.Parameter(torch.tensor(np.log(gamma), device=device).float())
+            self.t_trans = nn.Parameter(torch.tensor(np.log(t_trans+1e-10), device=device).float())
+            self.u0_root = nn.Parameter(torch.tensor(np.log(u0[roots]*scaling), device=device).float())
+            self.s0_root = nn.Parameter(torch.tensor(np.log(s0[roots]), device=device).float())
+            self.register_buffer('scaling', torch.tensor(np.log(scaling), device=device).float())
+            self.register_buffer('sigma_u', torch.tensor(np.log(sigma_u), device=device).float())
+            self.register_buffer('sigma_s', torch.tensor(np.log(sigma_s), device=device).float())
+
         self.t_trans.requires_grad = False
-        self.scaling.requires_grad = False
-        self.sigma_u.requires_grad = False
-        self.sigma_s.requires_grad = False
-        self.u0.requires_grad = False
-        self.s0.requires_grad = False
 
     def forward(self, t, y, neg_slope=0.0):
+        #sample descendants for each cell
+
         return ode_br(t,
                       y,
                       self.par,
@@ -136,13 +134,11 @@ class decoder(nn.Module):
                       beta=torch.exp(self.beta),
                       gamma=torch.exp(self.gamma),
                       t_trans=torch.exp(self.t_trans),
-                      u0=torch.exp(self.u0),
-                      s0=torch.exp(self.s0),
+                      u0_root=torch.exp(self.u0_root),
+                      s0_root=torch.exp(self.s0_root),
                       sigma_u=torch.exp(self.sigma_u),
                       sigma_s=torch.exp(self.sigma_s),
-                      scaling=torch.exp(self.scaling),
-                      rate_transition=(torch.exp(self.rate_transition)
-                                       if self.has_rate_transition else None))
+                      scaling=torch.exp(self.scaling))
 
     def pred_su(self, t, y, gidx=None):
         if gidx is None:
@@ -154,13 +150,11 @@ class decoder(nn.Module):
                           beta=torch.exp(self.beta),
                           gamma=torch.exp(self.gamma),
                           t_trans=torch.exp(self.t_trans),
-                          u0=torch.exp(self.u0),
-                          s0=torch.exp(self.s0),
+                          u0_root=torch.exp(self.u0_root),
+                          s0_root=torch.exp(self.s0_root),
                           sigma_u=torch.exp(self.sigma_u),
                           sigma_s=torch.exp(self.sigma_s),
-                          scaling=torch.exp(self.scaling),
-                          rate_transition=(torch.exp(self.rate_transition)
-                                           if self.has_rate_transition else None))
+                          scaling=torch.exp(self.scaling))
         return ode_br(t,
                       y,
                       self.par,
@@ -169,13 +163,11 @@ class decoder(nn.Module):
                       beta=torch.exp(self.beta[:, gidx]),
                       gamma=torch.exp(self.gamma[:, gidx]),
                       t_trans=torch.exp(self.t_trans),
-                      u0=torch.exp(self.u0[:, gidx]),
-                      s0=torch.exp(self.s0[:, gidx]),
+                      u0_root=torch.exp(self.u0_root[:, gidx]),
+                      s0_root=torch.exp(self.s0_root[:, gidx]),
                       sigma_u=torch.exp(self.sigma_u[gidx]),
                       sigma_s=torch.exp(self.sigma_s[gidx]),
-                      scaling=torch.exp(self.scaling[gidx]),
-                      rate_transition=(torch.exp(self.rate_transition[:, gidx])
-                                       if self.has_rate_transition else None))
+                      scaling=torch.exp(self.scaling[gidx]))
 
 
 class BrODE():
@@ -187,7 +179,6 @@ class BrODE():
                  vkey=None,
                  param_key=None,
                  device='cpu',
-                 rate_transition=False,
                  checkpoint=None,
                  graph_param={}):
         """High-level ODE model for RNA velocity with branching structure.
@@ -206,8 +197,6 @@ class BrODE():
             Used to extract sigma_u, sigma_s and scaling from adata.var
         device : `torch.device`, optional
             Either cpu or gpu
-        rate_transition : bool, optional
-            Controls whether the rate changes continuous at boundaries between cell type transitions
         checkpoint : string, optional
             Path to a file containing a pretrained model. \
             If given, initialization will be skipped and arguments relating to initialization will be ignored.
@@ -236,7 +225,7 @@ class BrODE():
         # Training Configuration
         self.config = {
             # Training Parameters
-            "n_epochs": 500,
+            "n_epochs": 2000,
             "n_refine": 10,
             "learning_rate": None,
             "neg_slope": 0.0,
@@ -246,8 +235,6 @@ class BrODE():
             "early_stop": 5,
             "early_stop_thred": adata.n_vars*1e-3,
             "train_test_split": 0.7,
-            "train_scaling": False,
-            "train_std": False,
             "weight_sample": False,
             "sparsify": 1
         }
@@ -263,7 +250,6 @@ class BrODE():
                                vkey,
                                param_key,
                                device=self.device,
-                               rate_transition=rate_transition,
                                checkpoint=checkpoint,
                                **graph_param)
 
@@ -356,11 +342,11 @@ class BrODE():
         # 1. u,s,uhat,shat: raw and predicted counts
         # 2. sigma_u, sigma_s : standard deviation of the Gaussian likelihood (decoder)
         # 3. weight: sample weight
-
+        clip_fn = nn.Hardtanh(-P_MAX, P_MAX)
         neg_log_gaussian = 0.5*((uhat-u)/sigma_u).pow(2) \
             + 0.5*((shat-s)/sigma_s).pow(2) \
             + torch.log(sigma_u)+torch.log(sigma_s*2*np.pi)
-
+        neg_log_gaussian = clip_fn(neg_log_gaussian)
         if weight is not None:
             neg_log_gaussian = neg_log_gaussian*weight.view(-1, 1)
 
@@ -397,6 +383,8 @@ class BrODE():
                                  uhat, shat,
                                  torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
             loss.backward()
+            # gradient clipping
+            torch.nn.utils.clip_grad_value_(self.decoder.parameters(), GRAD_MAX)
             optimizer.step()
 
             self.loss_train.append(loss.detach().cpu().item())
@@ -411,11 +399,6 @@ class BrODE():
             else:
                 self.config[key] = config[key]
                 print(f"Added new hyperparameter: {key}")
-        if self.config["train_scaling"]:
-            self.decoder.scaling.requires_grad = True
-        if self.config["train_std"]:
-            self.decoder.sigma_u.requires_grad = True
-            self.decoder.sigma_s.requires_grad = True
 
     def print_weight(self):
         w = self.decoder.w.cpu().numpy()
@@ -434,14 +417,14 @@ class BrODE():
     def update_std_noise(self, train_set):
         G = train_set.G
         Uhat, Shat, ll = self.pred_all(train_set.data,
-                                       torch.tensor(train_set.time).double().to(self.device),
+                                       torch.tensor(train_set.time).float().to(self.device),
                                        train_set.labels,
                                        train_set.N,
                                        train_set.G,
                                        np.array(range(G)))
-        self.decoder.sigma_u = nn.Parameter(torch.tensor(np.log((Uhat-train_set.data[:, :G]).std(0)+1e-10),
+        self.decoder.sigma_u = nn.Parameter(torch.tensor(np.log((Uhat-train_set.data[:, :G]).std(0)+1e-16),
                                             device=self.device))
-        self.decoder.sigma_s = nn.Parameter(torch.tensor(np.log((Shat-train_set.data[:, G:]).std(0)+1e-10),
+        self.decoder.sigma_s = nn.Parameter(torch.tensor(np.log((Shat-train_set.data[:, G:]).std(0)+1e-16),
                                             device=self.device))
         return
 
@@ -481,11 +464,6 @@ class BrODE():
         self.cluster_key = cluster_key
         self.load_config(config)
 
-        if self.config["train_scaling"]:
-            self.decoder.scaling.requires_grad = True
-        if self.config["train_std"]:
-            self.decoder.sigma_u.requires_grad = True
-            self.decoder.sigma_s.requires_grad = True
         if self.config["learning_rate"] is None:
             p = (np.sum(adata.layers["unspliced"].A > 0)
                  + (np.sum(adata.layers["spliced"].A > 0)))/adata.n_obs/adata.n_vars/2
@@ -519,12 +497,7 @@ class BrODE():
         # define optimizer
         print("*********                 Creating optimizers                 *********")
         param_ode = [self.decoder.alpha, self.decoder.beta, self.decoder.gamma,
-                     self.decoder.rate_transition]
-        if self.config["train_scaling"]:
-            param_ode = param_ode+[self.decoder.scaling]
-        if self.config["train_std"]:
-            param_ode = param_ode+[self.decoder.sigma_u, self.decoder.sigma_s]
-
+                     self.decoder.t_trans, self.decoder.u0_root, self.decoder.s0_root]
         optimizer = torch.optim.Adam(param_ode, lr=self.config["learning_rate"])
         print("*********                      Finished.                      *********")
 
@@ -572,7 +545,7 @@ class BrODE():
                 sigma_s_prev = self.decoder.sigma_s.detach().cpu().numpy()
                 noise_change = norm_delta_sigma/norm_sigma
                 print(f"Change in noise variance: {noise_change:.4f}")
-            stop_training = noise_change < 0.001
+            stop_training = noise_change < 0.01
             if stop_training:
                 print(f"Training converged at round {r}")
                 break
@@ -608,8 +581,8 @@ class BrODE():
                 if gene_idx is not None:
                     Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].cpu().numpy()
                     Shat[i*B:(i+1)*B] = shat[:, gene_idx].cpu().numpy()
-                loss = self.ode_risk(torch.tensor(data[i*B:(i+1)*B, :G]).double().to(self.device),
-                                     torch.tensor(data[i*B:(i+1)*B, G:]).double().to(self.device),
+                loss = self.ode_risk(torch.tensor(data[i*B:(i+1)*B, :G]).float().to(self.device),
+                                     torch.tensor(data[i*B:(i+1)*B, G:]).float().to(self.device),
                                      uhat, shat,
                                      torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
                 ll = ll - (B/N)*loss
@@ -618,8 +591,8 @@ class BrODE():
                 if gene_idx is not None:
                     Uhat[Nb*B:] = uhat[:, gene_idx].cpu().numpy()
                     Shat[Nb*B:] = shat[:, gene_idx].cpu().numpy()
-                loss = self.ode_risk(torch.tensor(data[B*Nb:, :G]).double().to(self.device),
-                                     torch.tensor(data[B*Nb:, G:]).double().to(self.device),
+                loss = self.ode_risk(torch.tensor(data[B*Nb:, :G]).float().to(self.device),
+                                     torch.tensor(data[B*Nb:, G:]).float().to(self.device),
                                      uhat, shat,
                                      torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
                 ll = ll - ((N-B*Nb)/N)*loss
@@ -636,7 +609,7 @@ class BrODE():
 
         self.set_mode('eval')
         Uhat, Shat, ll = self.pred_all(dataset.data,
-                                       torch.tensor(dataset.time).double().to(self.device),
+                                       torch.tensor(dataset.time).float().to(self.device),
                                        dataset.labels,
                                        dataset.N,
                                        dataset.G,
@@ -698,12 +671,11 @@ class BrODE():
         adata.varm[f"{key}_beta"] = np.exp(self.decoder.beta.detach().cpu().numpy()).T
         adata.varm[f"{key}_gamma"] = np.exp(self.decoder.gamma.detach().cpu().numpy()).T
         adata.uns[f"{key}_t_trans"] = np.exp(self.decoder.t_trans.detach().cpu().numpy())
-        adata.varm[f"{key}_u0"] = np.exp(self.decoder.u0.detach().cpu().numpy()).T
-        adata.varm[f"{key}_s0"] = np.exp(self.decoder.s0.detach().cpu().numpy()).T
+        adata.varm[f"{key}_u0_root"] = np.exp(self.decoder.u0_root.detach().cpu().numpy()).T
+        adata.varm[f"{key}_s0_root"] = np.exp(self.decoder.s0_root.detach().cpu().numpy()).T
         adata.var[f"{key}_scaling"] = np.exp(self.decoder.scaling.detach().cpu().numpy())
         adata.var[f"{key}_sigma_u"] = np.exp(self.decoder.sigma_u.detach().cpu().numpy())
         adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
-        adata.varm[f"{key}_rate_transitioin"] = np.exp(self.decoder.rate_transition.detach().cpu().numpy())
         adata.uns[f"{key}_w"] = self.decoder.w.detach().cpu().numpy()
 
         Uhat, Shat, ll = self.pred_all(X,
