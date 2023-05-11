@@ -44,7 +44,7 @@ def kl_uniform(mu_t, std_t, t_start, t_end, **kwargs):
 
 def kl_gaussian(mu1, std1, mu2, std2, **kwargs):
     # Compute the KL divergence between two Gaussian distributions with diagonal covariance
-    term_1 = torch.log(std2/std1)
+    term_1 = torch.log(std2) - torch.log(std1)
     term_2 = std1.pow(2)/(2*std2.pow(2))
     term_3 = (mu1-mu2).pow(2)/(2*std2.pow(2))
     return torch.mean(torch.sum(term_1+term_2-0.5+term_3, 1))
