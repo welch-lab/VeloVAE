@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import os
 from ..plotting import get_colors
+import re
 
 class PerfLogger:
     """Class for saving the performance metrics
@@ -26,16 +27,16 @@ class PerfLogger:
                         "LL Train",
                         "LL Test",
                         "CBDir",
-                        "CBDir (Subset)",
+                        "CBDir (Velocity Genes)",
                         "CBDir (Embed)",
-                        "CBDir (Embed, Subset)",
+                        "CBDir (Embed, Velocity Genes)",
                         "Time Score",
                         "Vel Consistency",
                         "corr"]
         self.metrics_type = ["CBDir",
-                             "CBDir (Subset)",
+                             "CBDir (Velocity Genes)",
                              "CBDir (Embed)",
-                             "CBDir (Embed, Subset)",
+                             "CBDir (Embed, Velocity Genes)",
                              "Time Score"]
         if checkpoints is None:
             self._create_empty_df()
@@ -87,7 +88,7 @@ class PerfLogger:
                                     np.ones((self.df_type.shape[0]))*np.nan)
         for row in row_index:
             for pair in transitions:
-                self.df_type.loc[row, (data_name, pair)] = res_type.loc[row[0], (row[1], pair)].values[0]
+                self.df_type.loc[row, (data_name, pair)] = res_type.loc[row[0], (row[1], pair)]
         # update number of models
         self.n_model = len(self.df.iloc[0].index)
         self.df.sort_index(inplace=True)
@@ -97,10 +98,11 @@ class PerfLogger:
     def plot(self, figure_path=None, bbox_to_anchor=(1.25, 1.0)):
         """Generate bar plots showing all performance metrics
         """
-        datasets = self.df_type.columns.get_level_values(0)
+        datasets = np.unique(self.df_type.columns.get_level_values(0))
         for metric in self.metrics:
             colors = get_colors(self.df.loc[metric, :].shape[0])
-            fig_name = "_".join(metric.lower().split())
+            fig_name = re.sub(r'\W+', ' ', metric.lower())
+            fig_name = '_'.join(fig_name.rstrip().split())
             if np.all(np.isnan(self.df.loc[metric, :].values)):
                 continue
             ax = self.df.loc[metric, :].T.plot.bar(color=colors, figsize=(12, 6), fontsize=14)
@@ -113,7 +115,8 @@ class PerfLogger:
             if figure_path is not None:
                 fig.savefig(f'{figure_path}/perf_{fig_name}.png', bbox_inches='tight')
         for metric in self.metrics_type:
-            fig_name = "_".join(metric.lower().split())
+            fig_name = re.sub(r'\W+', ' ', metric.lower())
+            fig_name = '_'.join(fig_name.rstrip().split())
             for dataset in datasets:
                 if np.all(np.isnan(self.df_type.loc[metric, dataset].values)):
                     continue
