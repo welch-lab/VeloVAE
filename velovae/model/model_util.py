@@ -7,7 +7,7 @@ from scipy.special import loggamma
 from .scvelo_util import mRNA, vectorize, tau_inv, R_squared, test_bimodality, leastsq_NxN
 from sklearn.neighbors import NearestNeighbors
 import pynndescent
-from tqdm.notebook import tqdm_notebook
+from tqdm.autonotebook import trange
 from sklearn.cluster import SpectralClustering, KMeans
 from scipy.stats import dirichlet, bernoulli, kstest, linregress
 from scipy.linalg import svdvals
@@ -366,7 +366,7 @@ def init_params(data, percent, fit_offset=False, fit_scaling=True, eps=1e-3):
     U0, S0 = np.zeros((ngene)), np.zeros((ngene))  # Steady-1 State
 
     print('Estimating ODE parameters...')
-    for i in tqdm_notebook(range(ngene)):
+    for i in trange(ngene):
         si, ui = s[:, i], u[:, i]
         sfilt, ufilt = si[(si > 0) & (ui > 0)], ui[(si > 0) & (ui > 0)]  # Use only nonzero data points
         if len(sfilt) > 3 and len(ufilt) > 3:
@@ -395,7 +395,7 @@ def init_params(data, percent, fit_offset=False, fit_scaling=True, eps=1e-3):
     dist_u, dist_s = np.zeros(u.shape), np.zeros(s.shape)
     print('Estimating the variance...')
     assert np.all(params[:, 2] > 0)
-    for i in tqdm_notebook(range(ngene)):
+    for i in trange(ngene):
         upred, spred = scv_pred_single(T[i],
                                        params[i, 0],
                                        params[i, 1],
@@ -503,7 +503,7 @@ def init_params_raw(data, percent, fit_offset=False, fit_scaling=True, eps=1e-3)
     Ts = np.zeros((ngene))
     U0, S0 = np.zeros((ngene)), np.zeros((ngene))  # Steady-1 State
 
-    for i in tqdm_notebook(range(ngene)):
+    for i in trange(ngene):
         si, ui = s[:, i], u[:, i]
         sfilt, ufilt = si[(si > 0) & (ui > 0)], ui[(si > 0) & (ui > 0)]  # Use only nonzero data points
         if len(sfilt) > 3 and len(ufilt) > 3:
@@ -606,7 +606,7 @@ def reinit_params(U, S, t, ts):
     print('Reinitialize the regular ODE parameters based on estimated global latent time.')
     G = U.shape[1]
     alpha, beta, gamma, ton = np.zeros((G)), np.zeros((G)), np.zeros((G)), np.zeros((G))
-    for i in tqdm_notebook(range(G)):
+    for i in trange(G):
         alpha_g, beta_g, gamma_g, ton_g = reinit_gene(U[:, i], S[:, i], t, ts[i])
         alpha[i] = alpha_g
         beta[i] = beta_g
@@ -1277,7 +1277,7 @@ def knnx0(U, S,
         p = p - 0.01
         t_98 = np.quantile(t, p)
     u_end, s_end = U[t >= t_98].mean(0), S[t >= t_98].mean(0)
-    for i in tqdm_notebook(range(Nq)):  # iterate through every cell
+    for i in trange(Nq):  # iterate through every cell
         if adaptive > 0:
             dt_r, dt_l = adaptive*std_t[i], adaptive*std_t[i] + (dt[1]-dt[0])
         else:
@@ -1337,7 +1337,7 @@ def knnx0_index(t,
     if hist_eq:
         t, t_query = _hist_equal(t, t_query)
     neighbor_index = []
-    for i in tqdm_notebook(range(Nq)):
+    for i in trange(Nq):
         if adaptive > 0:
             dt_r, dt_l = adaptive*std_t[i], adaptive*std_t[i] + (dt[1]-dt[0])
         else:
