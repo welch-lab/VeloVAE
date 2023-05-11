@@ -1,20 +1,25 @@
 import numpy as np
-from scipy.stats import spearmanr, poisson, norm
+from scipy.stats import spearmanr, poisson, norm, ttest_ind, mannwhitneyu
 from scipy.special import loggamma
 from sklearn.metrics.pairwise import pairwise_distances
 from ..model.model_util import pred_su_numpy, ode_numpy, ode_br_numpy, scv_pred, scv_pred_single
 import hnswlib
 from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics.pairwise import cosine_similarity
 import torch
 import torch.nn.functional as F
 
 
-def get_mse(U, S, Uhat, Shat):
+def get_mse(U, S, Uhat, Shat, axis=None):
+    if axis is not None:
+        return np.nanmean((U-Uhat)**2+(S-Shat)**2, axis=axis)
     return np.nanmean((U-Uhat)**2+(S-Shat)**2)
 
 
-def get_mae(U, S, Uhat, Shat):
+def get_mae(U, S, Uhat, Shat, axis=None):
+    if axis is not None:
+        return np.nanmean((U-Uhat)**2+(S-Shat)**2, axis=axis)
     return np.nanmean(np.abs(U-Uhat)+np.abs(S-Shat))
 
 
@@ -73,11 +78,10 @@ def get_err_scv(adata, key='fit'):
     mse = get_mse(adata.layers['Mu'], adata.layers['Ms'], Uhat, Shat)
     mae = get_mae(adata.layers['Mu'], adata.layers['Ms'], Uhat, Shat)
     logp = np.sum(np.log(adata.var[f"{key}_likelihood"]))
-    try:
-        run_time = adata.uns[f'{key}_run_time']
-    except KeyError:
-        run_time = np.nan
-    return mse, None, mae, None, logp, None, run_time
+    adata.var[f'{key}_mse'] = get_mse(adata.layers['Mu'], adata.layers['Ms'], Uhat, Shat, axis=0)
+    adata.var[f'{key}_mae'] = get_mae(adata.layers['Mu'], adata.layers['Ms'], Uhat, Shat, axis=0)
+
+    return mse, None, mae, None, logp, None
 
 
 def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
@@ -156,15 +160,17 @@ def get_err_vanilla(adata, key, gene_mask=None):
     mse_test = np.nanmean(dist_u_test**2+dist_s_test**2)
     mae_train = np.nanmean(dist_u_train+dist_s_train)
     mae_test = np.nanmean(dist_u_test+dist_s_test)
+    adata.var[f'{key}_mse_train'] = np.nanmean(dist_u_train**2+dist_u_train**2, 0)
+    adata.var[f'{key}_mae_train'] = np.nanmean(dist_u_train+dist_u_train, 0)
+    adata.var[f'{key}_mse_test'] = np.nanmean(dist_u_test**2+dist_u_test**2, 0)
+    adata.var[f'{key}_mae_test'] = np.nanmean(dist_u_test+dist_u_test, 0)
 
     logp_train = np.nanmean(np.sum(logp_train, 1))
     logp_test = np.nanmean(np.sum(logp_test, 1))
+    adata.var[f'{key}_likelihood_train'] = np.nanmean(logp_train, 0)
+    adata.var[f'{key}_likelihood_test'] = np.nanmean(logp_test, 0)
 
-    try:
-        run_time = adata.uns[f'{key}_run_time']
-    except KeyError:
-        run_time = np.nan
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
 
 
 def get_pred_vanilla_demo(adata, key, genes=None, N=100):
@@ -241,11 +247,7 @@ def get_err_cycle(adata, key, gene_mask=None):
     logp_train = np.nanmean(np.sum(logp_train, 1))
     logp_test = np.nanmean(np.sum(logp_test, 1))
 
-    try:
-        run_time = adata.uns[f'{key}_run_time']
-    except KeyError:
-        run_time = np.nan
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
 
 
 def get_pred_cycle_demo(adata, key, genes=None, N=100):
@@ -298,12 +300,17 @@ def get_pred_velovae(adata, key, scv_key=None, full_vb=False, discrete=False):
     return Uhat, Shat
 
 
-def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n_sample=30, seed=2022):
+def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n_sample=25, seed=2022):
     Uhat, Shat = get_pred_velovae(adata, key, full_vb, discrete)
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
     if gene_mask is None:
         gene_mask = np.ones((adata.n_vars)).astype(bool)
-
+    mse_train_gene = np.ones((adata.n_vars))
+    mse_test_gene = np.ones((adata.n_vars))
+    mae_train_gene = np.ones((adata.n_vars))
+    mae_test_gene = np.ones((adata.n_vars))
+    ll_train_gene = np.ones((adata.n_vars))
+    ll_test_gene = np.ones((adata.n_vars))
     if discrete:
         U, S = adata.layers["unspliced"].A, adata.layers["spliced"].A
         lu, ls = adata.obs["library_scale_u"].to_numpy(), adata.obs["library_scale_s"].to_numpy()
@@ -312,10 +319,10 @@ def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n
         Uhat = np.clip(Uhat, a_min=1e-2, a_max=None)
         Shat = np.clip(Shat, a_min=1e-2, a_max=None)
 
-        logp_train = np.log(poisson.pmf(U[train_idx], Uhat[train_idx])+1e-10) \
-            + np.log(poisson.pmf(S[train_idx], Shat[train_idx])+1e-10)
-        logp_test = np.log(poisson.pmf(U[test_idx], Uhat[test_idx])+1e-10) \
-            + np.log(poisson.pmf(S[test_idx], Shat[test_idx])+1e-10)
+        logp_train = np.log(poisson.pmf(U[train_idx][:, gene_mask], Uhat[train_idx][:, gene_mask])+1e-10) \
+            + np.log(poisson.pmf(S[train_idx][:, gene_mask], Shat[train_idx][:, gene_mask])+1e-10)
+        logp_test = np.log(poisson.pmf(U[test_idx][:, gene_mask], Uhat[test_idx][:, gene_mask])+1e-10) \
+            + np.log(poisson.pmf(S[test_idx][:, gene_mask], Shat[test_idx][:, gene_mask])+1e-10)
 
         # Sample multiple times
         mse_train, mae_train, mse_test, mae_test = 0, 0, 0, 0
@@ -332,10 +339,18 @@ def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n
             mse_test += np.nanmean(dist_u_test**2+dist_s_test**2)
             mae_train += np.nanmean(dist_u_train+dist_s_train)
             mae_test += np.nanmean(dist_u_test+dist_s_test)
+            mse_train_gene[gene_mask] = mse_train_gene[gene_mask] + np.nanmean(dist_u_train**2+dist_s_train**2, 0)
+            mse_test_gene[gene_mask] = mse_test_gene[gene_mask] + np.nanmean(dist_u_test**2+dist_s_test**2, 0)
+            mae_train_gene[gene_mask] = mae_train_gene[gene_mask] + np.nanmean(dist_u_train+dist_s_train, 0)
+            mae_test_gene[gene_mask] = mae_test_gene[gene_mask] + np.nanmean(dist_u_test+dist_s_test, 0)
         mse_train /= n_sample
         mse_test /= n_sample
         mae_train /= n_sample
         mae_test /= n_sample
+        mse_train_gene = mse_train_gene/n_sample
+        mse_test_gene = mse_test_gene/n_sample
+        mae_train_gene = mae_train_gene/n_sample
+        mae_test_gene = mae_test_gene/n_sample
     else:
         U, S = adata.layers["Mu"], adata.layers["Ms"]
         sigma_u = adata.var[f"{key}_sigma_u"].to_numpy()[gene_mask]
@@ -357,16 +372,25 @@ def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n
         mse_test = np.nanmean(dist_u_test**2+dist_s_test**2)
         mae_train = np.nanmean(dist_u_train+dist_s_train)
         mae_test = np.nanmean(dist_u_test+dist_s_test)
+        mse_train_gene[gene_mask] = np.nanmean(dist_u_train**2+dist_s_train**2, 0)
+        mse_test_gene[gene_mask] = np.nanmean(dist_u_test**2+dist_s_test**2, 0)
+        mae_train_gene[gene_mask] = np.nanmean(dist_u_train+dist_s_train, 0)
+        mae_test_gene[gene_mask] = np.nanmean(dist_u_test+dist_s_test, 0)
 
+    adata.var[f'{key}_mse_train'] = mse_train_gene
+    adata.var[f'{key}_mse_test'] = mse_test_gene
+    adata.var[f'{key}_mae_train'] = mae_train_gene
+    adata.var[f'{key}_mae_test'] = mae_test_gene
+    adata.var[f'{key}_likelihood_train'] = ll_train_gene
+    adata.var[f'{key}_likelihood_test'] = ll_test_gene
+    ll_train_gene[gene_mask] = np.nanmean(logp_train, 0)
+    ll_test_gene[gene_mask] = np.nanmean(logp_test, 0)
+    adata.var[f'{key}_likelihood_train'] = ll_train_gene
+    adata.var[f'{key}_likelihood_test'] = ll_test_gene
     logp_train = np.nanmean(np.sum(logp_train, 1))
     logp_test = np.nanmean(np.sum(logp_test, 1))
 
-    try:
-        run_time = adata.uns[f'{key}_run_time']
-    except KeyError:
-        run_time = np.nan
-
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
 
 
 def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False):
@@ -450,6 +474,13 @@ def get_err_brode(adata, key, gene_mask=None):
 
     if gene_mask is None:
         gene_mask = np.ones((adata.n_vars)).astype(bool)
+    adata.var[f'{key}_mse_train'] = np.ones((adata.n_vars))*np.nan
+    adata.var[f'{key}_mse_test'] = np.ones((adata.n_vars))*np.nan
+    adata.var[f'{key}_mae_train'] = np.ones((adata.n_vars))*np.nan
+    adata.var[f'{key}_mae_test'] = np.ones((adata.n_vars))*np.nan
+    adata.var[f'{key}_ll_train'] = np.ones((adata.n_vars))*np.nan
+    adata.var[f'{key}_ll_test'] = np.ones((adata.n_vars))*np.nan
+
     sigma_u = adata.var[f"{key}_sigma_u"].to_numpy()[gene_mask]
     sigma_s = adata.var[f"{key}_sigma_s"].to_numpy()[gene_mask]
     dist_u_train = np.abs(U[train_idx][:, gene_mask]-Uhat[train_idx][:, gene_mask])
@@ -468,15 +499,17 @@ def get_err_brode(adata, key, gene_mask=None):
     mse_test = np.nanmean(dist_u_test**2+dist_s_test**2)
     mae_test = np.nanmean(dist_u_test+dist_s_test)
 
+    adata.var[f'{key}_mse_train'].values[gene_mask] = np.nanmean(dist_u_train**2+dist_s_train**2, 0)
+    adata.var[f'{key}_mse_test'].values[gene_mask] = np.nanmean(dist_u_train+dist_s_train, 0)
+    adata.var[f'{key}_mae_train'].values[gene_mask] = np.nanmean(dist_u_test**2+dist_s_test**2, 0)
+    adata.var[f'{key}_mae_test'].values[gene_mask] = np.nanmean(dist_u_test+dist_s_test, 0)
+    adata.var[f'{key}_ll_train'].values[gene_mask] = np.nanmean(logp_train, 0)
+    adata.var[f'{key}_ll_test'].values[gene_mask] = np.nanmean(logp_test, 0)
+
     logp_train = np.nanmean(np.sum(logp_train, 1))
     logp_test = np.nanmean(np.sum(logp_test, 1))
 
-    try:
-        run_time = adata.uns[f'{key}_run_time']
-    except KeyError:
-        run_time = np.nan
-
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
 
 
 def get_pred_brode_demo(adata, key, genes=None, N=None):
@@ -571,12 +604,14 @@ def get_err_utv(adata, key, gene_mask=None, B=5000):
     mae = np.nanmean(dist_u+dist_s)
     logp = -dist_u**2/(2*var_u)-dist_s**2/(2*var_s) - 0.5*np.log(var_u) - 0.5*np.log(var_s) - np.log(2*np.pi)
 
-    try:
-        run_time = adata.uns[f'{key}_run_time']
-    except KeyError:
-        run_time = np.nan
+    adata.var[f'{key}_mse'] = np.ones((adata.n_vars))*np.nan
+    adata.var[f'{key}_mae'] = np.ones((adata.n_vars))*np.nan
+    adata.var[f'{key}_likelihood'] = np.ones((adata.n_vars))*np.nan
+    adata.var[f'{key}_mse'].values[gene_mask] = np.nanmean(dist_u**2 + dist_s**2, 0)
+    adata.var[f'{key}_mae'].values[gene_mask] = np.nanmean(dist_u + dist_s, 0)
+    adata.var[f'{key}_likelihood'].values[gene_mask] = np.nanmean(logp, 0)
 
-    return mse, None, mae, None, logp.sum(1).mean(0), None, run_time
+    return mse, None, mae, None, logp.sum(1).mean(0), None
 
 
 def get_pred_utv_demo(adata, genes=None, N=100):
@@ -636,6 +671,53 @@ def get_neighbor_idx(adata,
     return nn_t_idx
 
 
+def _loss_dv_gene(
+    output: torch.Tensor,
+    current_state: torch.Tensor,
+    idx: torch.LongTensor,
+    candidate_states: torch.Tensor,
+    n_spliced: int = None,
+    l: int = 2,
+    *args,
+    **kwargs,
+):
+    # Genewise loss function
+    batch_size, genes = current_state.shape
+    if n_spliced is not None:
+        genes = n_spliced
+    num_neighbors = idx.shape[1]
+    loss = []
+    for i in range(num_neighbors):
+        ith_neighbors = idx[:, i]
+        candidate_state = candidate_states[ith_neighbors, :]  # (batch_size, genes)
+        delta = (candidate_state - current_state).detach()  # (batch_size, genes)
+        cos_sim = F.cosine_similarity(
+            delta[:, :genes], output[:, :genes], dim=1
+        )  # (batch_size,)
+
+        # t+1 direction
+        candidates = cos_sim.detach() > 0
+        if l == 1:
+            squared_difference = torch.mean(torch.abs(output - delta), dim=1)
+        else:
+            squared_difference = torch.mean(torch.pow(output - delta, 2), dim=1)
+        squared_difference = squared_difference[candidates]
+        loss.append(torch.sum(squared_difference, 0) / len(candidates))
+
+        # t-1 direction, (-output) - delta
+        candidates = cos_sim.detach() < 0
+        if l == 1:
+            squared_difference = torch.mean(torch.pow(output + delta, 1), dim=1)
+        else:
+            squared_difference = torch.mean(torch.pow(output + delta, 2), dim=1)
+        squared_difference = squared_difference[candidates]
+        loss.append(torch.sum(squared_difference, 0) / len(candidates))
+        # TODO: check why the memory usage is high for this one
+    loss = torch.stack(loss).mean(0)
+    return loss.detach().cpu().numpy()
+
+
+
 def _loss_dv(
     output: torch.Tensor,
     current_state: torch.Tensor,
@@ -681,7 +763,7 @@ def _loss_dv(
     return loss.detach().cpu().item()
 
 
-def get_err_dv(adata, key, gene_mask):
+def get_err_dv(adata, key, gene_mask=None):
     if gene_mask is None:
         gene_mask = np.array(range(adata.n_vars))
     nn_t_idx = get_neighbor_idx(adata)
@@ -703,11 +785,31 @@ def get_err_dv(adata, key, gene_mask):
                      torch.tensor(nn_t_idx, dtype=torch.long),
                      torch.tensor(adata.layers['Ms'][:, gene_mask]),
                      l=1)
-    try:
-        run_time = adata.uns[f'{key}_run_time']
-    except KeyError:
-        run_time = np.nan
-    return mse_u+mse_s, None, mae_u+mae_s, None, None, None, run_time
+    adata.var[f'{key}_mse'] = np.ones((adata.n_vars))*np.nan
+    mse_u_gene = _loss_dv_gene(torch.tensor(adata.layers['velocity_unspliced'][:, gene_mask]),
+                               torch.tensor(adata.layers['Mu'][:, gene_mask]),
+                               torch.tensor(nn_t_idx, dtype=torch.long),
+                               torch.tensor(adata.layers['Mu'][:, gene_mask]))
+    mse_s_gene = _loss_dv_gene(torch.tensor(adata.layers['velocity'][:, gene_mask]),
+                               torch.tensor(adata.layers['Ms'][:, gene_mask]),
+                               torch.tensor(nn_t_idx, dtype=torch.long),
+                               torch.tensor(adata.layers['Ms'][:, gene_mask]))
+    adata.var[f'{key}_mse'].values[gene_mask] = mse_u_gene + mse_s_gene
+
+    adata.var[f'{key}_mae'] = np.ones((adata.n_vars))*np.nan
+    mae_u_gene = _loss_dv_gene(torch.tensor(adata.layers['velocity_unspliced'][:, gene_mask]),
+                               torch.tensor(adata.layers['Mu'][:, gene_mask]),
+                               torch.tensor(nn_t_idx, dtype=torch.long),
+                               torch.tensor(adata.layers['Mu'][:, gene_mask]),
+                               l=1)
+    mae_s_gene = _loss_dv_gene(torch.tensor(adata.layers['velocity'][:, gene_mask]),
+                               torch.tensor(adata.layers['Ms'][:, gene_mask]),
+                               torch.tensor(nn_t_idx, dtype=torch.long),
+                               torch.tensor(adata.layers['Ms'][:, gene_mask]),
+                               l=1)
+    adata.var[f'{key}_mae'].values[gene_mask] = mae_u_gene + mae_s_gene
+
+    return mse_u+mse_s, None, mae_u+mae_s, None, None, None
 
 
 ##########################################################################
@@ -717,49 +819,64 @@ def get_err_dv(adata, key, gene_mask):
 # Pyro-Velocity: Probabilistic RNA Velocity inference from single-cell data.
 # bioRxiv.
 ##########################################################################
-def get_err_pv(adata, key, gene_mask, discrete=True):
-    train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
-    if discrete:
-        U, S = adata.layers['unspliced'].A, adata.layers['spliced'].A
-        Mu_u, Mu_s = adata.layers[f'{key}_ut'], adata.layers[f'{key}_st']
-        Uhat, Shat = adata.layers[f'{key}_u'], adata.layers[f'{key}_s']
+def get_err_pv(adata, key, gene_mask=None, discrete=True):
+    if 'err' in adata.uns:
+        err_dic = adata.uns['err']
+        return (err_dic['MSE Train'], err_dic['MSE Test'],
+                err_dic['MAE Train'], err_dic['MAE Test'],
+                err_dic['LL Train'], err_dic['LL Test'])
     else:
-        U, S = adata.layers['Mu'], adata.layers['Ms']
-        Uhat, Shat = adata.layers[f'{key}_u'], adata.layers[f'{key}_s']
-        # MLE of variance
-        var_s_train, var_s_test = np.var((S[train_idx]-Shat[train_idx]), 0), np.var((S[test_idx]-Shat[test_idx]), 0)
-        var_u_train, var_u_test = np.var((U[train_idx]-Uhat[train_idx]), 0), np.var((U[test_idx]-Uhat[test_idx]), 0)
+        train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
+        adata.var[f'{key}_mse_train'] = np.ones((adata.n_vars))*np.nan
+        adata.var[f'{key}_mse_test'] = np.ones((adata.n_vars))*np.nan
+        adata.var[f'{key}_mae_train'] = np.ones((adata.n_vars))*np.nan
+        adata.var[f'{key}_mae_test'] = np.ones((adata.n_vars))*np.nan
+        adata.var[f'{key}_likelihood_train'] = np.ones((adata.n_vars))*np.nan
+        adata.var[f'{key}_likelihood_test'] = np.ones((adata.n_vars))*np.nan
+        if discrete:
+            U, S = adata.layers['unspliced'].A, adata.layers['spliced'].A
+            Mu_u, Mu_s = adata.layers[f'{key}_ut'], adata.layers[f'{key}_st']
+            Uhat, Shat = adata.layers[f'{key}_u'], adata.layers[f'{key}_s']
+        else:
+            U, S = adata.layers['Mu'], adata.layers['Ms']
+            Uhat, Shat = adata.layers[f'{key}_u'], adata.layers[f'{key}_s']
+            # MLE of variance
+            var_s_train, var_s_test = np.var((S[train_idx]-Shat[train_idx]), 0), np.var((S[test_idx]-Shat[test_idx]), 0)
+            var_u_train, var_u_test = np.var((U[train_idx]-Uhat[train_idx]), 0), np.var((U[test_idx]-Uhat[test_idx]), 0)
 
-    if gene_mask is None:
-        gene_mask = np.ones((adata.n_vars)).astype(bool)
+        if gene_mask is None:
+            gene_mask = np.ones((adata.n_vars)).astype(bool)
 
-    dist_u_train = np.abs(U[train_idx][:, gene_mask]-Uhat[train_idx][:, gene_mask])
-    dist_s_train = np.abs(S[train_idx][:, gene_mask]-Shat[train_idx][:, gene_mask])
-    dist_u_test = np.abs(U[test_idx][:, gene_mask]-Uhat[test_idx][:, gene_mask])
-    dist_s_test = np.abs(S[test_idx][:, gene_mask]-Shat[test_idx][:, gene_mask])
+        dist_u_train = np.abs(U[train_idx][:, gene_mask]-Uhat[train_idx][:, gene_mask])
+        dist_s_train = np.abs(S[train_idx][:, gene_mask]-Shat[train_idx][:, gene_mask])
+        dist_u_test = np.abs(U[test_idx][:, gene_mask]-Uhat[test_idx][:, gene_mask])
+        dist_s_test = np.abs(S[test_idx][:, gene_mask]-Shat[test_idx][:, gene_mask])
 
-    if discrete:
-        logp_train = np.log(poisson.pmf(U[train_idx], Mu_u[train_idx])+1e-10).sum(1).mean()\
-            + np.log(poisson.pmf(S[train_idx], Mu_s[train_idx])+1e-10).sum(1).mean()
-        logp_test = np.log(poisson.pmf(U[test_idx], Mu_u[test_idx])+1e-10).sum(1).mean()\
-            + np.log(poisson.pmf(S[test_idx], Mu_s[test_idx])+1e-10).sum(1).mean()
-    else:
-        logp_train = -dist_u_train**2/(2*var_u_train)-dist_s_train**2/(2*var_s_train)\
-            - 0.5*np.log(var_u_train) - 0.5*np.log(var_s_train) - np.log(2*np.pi)
-        logp_test = -dist_u_test**2/(2*var_u_test)-dist_s_test**2/(2*var_s_test)\
-            - 0.5*np.log(var_u_test) - 0.5*np.log(var_s_test) - np.log(2*np.pi)
+        if discrete:
+            logp_train = np.log(poisson.pmf(U[train_idx], Mu_u[train_idx])+1e-10)\
+                + np.log(poisson.pmf(S[train_idx], Mu_s[train_idx])+1e-10)
+            logp_test = np.log(poisson.pmf(U[test_idx], Mu_u[test_idx])+1e-10)\
+                + np.log(poisson.pmf(S[test_idx], Mu_s[test_idx])+1e-10)
+        else:
+            logp_train = -dist_u_train**2/(2*var_u_train)-dist_s_train**2/(2*var_s_train)\
+                - 0.5*np.log(var_u_train) - 0.5*np.log(var_s_train) - np.log(2*np.pi)
+            logp_test = -dist_u_test**2/(2*var_u_test)-dist_s_test**2/(2*var_s_test)\
+                - 0.5*np.log(var_u_test) - 0.5*np.log(var_s_test) - np.log(2*np.pi)
 
-    mse_train = np.nanmean(dist_u_train**2+dist_s_train**2)
-    mse_test = np.nanmean(dist_u_test**2+dist_s_test**2)
-    mae_train = np.nanmean(dist_u_train+dist_s_train)
-    mae_test = np.nanmean(dist_u_test+dist_s_test)
+        mse_train = np.nanmean(dist_u_train**2+dist_s_train**2)
+        mse_test = np.nanmean(dist_u_test**2+dist_s_test**2)
+        mae_train = np.nanmean(dist_u_train+dist_s_train)
+        mae_test = np.nanmean(dist_u_test+dist_s_test)
+        adata.var[f'{key}_mse_train'].values[gene_mask] = np.nanmean(dist_u_train**2+dist_s_train**2, 0)
+        adata.var[f'{key}_mse_test'].values[gene_mask] = np.nanmean(dist_u_test**2+dist_s_test**2, 0)
+        adata.var[f'{key}_mae_train'].values[gene_mask] = np.nanmean(dist_u_train+dist_s_train, 0)
+        adata.var[f'{key}_mae_test'].values[gene_mask] = np.nanmean(dist_u_test+dist_s_test, 0)
+        adata.var[f'{key}_likelihood_train'].values[gene_mask] = np.nanmean(logp_train, 0)
+        adata.var[f'{key}_likelihood_test'].values[gene_mask] = np.nanmean(logp_test, 0)
+        logp_train = np.nanmean(logp_train.sum(1).mean())
+        logp_test = np.nanmean(logp_test.sum(1).mean())
 
-    try:
-        run_time = adata.uns[f'{key}_run_time']
-    except KeyError:
-        run_time = np.nan
-
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
 
 
 ##########################################################################
@@ -768,18 +885,17 @@ def get_err_pv(adata, key, gene_mask, discrete=True):
 # Gayoso, Adam, et al. "Deep generative modeling of transcriptional dynamics
 # for RNA velocity analysis in single cells." bioRxiv (2022).
 ##########################################################################
-def get_err_velovi(adata, key, gene_mask):
+def get_err_velovi(adata, key, gene_mask=None):
     if gene_mask is None:
         gene_mask = np.ones((adata.n_vars)).astype(bool)
     U, S = adata.layers['Mu'][:, gene_mask], adata.layers['Ms'][:, gene_mask]
     Uhat, Shat = adata.layers[f'{key}_uhat'][:, gene_mask], adata.layers[f'{key}_shat'][:, gene_mask]
 
     try:
-        run_time = adata.uns[f'{key}_run_time']
-    except KeyError:
-        run_time = np.nan
-
-    try:
+        adata.var[f'{key}_mse_train'] = np.ones((adata.n_vars))*np.nan
+        adata.var[f'{key}_mse_test'] = np.ones((adata.n_vars))*np.nan
+        adata.var[f'{key}_mae_train'] = np.ones((adata.n_vars))*np.nan
+        adata.var[f'{key}_mae_test'] = np.ones((adata.n_vars))*np.nan
         train_idx = adata.uns[f'{key}_train_idx']
         test_idx = adata.uns[f'{key}_test_idx']
         dist_u_train = np.abs(U[train_idx]-Uhat[train_idx])
@@ -791,6 +907,10 @@ def get_err_velovi(adata, key, gene_mask):
         mse_test = np.mean(dist_u_test**2+dist_s_test**2)
         mae_train = np.mean(dist_u_train+dist_s_train)
         mae_test = np.mean(dist_u_test+dist_s_test)
+        adata.var[f'{key}_mse_train'].values[gene_mask] = np.mean(dist_u_train**2+dist_s_train**2, 0)
+        adata.var[f'{key}_mse_test'].values[gene_mask] = np.mean(dist_u_test**2+dist_s_test**2, 0)
+        adata.var[f'{key}_mae_train'].values[gene_mask] = np.mean(dist_u_train+dist_s_train, 0)
+        adata.var[f'{key}_mae_test'].values[gene_mask] = np.mean(dist_u_test+dist_s_test, 0)
         logp_train = np.mean(adata.obs[f'{key}_likelihood'].to_numpy()[train_idx])
         logp_test = np.mean(adata.obs[f'{key}_likelihood'].to_numpy()[test_idx])
     except KeyError:
@@ -800,9 +920,9 @@ def get_err_velovi(adata, key, gene_mask):
         mae = np.mean(dist_u+dist_s)
         logp = np.mean(adata.obs[f'{key}_likelihood'].to_numpy())
 
-        return mse, None, mae, None, logp, None, run_time
+        return mse, None, mae, None, logp, None
 
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test, run_time
+    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
 
 
 ##########################################################################
@@ -847,6 +967,12 @@ def keep_type(adata, nodes, target, k_cluster):
     #        Selected cells.
 
     return nodes[adata.obs[k_cluster][nodes].values == target]
+
+
+def remove_type(adata, nodes, target, k_cluster):
+    # Exclude cells of targeted type
+
+    return nodes[adata.obs[k_cluster][nodes].values != target]
 
 
 def cross_boundary_correctness(
@@ -915,13 +1041,224 @@ def cross_boundary_correctness(
         if len(type_score) == 0:
             print(f'Warning: cell type transition pair ({u},{v}) does not exist in the KNN graph. Ignored.')
         else:
-            scores[(u, v)] = np.nanmean(type_score)
-            all_scores[(u, v)] = type_score
+            scores[f'{u} -> {v}'] = np.nanmean(type_score)
+            all_scores[f'{u} -> {v}'] = type_score
 
     if return_raw:
         return all_scores
 
     return scores, np.mean([sc for sc in scores.values()])
+
+
+def _cos_sim_sample(v_sample, v_neighbors, dt=None):
+    res = cosine_similarity(v_neighbors, v_sample.reshape(1, -1)).flatten()
+    if dt is not None:
+        res = -np.abs(res) * (dt < 0) + res * (dt >= 0)
+    return res
+
+
+def gen_cross_boundary_correctness(
+    adata,
+    k_cluster,
+    k_velocity,
+    cluster_edges,
+    tkey=None,
+    k_hop=5,
+    dir_test=False,
+    x_emb="X_umap",
+    gene_mask=None,
+    n_prune=30,
+    random_state=2022
+):
+    # Generalized Cross-Boundary Direction Correctness Score (A->B)
+    # Use k-hop neighbors
+    scores = {}
+    x_emb_name = x_emb
+    if x_emb in adata.obsm:
+        x_emb = adata.obsm[x_emb]
+        if x_emb_name == "X_umap":
+            v_emb = adata.obsm['{}_umap'.format(k_velocity)]
+        else:
+            v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(k_velocity)][0]]
+    else:
+        x_emb = adata.layers[x_emb]
+        v_emb = adata.layers[k_velocity]
+        if gene_mask is None:
+            gene_mask = ~np.isnan(v_emb[0])
+        x_emb = x_emb[:, gene_mask]
+        v_emb = v_emb[:, gene_mask]
+    t = adata.obs[tkey].to_numpy()
+    np.random.seed(random_state)
+    for u, v in cluster_edges:
+        sel = adata.obs[k_cluster] == u
+        nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
+        # random_pool = np.where(~((adata.obs[k_cluster].to_numpy() == u)\
+        #                          | (adata.obs[k_cluster].to_numpy() == v)))[0]
+
+        boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
+        x_points = x_emb[sel]
+        x_velocities = v_emb[sel]
+        t_points = t[sel]
+
+        type_score = [[] for i in range(k_hop)]
+        type_score_null = [[] for i in range(k_hop)]
+        for x_pos, x_vel, nodes, t_i, all_nodes in zip(x_points, x_velocities, boundary_nodes, t_points, nbs):
+            if len(nodes) == 0:
+                continue
+            position_dif = x_emb[nodes] - x_pos
+            dt = t[nodes] - t_i
+            dir_scores = _cos_sim_sample(x_vel, position_dif, dt)
+
+            # nodes_null = np.random.choice(random_pool, min(len(random_pool), n_prune), replace=False)
+            nodes_null = all_nodes if len(all_nodes) < n_prune else np.random.choice(all_nodes, n_prune)
+            position_dif_null = x_emb[nodes_null] - x_pos
+            dt_null = t[nodes_null] - t_i
+            dir_scores_null = _cos_sim_sample(x_vel, position_dif_null, dt_null)
+
+            # save 1-hop results
+            type_score[0].append(np.nanmean(dir_scores))
+            type_score_null[0].append(np.nanmean(dir_scores_null))
+            # deal with k-hop neighbors when k > 1
+            for k in range(k_hop-1):
+                nodes = adata.uns['neighbors']['indices'][nodes].flatten()  # [num (k-1)-hop neighbors * 30]
+                nodes = keep_type(adata, nodes, v, k_cluster)
+                nodes = np.unique(nodes)
+
+                position_dif = x_emb[nodes] - x_pos
+                dt = t[nodes] - t_i
+                dir_scores = _cos_sim_sample(x_vel, position_dif, dt)
+
+                if len(nodes) > n_prune:
+                    idx_sort = np.argsort(dir_scores)
+                    nodes = nodes[idx_sort[-n_prune:]]
+                    dir_scores = dir_scores[idx_sort[-n_prune:]]
+                type_score[k+1].append(np.nanmean(dir_scores))
+            # Compute the same k-hop metric for neigbhors not in the descent v
+            if dir_test and len(nodes_null) > 0:
+                for k in range(k_hop-1):
+                    # nodes_null = np.random.choice(random_pool, min(len(random_pool), n_prune), replace=False)
+                    nodes_null = adata.uns['neighbors']['indices'][nodes_null].flatten()  # [num (k-1)-hop neighbors * 30]
+                    nodes_null = np.unique(nodes_null)
+                    nodes_null = nodes_null if len(all_nodes) < n_prune else np.random.choice(nodes_null, n_prune)
+                    position_dif_null = x_emb[nodes_null] - x_pos
+                    dt_null = t[nodes_null] - t_i
+                    dir_scores_null = _cos_sim_sample(x_vel, position_dif_null, dt_null)
+                    if len(nodes_null) > n_prune:
+                        idx_sort = np.argsort(dir_scores_null)
+                        nodes_null = nodes_null[idx_sort[-n_prune:]]
+                        dir_scores_null = dir_scores_null[idx_sort[-n_prune:]]
+                    type_score_null[k+1].append(np.nanmean(dir_scores_null))
+        mean_type_score = np.array([np.nanmean(type_score[i]) for i in range(k_hop)])
+        mean_type_score_null = np.array([np.nanmean(type_score_null[i]) for i in range(k_hop)])
+        mean_type_score_null[np.isnan(mean_type_score_null)] = 0.0
+        scores[f'{u} -> {v}'] = (mean_type_score - mean_type_score_null if dir_test else mean_type_score)
+
+    return scores, np.mean(np.stack([sc for sc in scores.values()]), 0)
+
+
+def gen_cross_boundary_correctness_test(
+    adata,
+    k_cluster,
+    k_velocity,
+    cluster_edges,
+    tkey=None,
+    k_hop=5,
+    x_emb="X_umap",
+    gene_mask=None,
+    n_prune=30,
+    random_state=2022
+):
+    # Generalized Cross-Boundary Direction Correctness Score (A->B)
+    # Use k-hop neighbors
+    test_stats, accuracy = {}, {}
+    x_emb_name = x_emb
+    if x_emb in adata.obsm:
+        x_emb = adata.obsm[x_emb]
+        if x_emb_name == "X_umap":
+            v_emb = adata.obsm['{}_umap'.format(k_velocity)]
+        else:
+            v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(k_velocity)][0]]
+    else:
+        x_emb = adata.layers[x_emb]
+        v_emb = adata.layers[k_velocity]
+        if gene_mask is None:
+            gene_mask = ~np.isnan(v_emb[0])
+        x_emb = x_emb[:, gene_mask]
+        v_emb = v_emb[:, gene_mask]
+    t = adata.obs[tkey].to_numpy()
+    np.random.seed(random_state)
+    for u, v in cluster_edges:
+        sel = adata.obs[k_cluster] == u
+        nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
+        # random_pool = np.where(~((adata.obs[k_cluster].to_numpy() == u)\
+        #                          | (adata.obs[k_cluster].to_numpy() == v)))[0]
+
+        boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
+        x_points = x_emb[sel]
+        x_velocities = v_emb[sel]
+        t_points = t[sel]
+
+        type_stats = [[] for i in range(k_hop)]
+        type_pval = [[] for i in range(k_hop)]
+        for x_pos, x_vel, nodes, t_i, all_nodes in zip(x_points, x_velocities, boundary_nodes, t_points, nbs):
+            if len(nodes) < 2:
+                continue
+            position_dif = x_emb[nodes] - x_pos
+            dt = t[nodes] - t_i
+            dir_scores = _cos_sim_sample(x_vel, position_dif, dt)
+
+            # nodes_null = np.random.choice(random_pool, min(len(random_pool), n_prune), replace=False)
+            nodes_null = all_nodes if len(all_nodes) < n_prune else np.random.choice(all_nodes, n_prune)
+            position_dif_null = x_emb[nodes_null] - x_pos
+            dt_null = t[nodes_null] - t_i
+            dir_scores_null = _cos_sim_sample(x_vel, position_dif_null, dt_null)
+            # Perform Mann-Whitney U test
+            res = mannwhitneyu(dir_scores, dir_scores_null, alternative='greater')
+            type_stats[0].append(res[0])
+            type_pval[0].append(res[1])
+            # deal with k-hop neighbors when k > 1
+            for k in range(k_hop-1):
+                nodes = adata.uns['neighbors']['indices'][nodes].flatten()  # [num (k-1)-hop neighbors * 30]
+                nodes = keep_type(adata, nodes, v, k_cluster)
+                nodes = np.unique(nodes)
+                if len(nodes) < 2:
+                    continue
+
+                position_dif = x_emb[nodes] - x_pos
+                dt = t[nodes] - t_i
+                dir_scores = _cos_sim_sample(x_vel, position_dif, dt)
+
+                # Compute the same k-hop metric for neigbhors not in the descent v
+                # nodes_null = np.random.choice(random_pool, min(len(random_pool), n_prune), replace=False)
+                nodes_null = adata.uns['neighbors']['indices'][nodes_null].flatten()  # [num (k-1)-hop neighbors * 30]
+                nodes_null = np.unique(nodes_null)
+                nodes_null = nodes_null if len(all_nodes) < n_prune else np.random.choice(nodes_null, n_prune)
+                if len(nodes_null) < 2:
+                    continue
+                position_dif_null = x_emb[nodes_null] - x_pos
+                dt_null = t[nodes_null] - t_i
+                dir_scores_null = _cos_sim_sample(x_vel, position_dif_null, dt_null)
+
+                if len(nodes) > n_prune:
+                    idx_sort = np.argsort(dir_scores)
+                    nodes = nodes[idx_sort[-n_prune:]]
+                    dir_scores = dir_scores[idx_sort[-n_prune:]]
+
+                if len(nodes_null) > n_prune:
+                    idx_sort = np.argsort(dir_scores_null)
+                    nodes_null = nodes_null[idx_sort[-n_prune:]]
+                    dir_scores_null = dir_scores_null[idx_sort[-n_prune:]]
+
+                # Perform Mann-Whitney U test
+                res = mannwhitneyu(dir_scores, dir_scores_null, alternative='greater')
+                type_stats[k+1].append(res[0])
+                type_pval[k+1].append(res[1])
+
+        test_stats[f'{u} -> {v}'] = [np.nanmean(type_stats[k]) for k in range(k_hop)]
+        # check whether p values are less than 0.05
+        accuracy[f'{u} -> {v}'] = [np.nanmean(np.array(type_pval[k]) < 0.05) for k in range(k_hop)]
+    return (accuracy, np.nanmean(np.stack([p for p in accuracy.values()]), 0),
+            test_stats, np.nanmean(np.stack([sc for sc in test_stats.values()]), 0))
 
 
 def _combine_scores(scores, cell_types):
@@ -933,12 +1270,12 @@ def _combine_scores(scores, cell_types):
         u = cell_types[i]
         for j in range(i):
             v = cell_types[j]
-            if not ((u, v) in scores and (v, u) in scores):
+            if not (f'{u} -> {v}' in scores and f'{v} -> {u}' in scores):
                 continue
-            if scores[(u, v)] > scores[(v, u)]:
-                scores_combined[(u, v)] = scores[(u, v)]
+            if scores[f'{u} -> {v}'] > scores[f'{v} -> {u}']:
+                scores_combined[f'{u} -> {v}'] = scores[f'{u} -> {v}']
             else:
-                scores_combined[(v, u)] = scores[(v, u)]
+                scores_combined[f'{v} -> {u}'] = scores[f'{v} -> {u}']
     return scores_combined
 
 
@@ -952,7 +1289,7 @@ def calibrated_cross_boundary_correctness(
     sum_up=False,
     x_emb="X_umap",
     gene_mask=None,
-    k_std_t=None,
+    k_std_t=None
 ):
     # Calibrated Cross-Boundary Direction Correctness Score (A->B)
     # Args:
@@ -1034,22 +1371,132 @@ def calibrated_cross_boundary_correctness(
             n1 += np.sum(p1)
             n2 += np.sum(p2)
 
-            position_dif = x_emb[nodes] - x_pos
+            position_dif = (x_emb[nodes] - x_pos) * (np.sign(t[nodes] - t[idx]).reshape(-1, 1))
             dir_scores = cosine_similarity(position_dif, x_vel.reshape(1, -1)).flatten()
-            type_score.extend(dir_scores*p1+(-dir_scores)*p2)
+            type_score.extend(dir_scores)
 
         if len(type_score) == 0:
             # print(f'Warning: cell type transition pair ({u},{v}) does not exist in the KNN graph. Ignored.')
             pass
         else:
-            scores[(u, v)] = np.nansum(type_score) if sum_up else np.nanmean(type_score)
-            all_scores[(u, v)] = type_score
-            p_fw[(u, v)] = n1 / (n1 + n2)
+            scores[f'{u} -> {v}'] = np.nansum(type_score) if sum_up else np.nanmean(type_score)
+            all_scores[f'{u} -> {v}'] = type_score
+            p_fw[f'{u} -> {v}'] = n1 / (n1 + n2)
 
     if return_raw:
         return all_scores
     scores_combined = _combine_scores(scores, cell_types) if eval_all else scores
     return scores, np.mean([sc for sc in scores_combined.values()]), p_fw, np.mean([p for p in p_fw.values()])
+
+
+def _encode_type(cell_types_raw):
+    #######################################################################
+    # Use integer to encode the cell types
+    # Each cell type has one unique integer label.
+    #######################################################################
+
+    # Map cell types to integers
+    label_dic = {}
+    label_dic_rev = {}
+    for i, type_ in enumerate(cell_types_raw):
+        label_dic[type_] = i
+        label_dic_rev[i] = type_
+
+    return label_dic, label_dic_rev
+
+
+def _edge2adj(cell_types, cluster_edges):
+    label_dic, label_dic_rev = _encode_type(cell_types)
+    adj_mtx = np.zeros((len(cell_types), len(cell_types)))
+    for u, v in cluster_edges:
+        i, j = label_dic[u], label_dic[v]
+        adj_mtx[i, j] = 1
+        # child of child
+        child_v = np.where(adj_mtx[j] > 0)[0]
+        if len(child_v) > 0:
+            adj_mtx[i, child_v] = 1
+        # parent of parent
+        par_u = np.where(adj_mtx[:, i] > 0)[0]
+        if len(par_u) > 0:
+            adj_mtx[par_u, j] = 1
+    return label_dic, label_dic_rev, adj_mtx
+
+
+def time_score(adata, tkey, cluster_key, cluster_edges):
+    # Compute time inference accuracy based on
+    # progenitor-descendant pairs
+    t = adata.obs[tkey].to_numpy()
+    cell_labels = adata.obs[cluster_key]
+    cell_types = np.unique(cell_labels)
+    label_dic, label_dic_rev, adj_mtx = _edge2adj(cell_types, cluster_edges)
+    cell_labels_int = np.array([label_dic[x] for x in cell_labels])
+    tscore = {}
+    for i in range(adj_mtx.shape[0]):
+        children = np.where(adj_mtx[i] > 0)[0]
+        for j in children:
+            p = np.mean(t[cell_labels_int == i] <= t[cell_labels_int == j].reshape(-1, 1))
+            tscore[f'{label_dic_rev[i]} -> {label_dic_rev[j]}'] = p
+    tscore_out = {}  # only return directly connected cell types in cluster_edges
+    for u, v in cluster_edges:
+        if (u, v) in cluster_edges:
+            tscore_out[f'{u} -> {v}'] = tscore[f'{u} -> {v}']
+    return tscore_out, np.mean([sc for sc in tscore.values()])
+
+
+def timed_direction_correctness(adata,
+                                tkey,
+                                vkey,
+                                x_emb,
+                                n_bins=51,
+                                n_neighbors=5,
+                                gene_mask=None):
+    t = adata.obs[tkey].to_numpy()
+    dt = (np.quantile(t, 0.99) - np.quantile(t, 0.01)) / n_bins
+    tmin, tmax = t.min(), t.max()
+    scores = []
+    if x_emb in adata.obsm:
+        x_emb = adata.obsm[x_emb]
+        if x_emb == "X_umap":
+            v_emb = adata.obsm['{}_umap'.format(vkey)]
+        else:
+            v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(vkey)][0]]
+    else:
+        x_emb = adata.layers[x_emb]
+        v_emb = adata.layers[vkey]
+        if gene_mask is None:
+            gene_mask = ~np.isnan(v_emb[0])
+        x_emb = x_emb[:, gene_mask]
+        v_emb = v_emb[:, gene_mask]
+    bin_size = adata.n_obs // n_bins
+    if bin_size < n_neighbors:
+        bin_size = n_neighbors * 2
+        n_bins = adata.n_obs // bin_size
+    for i in range(n_bins-1):
+        bin_scores = []
+        cell_indices = np.where((t >= tmin+i*dt) & (t < tmin+(i+1)*dt))[0]  # cells in the current bin
+        if len(cell_indices) == 0:  # edge case: not cell exists in the current bin
+            continue
+        if i < n_bins - 2:
+            t_lb, t_ub = tmin+(i+1)*dt, tmin+(i+2)*dt
+            next_cell_indices = np.where((t >= t_lb) & (t < t_ub))[0]
+            while len(next_cell_indices) == 0 and t_ub <= tmax:
+                t_ub += dt
+                next_cell_indices = np.where((t >= t_lb) & (t < t_ub))[0]
+        else:
+            next_cell_indices = np.where(t >= tmin+(i+1)*dt)[0]
+        _n_neighbors = 1 if len(next_cell_indices) < n_neighbors else n_neighbors
+        knn = NearestNeighbors(n_neighbors=_n_neighbors)
+        knn.fit(adata.obsm['X_pca'][next_cell_indices])
+        neigh_idx = knn.kneighbors(adata.obsm['X_pca'][cell_indices],
+                                   _n_neighbors,
+                                   return_distance=False)
+        for i, cell_idx in enumerate(cell_indices):
+            pos_diff = x_emb[next_cell_indices[neigh_idx[i]]] - x_emb[cell_idx]
+            dir_scores = cosine_similarity(pos_diff, v_emb[cell_idx].reshape(1, -1)).flatten()
+            bin_scores.append(np.nanmean(dir_scores))
+        scores.append(np.mean(bin_scores))
+        
+    return scores, np.mean(scores)
 
 
 def inner_cluster_coh(adata, k_cluster, k_velocity, gene_mask=None, return_raw=False):
