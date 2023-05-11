@@ -1,9 +1,12 @@
 from .evaluation import post_analysis
-from .evaluation_util import branch_fit_score, calibrated_cross_boundary_correctness
+from .evaluation_util import (cross_boundary_correctness,
+                              gen_cross_boundary_correctness,
+                              gen_cross_boundary_correctness_test)
 from .perf_logger import PerfLogger
 __all__ = [
     "post_analysis",
-    "branch_fit_score",
-    "calibrated_cross_boundary_correctness",
+    "cross_boundary_correctness",
+    "gen_cross_boundary_correctness",
+    "gen_cross_boundary_correctness_test",
     "PerfLogger"
     ]
