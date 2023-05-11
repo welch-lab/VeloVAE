@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from ..model.model_util import make_dir
+from os import makedirs
 from .evaluation_util import *
 from velovae.plotting import get_colors, plot_cluster, plot_phase_grid, plot_sig_grid, plot_time_grid
 from multiprocessing import cpu_count
@@ -44,21 +44,18 @@ def get_velocity_metric(adata,
             print("Please install scVelo to compute velocity embedding.\n"
             "Skipping metrics 'Cross-Boundary Direction Correctness' and 'In-Cluster Coherence'.")
         iccoh, mean_iccoh = inner_cluster_coh(adata, cluster_key, vkey, gene_mask)
-        (cbdir_embed, mean_cbdir_embed,
-         tscore, mean_tscore) = calibrated_cross_boundary_correctness(adata,
-                                                                      cluster_key,
-                                                                      vkey,
-                                                                      f'{key}_time',
-                                                                      cluster_edges,
-                                                                      x_emb=f"X_{embed}")
-        (cbdir, mean_cbdir,
-         tscore, mean_tscore) = calibrated_cross_boundary_correctness(adata,
-                                                                      cluster_key,
-                                                                      vkey,
-                                                                      f'{key}_time',
-                                                                      cluster_edges,
-                                                                      x_emb="Ms",
-                                                                      gene_mask=gene_mask)
+        cbdir_embed, mean_cbdir_embed = cross_boundary_correctness(adata,
+                                                                   cluster_key,
+                                                                   vkey,
+                                                                   cluster_edges,
+                                                                   x_emb=f"X_{embed}")
+        cbdir, mean_cbdir = cross_boundary_correctness(adata,
+                                                       cluster_key,
+                                                       vkey,
+                                                       cluster_edges,
+                                                       x_emb="Ms",
+                                                       gene_mask=gene_mask)
+        tscore, mean_tscore = time_score(adata, f'{key}_time', cluster_key, cluster_edges)
     else:
         mean_cbdir_embed = np.nan
         mean_cbdir = np.nan
@@ -73,7 +70,7 @@ def get_velocity_metric(adata,
             cbdir, mean_cbdir,
             tscore, mean_tscore,
             mean_constcy_score)
-    
+
 
 def get_metric(adata,
                method,
@@ -126,85 +123,67 @@ def get_metric(adata,
     if method == 'scVelo':
         (mse_train, mse_test,
          mae_train, mae_test,
-         logp_train, logp_test,
-         run_time) = get_err_scv(adata)
+         logp_train, logp_test) = get_err_scv(adata)
     elif method == 'Vanilla VAE':
         (mse_train, mse_test,
          mae_train, mae_test,
-         logp_train, logp_test,
-         run_time) = get_err_vanilla(adata, key, gene_mask)
+         logp_train, logp_test) = get_err_vanilla(adata, key, gene_mask)
     elif method == 'Cycle VAE':
         (mse_train, mse_test,
          mae_train, mae_test,
-         logp_train, logp_test,
-         run_time) = get_err_cycle(adata, key, gene_mask)
+         logp_train, logp_test) = get_err_cycle(adata, key, gene_mask)
     elif method == 'VeloVAE' or method == 'FullVB':
         (mse_train, mse_test,
          mae_train, mae_test,
-         logp_train, logp_test,
-         run_time) = get_err_velovae(adata, key, gene_mask, 'FullVB' in method)
+         logp_train, logp_test) = get_err_velovae(adata, key, gene_mask, 'FullVB' in method)
     elif method == 'BrODE':
         (mse_train, mse_test,
          mae_train, mae_test,
-         logp_train, logp_test,
-         run_time) = get_err_brode(adata, key, gene_mask)
+         logp_train, logp_test) = get_err_brode(adata, key, gene_mask)
     elif method == 'Discrete VeloVAE' or method == 'Discrete FullVB':
         (mse_train, mse_test,
          mae_train, mae_test,
-         logp_train, logp_test,
-         run_time) = get_err_velovae(adata, key, gene_mask, 'FullVB' in method, True)
+         logp_train, logp_test) = get_err_velovae(adata, key, gene_mask, 'FullVB' in method, True)
     elif method == 'UniTVelo':
         (mse_train, mse_test,
          mae_train, mae_test,
-         logp_train, logp_test,
-         run_time) = get_err_utv(adata, key, gene_mask)
+         logp_train, logp_test) = get_err_utv(adata, key, gene_mask)
     elif method == 'DeepVelo':
         (mse_train, mse_test,
          mae_train, mae_test,
-         logp_train, logp_test,
-         run_time) = get_err_dv(adata, key, gene_mask)
+         logp_train, logp_test) = get_err_dv(adata, key, gene_mask)
     elif 'PyroVelocity' in method:
         if 'err' in adata.uns:
             mse_train, mse_test = adata.uns['err']['MSE Train'], adata.uns['err']['MSE Test']
             mae_train, mae_test = adata.uns['err']['MAE Train'], adata.uns['err']['MAE Test']
             logp_train, logp_test = adata.uns['err']['LL Train'], adata.uns['err']['LL Test']
-            run_time = adata.uns[f'{key}_run_time'] if f'{key}_run_time' in adata.uns else np.nan
         else:
             (mse_train, mse_test,
              mae_train, mae_test,
-             logp_train, logp_test,
-             run_time) = get_err_pv(adata, key, gene_mask, 'Continuous' not in method)
+             logp_train, logp_test) = get_err_pv(adata, key, gene_mask, 'Continuous' not in method)
     elif method == 'VeloVI':
         (mse_train, mse_test,
          mae_train, mae_test,
-         logp_train, logp_test,
-         run_time) = get_err_velovi(adata, key, gene_mask)
+         logp_train, logp_test) = get_err_velovi(adata, key, gene_mask)
     else:
         mse_train, mse_test = np.nan, np.nan
         mae_train, mae_test = np.nan, np.nan
         logp_train, logp_test = np.nan, np.nan
-        try:
-            run_time = adata.uns[f'{key}_run_time']
-        except KeyError:
-            run_time = np.nan
+
     stats['MSE Train'] = mse_train
     stats['MSE Test'] = mse_test
     stats['MAE Train'] = mae_train
     stats['MAE Test'] = mae_test
     stats['LL Train'] = logp_train
     stats['LL Test'] = logp_test
-    stats['Training Time'] = run_time
 
     if 'tprior' in adata.obs:
-        if method == 'DeepVelo':
-            stats['corr'] = np.nan
-        else:
-            tprior = adata.obs['tprior'].to_numpy()
-            t = (adata.obs["latent_time"].to_numpy()
-                 if (method in ['scVelo', 'UniTVelo']) else
-                 adata.obs[f"{key}_time"].to_numpy())
-            corr, pval = spearmanr(t, tprior)
-            stats['corr'] = corr
+        tprior = adata.obs['tprior'].to_numpy()
+        t = (adata.obs["latent_time"].to_numpy()
+             if (method in ['scVelo', 'UniTVelo']) else
+             adata.obs[f"{key}_time"].to_numpy())
+        corr, pval = spearmanr(t, tprior)
+        stats['corr'] = corr
     else:
         stats['corr'] = np.nan
 
@@ -229,10 +208,10 @@ def get_metric(adata,
          cbdir_sub, mean_cbdir_sub,
          tscore_sub, mean_tscore_sub,
          mean_vel_consistency_sub) = get_velocity_metric_placeholder(cluster_edges)
-    stats['CBDir (Embed, Subset)'] = mean_cbdir_sub_embed
-    stats['CBDir (Subset)'] = mean_cbdir_sub
-    stats['In-Cluster Coherence (Subset)'] = mean_iccoh_sub
-    stats['Vel Consistency (Subset)'] = mean_vel_consistency_sub
+    stats['CBDir (Embed, Velocity Genes)'] = mean_cbdir_sub_embed
+    stats['CBDir (Velocity Genes)'] = mean_cbdir_sub
+    stats['In-Cluster Coherence (Velocity Genes)'] = mean_iccoh_sub
+    stats['Vel Consistency (Velocity Genes)'] = mean_vel_consistency_sub
 
     # Compute velocity metrics on all genes
     (iccoh, mean_iccoh,
@@ -258,8 +237,8 @@ def get_metric(adata,
                             pd.DataFrame.from_dict(cbdir_embed, orient='index'),
                             pd.DataFrame.from_dict(tscore, orient='index')],
                            axis=1).T
-    stats_type.index = pd.Index(['CBDir (Subset)',
-                                 'CBDir (Embed, Subset)',
+    stats_type.index = pd.Index(['CBDir (Velocity Genes)',
+                                 'CBDir (Embed, Velocity Genes)',
                                  'CBDir',
                                  'CBDir (Embed)',
                                  'Time Score'])
@@ -281,7 +260,7 @@ def post_analysis(adata,
                   frac=0.0,
                   embed="umap",
                   grid_size=(1, 1),
-                  figure_path="figures",
+                  figure_path=None,
                   save=None,
                   **kwargs):
     """Main function for post analysis.
@@ -344,7 +323,8 @@ def post_analysis(adata,
         and desendant cell types.
         Saves the figures to 'figure_path'.
     """
-    make_dir(figure_path)
+    if figure_path is not None:
+        makedirs(figure_path, exist_ok=True)
     # Retrieve data
     if raw_count:
         U, S = adata.layers["unspliced"].A, adata.layers["spliced"].A
@@ -491,7 +471,8 @@ def post_analysis(adata,
         plot_cluster(adata.obsm[f"X_{embed}"],
                      adata.obs[cluster_key].to_numpy(),
                      embed=embed,
-                     save=f"{figure_path}/{test_id}_umap.png")
+                     save=(None if figure_path is None else 
+                           f"{figure_path}/{test_id}_umap.png"))
 
     # Generate plots
     if "time" in plot_type or "all" in plot_type:
@@ -509,7 +490,8 @@ def post_analysis(adata,
                        capture_time,
                        None,
                        down_sample=min(10, max(1, adata.n_obs//5000)),
-                       save=f"{figure_path}/{test_id}_time.png")
+                       save=(None if figure_path is None else
+                             f"{figure_path}/{test_id}_time.png"))
 
     if len(genes) == 0:
         return
@@ -587,8 +569,7 @@ def post_analysis(adata,
             from scvelo.pl import velocity_embedding_stream
             colors = get_colors(len(cell_types_raw))
             for i, vkey in enumerate(vkeys):
-                if f"{vkey}_graph" not in adata.uns or (not compute_metrics):
-                    velocity_graph(adata, vkey=vkey, n_jobs=get_n_cpu(adata.n_obs))
+                velocity_graph(adata, vkey=vkey, n_jobs=get_n_cpu(adata.n_obs))
                 velocity_embedding_stream(adata,
                                           basis=embed,
                                           vkey=vkey,
@@ -597,15 +578,17 @@ def post_analysis(adata,
                                           legend_fontsize=np.clip(15 - np.clip(len(colors)-10, 0, None), 8, None),
                                           legend_loc='on data' if len(colors) <= 10 else 'right margin',
                                           dpi=150,
-                                          show=False,
-                                          save=f'{figure_path}/{test_id}_{keys[i]}_stream.png')
+                                          show=True,
+                                          save=(None if figure_path is None else
+                                                f'{figure_path}/{test_id}_{keys[i]}_stream.png'))
         except ImportError:
             print('Please install scVelo in order to generate stream plots')
             pass
-
-    if compute_metrics:
-        stats_df.to_csv(f"{figure_path}/metrics_{test_id}.csv", sep='\t')
-        return stats_df, stats_type_df
     if save is not None:
         adata.write_h5ad(save)
+    if compute_metrics:
+        if figure_path is not None:
+            stats_df.to_csv(f"{figure_path}/metrics_{test_id}.csv", sep='\t')
+        return stats_df, stats_type_df
+
     return None, None
