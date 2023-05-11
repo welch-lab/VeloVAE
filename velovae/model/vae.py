@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -821,19 +822,19 @@ class VAE(VanillaVAE):
         loss_v = 0
         if u0 is not None and s0 is not None and self.config["reg_v"] > 0:
             scaling = self.decoder.scaling.exp()
-            loss_v = loss_v + self.config["reg_v"] * self._cos_sim(u0/scaling,
-                                                                   uhat/scaling,
-                                                                   vu,
-                                                                   s0,
-                                                                   shat,
-                                                                   vs)
+            loss_v = loss_v + self.config["reg_v"] * self._cos_sim_us(u0/scaling,
+                                                                      uhat/scaling,
+                                                                      vu,
+                                                                      s0,
+                                                                      shat,
+                                                                      vs)
             if vu_fw is not None and vs_fw is not None:
-                loss_v = loss_v + self.config["reg_v"] * self._cos_sim(uhat/scaling,
-                                                                       u1/scaling,
-                                                                       vu_fw,
-                                                                       shat,
-                                                                       s1,
-                                                                       vs_fw)
+                loss_v = loss_v + self.config["reg_v"] * self._cos_sim_us(uhat/scaling,
+                                                                          u1/scaling,
+                                                                          vu_fw,
+                                                                          shat,
+                                                                          s1,
+                                                                          vs_fw)
         return loss_v
 
     def _compute_kl_term(self, q_tx, p_t, q_zx, p_z):
@@ -868,6 +869,7 @@ class VAE(VanillaVAE):
             elbo_collapsed_categorical(self.decoder.logit_pw, self.alpha_w, 2, self.decoder.scaling.shape[0])
             if self.train_stage == 1 else 0
             )
+
         return (self.config["kl_t"]*kldt
                 + self.config["kl_z"]*kldz
                 + self.config["kl_param"]*kld_param
@@ -1787,16 +1789,6 @@ class VAE(VanillaVAE):
                          gene_plot[i],
                          save=f"{path}/sig-{gene_plot[i]}-{testid}.png",
                          sparsify=self.config['sparsify'])
-                if self.train_stage == 2:
-                    scaling = self.decoder.scaling[i].detach().cpu().exp().numpy()
-                    cell_idx = self.test_idx if test_mode else self.train_idx
-                    plot_vel(t.squeeze(),
-                             Uhat[:, i]/scaling, Shat[:, i],
-                             out["vu"][:, i], out["vs"][:, i],
-                             self.t0[cell_idx].squeeze(),
-                             self.u0[cell_idx, idx]/scaling, self.s0[cell_idx, idx],
-                             title=gene_plot[i],
-                             save=f"{path}/vel-{gene_plot[i]}-{testid}.png")
                 if self.config['vel_continuity_loss'] and self.train_stage == 2:
                     plot_sig(t.squeeze(),
                              dataset.data[:, idx], dataset.data[:, idx+G],
@@ -1805,7 +1797,7 @@ class VAE(VanillaVAE):
                              gene_plot[i],
                              save=f"{path}/sig-{gene_plot[i]}-{testid}-bw.png",
                              sparsify=self.config['sparsify'])
-
+        plt.close()
         return elbo
 
     def update_std_noise(self, train_data):
