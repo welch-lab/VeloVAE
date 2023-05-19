@@ -101,9 +101,9 @@ def preprocess_embryo():
     adata.obs["clusters"] = cell_labels
     
     #Preprocessing
-    vv.preprocess(adata, n_gene=2000, keep_raw=True)
+    vv.preprocess(adata, n_gene=2000, keep_raw=True, min_genes_expressed=1)
     
-    adata.write_h5ad(f"{root}/{dataset}_dpp.h5ad")
+    adata.write_h5ad(f"{root}/{dataset}_pp.h5ad")
 
 def divide_lineage(discrete=False):
     dataset = "Embryo"
@@ -142,6 +142,6 @@ def divide_lineage(discrete=False):
         adata_sub.write_h5ad(f"{root}/{name}.h5ad")
         del adata_sub
 
-#preprocess_embryo()
+preprocess_embryo()
 #divide_lineage()
-divide_lineage(discrete=True)
+#divide_lineage(discrete=True)

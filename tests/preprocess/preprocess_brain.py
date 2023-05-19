@@ -21,8 +21,8 @@ def preprocess_brain():
     #Add capture time
     capture_time = adata.obs["Age"].to_numpy()
     tprior = np.array([float(x[1:]) for x in capture_time])
-    adata.obs["tprior"] = tprior - tprior.min()
+    adata.obs["tprior"] = tprior
     
-    adata.write_h5ad(f"{root}/{dataset}_dpp.h5ad")
+    adata.write_h5ad(f"{root}/{dataset}_pp.h5ad")
 
 preprocess_brain()
