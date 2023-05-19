@@ -4,7 +4,7 @@ typing_extensions
 torch>=1.8.0
 
 # scRNA Data Analysis
-anndata>=0.7.5
+anndata>=0.8.0
 scanpy>=1.5
 scvelo>=0.2.3
 umap-learn>=0.3.10
