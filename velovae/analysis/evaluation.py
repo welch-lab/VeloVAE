@@ -323,6 +323,10 @@ def post_analysis(adata,
         and desendant cell types.
         Saves the figures to 'figure_path'.
     """
+    # set the random seed
+    random_state = 42 if not 'random_state' in kwargs else kwargs['random_state']
+    np.random.seed(random_state)
+
     if figure_path is not None:
         makedirs(figure_path, exist_ok=True)
     # Retrieve data
@@ -557,7 +561,7 @@ def post_analysis(adata,
                       V,
                       Yhat,
                       frac=frac,
-                      down_sample=min(20, max(1, adata.n_obs//2500)),
+                      down_sample=min(20, max(1, adata.n_obs//5000)),
                       sparsity_correction=sparsity_correction,
                       path=figure_path,
                       figname=test_id,
@@ -569,7 +573,11 @@ def post_analysis(adata,
             from scvelo.pl import velocity_embedding_stream
             colors = get_colors(len(cell_types_raw))
             for i, vkey in enumerate(vkeys):
-                velocity_graph(adata, vkey=vkey, n_jobs=get_n_cpu(adata.n_obs))
+                if methods[i] in ['scVelo', 'UniTVelo', 'DeepVelo']:
+                    gene_subset = adata.var_names[adata.var['velocity_genes'].to_numpy()]
+                else:
+                    gene_subset = adata.var_names[~np.isnan(adata.layers[vkey][0])]
+                velocity_graph(adata, vkey=vkey, gene_subset=gene_subset, n_jobs=get_n_cpu(adata.n_obs))
                 velocity_embedding_stream(adata,
                                           basis=embed,
                                           vkey=vkey,
@@ -577,7 +585,7 @@ def post_analysis(adata,
                                           palette=colors,
                                           legend_fontsize=np.clip(15 - np.clip(len(colors)-10, 0, None), 8, None),
                                           legend_loc='on data' if len(colors) <= 10 else 'right margin',
-                                          dpi=150,
+                                          dpi=300,
                                           show=True,
                                           save=(None if figure_path is None else
                                                 f'{figure_path}/{test_id}_{keys[i]}_stream.png'))

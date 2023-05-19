@@ -1190,8 +1190,6 @@ def gen_cross_boundary_correctness_test(
     for u, v in cluster_edges:
         sel = adata.obs[k_cluster] == u
         nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
-        # random_pool = np.where(~((adata.obs[k_cluster].to_numpy() == u)\
-        #                          | (adata.obs[k_cluster].to_numpy() == v)))[0]
 
         boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
         x_points = x_emb[sel]
@@ -1207,7 +1205,6 @@ def gen_cross_boundary_correctness_test(
             dt = t[nodes] - t_i
             dir_scores = _cos_sim_sample(x_vel, position_dif, dt)
 
-            # nodes_null = np.random.choice(random_pool, min(len(random_pool), n_prune), replace=False)
             nodes_null = all_nodes if len(all_nodes) < n_prune else np.random.choice(all_nodes, n_prune)
             position_dif_null = x_emb[nodes_null] - x_pos
             dt_null = t[nodes_null] - t_i
