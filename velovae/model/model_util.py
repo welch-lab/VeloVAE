@@ -847,24 +847,18 @@ def pred_steady(tau_s, alpha, beta, gamma):
 def ode_numpy(t, alpha, beta, gamma, to, ts, scaling=None, k=10.0):
     """(Numpy Version) ODE solution with fixed rates
 
-    Arguments
-    ---------
+    Args:
+        t (`numpy array`): Cell time, (N,1)
+        alpha (`numpy array`): Transcription rates
+        beta (`numpy array`): Splicing rates
+        gamma (`numpy array`): Degradation rates
+        to (`numpy array`): switch-on time
+        ts (`numpy array`): switch-off time (induction to repression)
+        scaling (numpy array, optional): Scaling factor (u / s). Defaults to None.
+        k (float, optional): Parameter for a smooth clip of tau. Defaults to 10.0.
 
-    t : `numpy array`
-        Cell time, (N,1)
-    alpha, beta, gamma : `numpy array`
-        Generation, splicing and degradation rates, (G,)
-    to, ts : `numpy array`
-        Switch-on and -off time, (G,)
-    scaling : `numpy array`, optional
-        Scaling factor
-    k : float, optional
-        Parameter for a smooth clip of tau.
-
-    Returns
-    -------
-    uhat, shat : `numpy array`
-        Predicted u and s values
+    Returns:
+        tuple: returns the unspliced and spliced counts predicted by the ODE
     """
     eps = 1e-6
     unstability = (np.abs(beta - gamma) < eps)

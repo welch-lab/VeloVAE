@@ -1,3 +1,7 @@
+"""VAE Module
+
+This module contains the VeloVAE model implementation.
+"""
 import numpy as np
 import os
 import matplotlib.pyplot as plt
@@ -29,8 +33,6 @@ GRAD_MAX = 1e7
 ##############################################################
 # VAE
 ##############################################################
-
-
 class encoder(nn.Module):
     """Encoder class for the VAE model
     """
@@ -40,6 +42,15 @@ class encoder(nn.Module):
                  dim_cond=0,
                  N1=500,
                  N2=250):
+        """Constructor of the encoder class
+
+        Args:
+            Cin (int): Input feature dimension. We assume inputs are batches of 1-d tensors.
+            dim_z (int): Latent dimension of the cell state.
+            dim_cond (int, optional): Dimension of condition features, used for a conditional VAE. Defaults to 0.
+            N1 (int, optional): _description_. Defaults to 500.
+            N2 (int, optional): _description_. Defaults to 250.
+        """
         super(encoder, self).__init__()
         self.fc1 = nn.Linear(Cin, N1)
         self.bn1 = nn.BatchNorm1d(num_features=N1)
@@ -59,9 +70,9 @@ class encoder(nn.Module):
         self.fc_std_z = nn.Linear(N2+dim_cond, dim_z)
         self.spt3 = nn.Softplus()
 
-        self.init_weights()
+        self._init_weights()
 
-    def init_weights(self):
+    def _init_weights(self):
         for m in self.net.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
@@ -74,6 +85,16 @@ class encoder(nn.Module):
             nn.init.constant_(m.bias, 0.0)
 
     def forward(self, data_in, condition=None):
+        """Forward function of the encoder
+
+        Args:
+            data_in (torch.Tensor): Input cell-by-gene count data.
+            condition (torch.Tensor, optional): Condition features. Defaults to None.
+
+        Returns:
+            tuple of torch.Tensor: Parameters of variational posterior,
+            i.e. mean and standard deviation of q(t,z|x) = q(z|x)q(t|x).
+        """
         h = self.net(data_in)
         if condition is not None:
             h = torch.cat((h, condition), 1)
@@ -101,6 +122,29 @@ class decoder(nn.Module):
                  init_key=None,
                  checkpoint=None,
                  **kwargs):
+        """Constructor of the VeloVAE decoder module
+
+        Args:
+            adata (AnnData): Input AnnData object containing spliced and unspliced count matrices
+                and other cell and gene annotations.
+            tmax (float): Maximum time, specifies the time range.
+            train_idx (numpy array like): 1D array containing the indices of training samples.
+            dim_z (int): Latent cell state dimension.
+            full_vb (bool, optional): Whether to use the full variational Bayes feature. Defaults to False.
+            discrete (bool, optional): Whether to directly model discrete counts. Defaults to False.
+            dim_cond (int, optional): Dimension of any condition features. Defaults to 0.
+            N1 (int, optional): Width of the first hidden layer. Defaults to 250.
+            N2 (int, optional): Width of the second hidden layer. Defaults to 500.
+            p (int, optional): Percentile value, used in picking steady-state cells
+                in model initialization. Defaults to 98.
+            init_ton_zero (bool, optional): Whether to assume zero switch-on time for each gene. Defaults to False.
+            filter_gene (bool, optional): Whether to filter out non-velocity genes based on scVelo-style initialization.
+                Defaults to False.
+            device (torch.device, optional): Device to hold the model. Defaults to torch.device('cpu').
+            init_method (str, optional): Initialization method, should be one of {'steady', 'tprior'}. Defaults to "steady".
+            init_key (str, optional): Key in adata.obs storing the capture time or any prior time information. Defaults to None.
+            checkpoint (str, optional): (ToDo) Previously stored parameter values to load. Defaults to None.
+        """
         super(decoder, self).__init__()
         G = adata.n_vars
         self.tmax = tmax
@@ -277,9 +321,9 @@ class decoder(nn.Module):
 
             self.load_state_dict(torch.load(checkpoint, map_location=device))
         else:
-            self.init_weights()
+            self._init_weights()
 
-    def init_weights(self, net_id=None):
+    def _init_weights(self, net_id=None):
         if net_id == 1 or net_id is None:
             for m in self.net_rho.modules():
                 if isinstance(m, nn.Linear):
@@ -330,7 +374,7 @@ class decoder(nn.Module):
         clip_fn = nn.Hardtanh(-16, np.log(max_val))
         return clip_fn(rate)
 
-    def forward_basis(self, t, z, condition=None, eval_mode=False, neg_slope=0.0):
+    def _forward_basis(self, t, z, condition=None, eval_mode=False, neg_slope=0.0):
         ####################################################
         # Outputs a (n sample, n basis, n gene) tensor
         ####################################################
@@ -361,11 +405,24 @@ class decoder(nn.Module):
         return Uhat, Shat, vu, vs
 
     def forward(self, t, z, u0=None, s0=None, t0=None, condition=None, eval_mode=False, neg_slope=0.0):
-        ####################################################
-        # top-level forward function for the decoder class
-        ####################################################
+        """top-level forward function for the decoder class
+
+        Args:
+            t (torch.Tensor): Cell time of size (n x 1)
+            z (torch.Tensor): Cell state of size (n x dim_z)
+            u0 (torch.Tensor, optional): Estimated initial condition (u) of each cell. Defaults to None.
+            s0 (torch.Tensor, optional): Estimated initial condition (s) of each cell. Defaults to None.
+            t0 (torch.Tensor, optional): Estimated time at the initial condition of each cell. Defaults to None.
+            condition (torch.Tensor, optional): _description_. Defaults to None.
+            eval_mode (bool, optional): Whether this function is called in model evaluation. If set to True,
+                the mean time and cell state will be used to provide a deterministic prediction. Defaults to False.
+            neg_slope (float, optional): Leaky ReLU slope to allow negative time intervals when cell time < t0. Defaults to 0.0.
+
+        Returns:
+            tuple of torch.Tensor: Reconstructed unspliced and spliced counts, along with their corresponding velocity
+        """
         if u0 is None or s0 is None or t0 is None:
-            return self.forward_basis(t, z, condition, eval_mode, neg_slope)
+            return self._forward_basis(t, z, condition, eval_mode, neg_slope)
         else:
             if condition is None:
                 rho = torch.sigmoid(self.fc_out2(self.net_rho2(z)))
@@ -416,67 +473,31 @@ class VAE(VanillaVAE):
                  **kwargs):
         """VeloVAE Model
 
-        Arguments
-        ---------
-
-        adata : :class:`anndata.AnnData`
-            AnnData object containing all relevant data and meta-data
-        tmax : float
-            Time range.
-            This is used to restrict the cell time within certain range. In the
-            case of a Gaussian model without capture time, tmax/2 will be the mean of prior.
-            If capture time is provided, then they are scaled to match a range of tmax.
-            In the case of a uniform model, tmax is strictly the maximum time.
-        dim_z : int
-            Dimension of the latent cell state
-        dim_cond : int, optional
-            Dimension of additional information for the conditional VAE.
-            Set to zero by default, equivalent to a VAE.
-            This feature is not stable now.
-        device : {'gpu','cpu'}, optional
-            Training device
-        hidden_size : tuple of int, optional
-            Width of the hidden layers. Should be a tuple of the form
-            (encoder layer 1, encoder layer 2, decoder layer 1, decoder layer 2)
-        full_vb : bool, optional
-            Enable the full variational Bayes
-        discrete : bool, optional
-            Enable the discrete count model
-        init_method : {'random', 'tprior', 'steady}, optional
-            Initialization method.
-            Should choose from
-            (1) random: random initialization
-            (2) tprior: use the capture time to estimate rate parameters. Cell time will be
-                        randomly sampled with the capture time as the mean. The variance can
-                        be controlled by changing 'std_t_scaling' in config.
-            (3) steady: use the steady-state model to estimate gamma, alpha and assume beta = 1.
-                        After this, a global cell time is estimated by taking the quantile over
-                        all local times. Finally, rate parameters are reinitialized using the
-                        global cell time.
-        init_key : str, optional
-            column in the AnnData object containing the capture time
-        tprior : str, optional
-            key in adata.obs that stores the capture time.
-            Used for informative time prior
-        init_ton_zero : bool, optional
-            Whether to add a non-zero switch-on time for each gene.
-            It's set to True if there's no capture time.
-        filter_gene : bool, optional
-            Whether to remove non-velocity genes
-        count_distriution : {'auto', 'Poisson', 'NB'}, optional
-            Count distribution, effective only when discrete=True
-            The current version only assumes Poisson or negative binomial distributions.
-            When set to 'auto', the program determines a proper one based on over dispersion
-        std_z_prior : float, optional
-            Standard deviation of the prior (isotropical Gaussian) of cell state.
-        checkpoints : list of 2 strings, optional
-            Contains the path to saved encoder and decoder models.
-            Should be a .pt file.
-        rate_prior : dict, optional
-            Prior distribution of rate parameters.
-            Keys are always `alpha',`beta',`gamma'
-            Values are length-2 tuples (mu, sigma), representing the mean and standard deviation
-            of log rates.
+        Args:
+            adata (anndata.AnnData): Input AnnData object
+            tmax (float): Maximum time, specifies the time range.
+            dim_z (int): Latent cell state dimension.
+            dim_cond (int, optional): Dimension of any condition features. Defaults to 0.
+            device (torch.device, optional): Device to hold the model. Defaults to 'cpu'.
+            hidden_size (tuple, optional): The width of the first and second hidden layers of the encoder, followed by
+                the width of the first and second hidden layers of the decoder. Defaults to (500, 250, 250, 500).
+            full_vb (bool, optional): Whether to use the full variational Bayes feature. Defaults to False.
+            discrete (bool, optional): Whether to directly model discrete counts. Defaults to False.
+            init_method (str, optional): Initialization method, should be one of {'steady', 'tprior'}.
+                Defaults to "steady".
+            init_key (str, optional): Key in adata.obs storing the capture time or any prior time information.
+                This is used in initialization. Defaults to None.
+            tprior (str, optional): Key in adata.obs containing the informative time prior.
+                This is used in model training. Defaults to None.
+            init_ton_zero (bool, optional): Whether to assume zero switch-on time for each gene. Defaults to False.
+            filter_gene (bool, optional): Whether to filter out non-velocity genes based on
+                scVelo-style initialization. Defaults to False.
+            count_distribution (str, optional): Effective only when `discrete' is True. Defaults to "Poisson".
+            std_z_prior (float, optional): Standard deviation of the cell state prior distribution. Defaults to 0.01.
+            checkpoints (list, optional): (ToDo) Contains a list of two .pt files containing pretrained or saved model parameters.
+                Defaults to [None, None].
+            rate_prior (dict, optional): Contains the prior distributions of log rate parameters.
+                Defaults to { 'alpha': (0.0, 1.0), 'beta': (0.0, 0.5), 'gamma': (0.0, 0.5) }.
         """
         t_start = time.time()
         self.timer = 0
@@ -626,16 +647,16 @@ class VAE(VanillaVAE):
                 p_nb = np.sum((dispersion_u > 1) & (dispersion_s > 1))/adata.n_vars
                 if p_nb > 0.5:
                     count_distribution = "NB"
-                    self.vae_risk = self.vae_risk_nb
+                    self.vae_risk = self._vae_risk_nb
                 else:
                     count_distribution = "Poisson"
-                    self.vae_risk = self.vae_risk_poisson
+                    self.vae_risk = self._vae_risk_poisson
                 print(f"Mean dispersion: u={dispersion_u.mean():.2f}, s={dispersion_s.mean():.2f}")
                 print(f"Over-Dispersion = {p_nb:.2f} => Using {count_distribution} to model count data.")
             elif count_distribution == "NB":
-                self.vae_risk = self.vae_risk_nb
+                self.vae_risk = self._vae_risk_nb
             else:
-                self.vae_risk = self.vae_risk_poisson
+                self.vae_risk = self._vae_risk_poisson
             mean_u = adata.var["mean_u"].to_numpy()
             mean_s = adata.var["mean_s"].to_numpy()
             dispersion_u[dispersion_u < 1] = 1.001
@@ -643,7 +664,7 @@ class VAE(VanillaVAE):
             self.eta_u = torch.tensor(np.log(dispersion_u-1)-np.log(mean_u), device=self.device).float()
             self.eta_s = torch.tensor(np.log(dispersion_s-1)-np.log(mean_s), device=self.device).float()
         else:
-            self.vae_risk = self.vae_risk_gaussian
+            self.vae_risk = self._vae_risk_gaussian
 
     def forward(self,
                 data_in,
@@ -652,57 +673,51 @@ class VAE(VanillaVAE):
                 t0=None,
                 t1=None,
                 condition=None):
-        """Standard forward pass.
+        """Standard forward pass
 
-        Arguments
-        ---------
+        Args:
+            data_in (torch.Tensor): _description_
+            u0 (torch.Tensor, optional): Estimated initial condition (u) of each cell. Defaults to None.
+            s0 (torch.Tensor, optional): Estimated initial condition (s) of each cell. Defaults to None.
+            t0 (torch.Tensor, optional): Estimated time at the initial condition of each cell. Defaults to None.
+            t1 (torch.Tensor, optional): Time of a future state. Effective only when
+                config['vel_continuity_loss'] is True. Defaults to None.
+            condition (torch.Tensor, optional): Condition features. Defaults to None.
 
-        data_in : `torch.tensor`
-            input count data, (N, 2G)
-        u0 : `torch.tensor`, optional
-            Initial condition of u, (N, G)
-            This is set to None in the first stage when cell time is
-            not fixed. It will have some value in the second stage, so the users
-            shouldn't worry about feeding the parameter themselves.
-        s0 : `torch.tensor`, optional
-            Initial condition of s, (N,G)
-        t0 : `torch.tensor`, optional
-            time at the initial condition, (N,1)
-        t1 : `torch.tensor`, optional
-            time at the future state.
-            Used only when `vel_continuity_loss` is set to True
-        condition : `torch.tensor`, optional
-            Any additional condition to the VAE
-
-        Returns
-        -------
-
-        mu_t : `torch.tensor`
-            time mean, (N,1)
-        std_t : `torch.tensor`
-            time standard deviation, (N,1)
-        mu_z : `torch.tensor`
-            cell state mean, (N, Cz)
-        std_z : `torch.tensor`
-            cell state standard deviation, (N, Cz)
-        t : `torch.tensor`
-            sampled cell time, (N,1)
-        z : `torch.tensor`
-            sampled cell sate, (N,Cz)
-        uhat : `torch.tensor`
-            predicted mean u values, (N,G)
-        shat : `torch.tensor`
-            predicted mean s values, (N,G)
-        uhat_fw : `torch.tensor`
-            predicted mean u values of the future state, (N,G)
-            Valid only when `vel_continuity_loss` is set to True
-        shat_fw : `torch.tensor`
-            predicted mean s values of the future state, (N,G)
-            Valid only when `vel_continuity_loss` is set to True
-        vu : `torch.tensor`
-            unspliced velocity
-        vs : `torch.tensor`
-            spliced velocity
+        Returns:
+            tuple of torch.Tensor: Contains the following:
+                mu_t : `torch.tensor`
+                    time mean, (N,1)
+                std_t : `torch.tensor`
+                    time standard deviation, (N,1)
+                mu_z : `torch.tensor`
+                    cell state mean, (N, Cz)
+                std_z : `torch.tensor`
+                    cell state standard deviation, (N, Cz)
+                t : `torch.tensor`
+                    sampled cell time, (N,1)
+                z : `torch.tensor`
+                    sampled cell sate, (N,Cz)
+                uhat : `torch.tensor`
+                    predicted mean u values, (N,G)
+                shat : `torch.tensor`
+                    predicted mean s values, (N,G)
+                uhat_fw : `torch.tensor`
+                    predicted mean u values of the future state, (N,G)
+                    Valid only when `vel_continuity_loss` is set to True
+                shat_fw : `torch.tensor`
+                    predicted mean s values of the future state, (N,G)
+                    Valid only when `vel_continuity_loss` is set to True
+                vu : `torch.tensor`
+                    unspliced velocity
+                vs : `torch.tensor`
+                    spliced velocity
+                vu_fw : `torch.tensor`
+                    unspliced velocity at the future state
+                    Valid only when `vel_continuity_loss` is set to True
+                vs_fw : `torch.tensor`
+                    spliced velocity at the future state
+                    Valid only when `vel_continuity_loss` is set to True
         """
         data_in_scale = data_in
         # optional data scaling
@@ -735,10 +750,6 @@ class VAE(VanillaVAE):
                    t0=None,
                    t1=None,
                    condition=None):
-        """Evaluate the model on the validation dataset.
-        The major difference from forward pass is that we use the mean time and
-        cell state instead of random sampling. The input arguments are the same as 'forward'.
-        """
         data_in_scale = data_in
         # optional data scaling
         if self.config["scale_gene_encoder"]:
@@ -811,13 +822,13 @@ class VAE(VanillaVAE):
         delta_x = torch.stack([uhat-u0, shat-s0])
         return cossim(delta_x, torch.stack([vu, vs])).mean()
 
-    def loss_vel(self,
-                 uhat, shat,
-                 vu, vs,
-                 u0, s0,
-                 uhat_fw=None, shat_fw=None,
-                 vu_fw=None, vs_fw=None,
-                 u1=None, s1=None):
+    def _loss_vel(self,
+                  uhat, shat,
+                  vu, vs,
+                  u0, s0,
+                  uhat_fw=None, shat_fw=None,
+                  vu_fw=None, vs_fw=None,
+                  u1=None, s1=None):
         # Add velocity regularization
         loss_v = 0
         if u0 is not None and s0 is not None and self.config["reg_v"] > 0:
@@ -875,45 +886,17 @@ class VAE(VanillaVAE):
                 + self.config["kl_param"]*kld_param
                 + self.config["kl_w"]*kldw)
 
-    def vae_risk_gaussian(self,
-                          q_tx, p_t,
-                          q_zx, p_z,
-                          u, s,
-                          uhat, shat,
-                          vu=None, vs=None,
-                          u0=None, s0=None,
-                          uhat_fw=None, shat_fw=None,
-                          vu_fw=None, vs_fw=None,
-                          u1=None, s1=None,
-                          weight=None):
-        """Training objective function for the continuous model.
-
-        Arguments
-        ---------
-
-        q_tx : tuple of `torch.tensor`
-            Parameters of time posterior. Mean and std are both (N, 1) tensors.
-        p_t : tuple of `torch.tensor`
-            Parameters of time prior.
-        q_zx : tuple of `torch.tensor`
-            Parameters of cell state posterior. Mean and std are both (N, Dz) tensors.
-        p_z  : tuple of `torch.tensor`
-            Parameters of cell state prior.
-        u, s : `torch.tensor`
-            Input data
-        uhat, shat : torch.tensor
-            Prediction by VeloVAE
-        uhat_fw, shat_fw : torch.tensor
-            Prediction of future count values by VeloVAE
-        u1, s1 : torch.tensor
-            Future count values
-        weight : `torch.tensor`, optional
-            Sample weight. This feature is not stable. Please consider setting it to None.
-
-        Returns
-        -------
-        Negative ELBO : torch.tensor, scalar
-        """
+    def _vae_risk_gaussian(self,
+                           q_tx, p_t,
+                           q_zx, p_z,
+                           u, s,
+                           uhat, shat,
+                           vu=None, vs=None,
+                           u0=None, s0=None,
+                           uhat_fw=None, shat_fw=None,
+                           vu_fw=None, vs_fw=None,
+                           u1=None, s1=None,
+                           weight=None):
         kl_term = self._compute_kl_term(q_tx, p_t, q_zx, p_z)
 
         sigma_u = self.decoder.sigma_u.exp()
@@ -942,12 +925,12 @@ class VAE(VanillaVAE):
 
         err_rec = torch.mean(torch.sum(logp, 1))
 
-        err_rec = err_rec + self.loss_vel(uhat, shat,
-                                          vu, vs,
-                                          u0, s0,
-                                          uhat_fw, shat_fw,
-                                          vu_fw, vs_fw,
-                                          u1, s1)
+        err_rec = err_rec + self._loss_vel(uhat, shat,
+                                           vu, vs,
+                                           u0, s0,
+                                           uhat_fw, shat_fw,
+                                           vu_fw, vs_fw,
+                                           u1, s1)
         return - err_rec + kl_term
 
     def _kl_poisson(self, lamb_1, lamb_2):
@@ -958,18 +941,18 @@ class VAE(VanillaVAE):
         r2 = m2 * (1 - p) / p
         return (r1 - r2)*torch.log(p)
 
-    def vae_risk_poisson(self,
-                         q_tx, p_t,
-                         q_zx, p_z,
-                         u, s, 
-                         uhat, shat,
-                         vu=None, vs=None,
-                         u0=None, s0=None,
-                         uhat_fw=None, shat_fw=None,
-                         vu_fw=None, vs_fw=None,
-                         u1=None, s1=None,
-                         weight=None,
-                         eps=1e-2):
+    def _vae_risk_poisson(self,
+                          q_tx, p_t,
+                          q_zx, p_z,
+                          u, s, 
+                          uhat, shat,
+                          vu=None, vs=None,
+                          u0=None, s0=None,
+                          uhat_fw=None, shat_fw=None,
+                          vu_fw=None, vs_fw=None,
+                          u1=None, s1=None,
+                          weight=None,
+                          eps=1e-2):
         """Training objective function for the discrete model (Poisson).
         The arugments and return values have the same meaning as vae_risk_gaussian
         """
@@ -998,26 +981,26 @@ class VAE(VanillaVAE):
             logp = logp*weight
 
         err_rec = torch.mean(logp.sum(1))
-        err_rec = err_rec + self.loss_vel(uhat, shat,
-                                          vu, vs,
-                                          u0, s0,
-                                          uhat_fw, shat_fw,
-                                          vu_fw, vs_fw,
-                                          u1, s1)
+        err_rec = err_rec + self._loss_vel(uhat, shat,
+                                           vu, vs,
+                                           u0, s0,
+                                           uhat_fw, shat_fw,
+                                           vu_fw, vs_fw,
+                                           u1, s1)
 
         return - err_rec + kl_term
 
-    def vae_risk_nb(self,
-                    q_tx, p_t,
-                    q_zx, p_z,
-                    u, s,
-                    uhat, shat,
-                    vu=None, vs=None,
-                    uhat_fw=None, shat_fw=None,
-                    vu_fw=None, vs_fw=None,
-                    u1=None, s1=None,
-                    weight=None,
-                    eps=1e-2):
+    def _vae_risk_nb(self,
+                     q_tx, p_t,
+                     q_zx, p_z,
+                     u, s,
+                     uhat, shat,
+                     vu=None, vs=None,
+                     uhat_fw=None, shat_fw=None,
+                     vu_fw=None, vs_fw=None,
+                     u1=None, s1=None,
+                     weight=None,
+                     eps=1e-2):
         """Training objective function for the discrete model (negative binomial).
         The arugments and return values have the same meaning as vae_risk_gaussian
         """
@@ -1040,16 +1023,16 @@ class VAE(VanillaVAE):
         if weight is not None:
             logp = logp*weight
         err_rec = torch.mean(torch.sum(logp, 1))
-        err_rec = err_rec + self.loss_vel(uhat, shat,
-                                          vu, vs,
-                                          u0, s0,
-                                          uhat_fw, shat_fw,
-                                          vu_fw, vs_fw,
-                                          u1, s1)
+        err_rec = err_rec + self._loss_vel(uhat, shat,
+                                           vu, vs,
+                                           u0, s0,
+                                           uhat_fw, shat_fw,
+                                           vu_fw, vs_fw,
+                                           u1, s1)
 
         return - err_rec + kl_term
 
-    def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
+    def _train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
         ##########################################################################
         # Training in each epoch.
         # Early stopping if enforced by default.
@@ -1082,10 +1065,10 @@ class VAE(VanillaVAE):
 
         for i, batch in enumerate(train_loader):
             if self.counter == 1 or self.counter % self.config["test_iter"] == 0:
-                elbo_test = self.test(test_set,
-                                      None,
-                                      self.counter,
-                                      True)
+                elbo_test = self._test(test_set,
+                                       None,
+                                       self.counter,
+                                       True)
 
                 if len(self.loss_test) > 0:  # update the number of epochs with dropping/converging ELBO
                     if elbo_test - self.loss_test[-1] <= self.config["early_stop_thred"]:
@@ -1162,7 +1145,7 @@ class VAE(VanillaVAE):
             self.counter = self.counter + 1
         return stop_training
 
-    def update_x0(self, U, S):
+    def _update_x0(self, U, S):
         ##########################################################################
         # Estimate the initial conditions using KNN
         # < Input Arguments >
@@ -1254,24 +1237,18 @@ class VAE(VanillaVAE):
               cluster_key="clusters",
               figure_path="figures",
               embed="umap"):
-        """The high-level API for training.
+        """The high-level API for training
 
-        Arguments
-        ---------
-
-        adata : :class:`anndata.AnnData`
-        config : dictionary, optional
-            Contains all hyper-parameters.
-        plot : bool, optional
-            Whether to plot some sample genes during training. Used for debugging.
-        gene_plot : string list, optional
-            List of gene names to plot. Used only if plot==True
-        cluster_key : str, optional
-            Key in adata.obs storing the cell type annotation.
-        figure_path : str, optional
-            Path to the folder for saving plots.
-        embed : str, optional
-            Low dimensional embedding in adata.obsm. The actual key storing the embedding should be f'X_{embed}'
+        Args:
+            adata (`anndata.AnnData`): Input AnnData object
+            config (dict, optional): Contains all hyper-parameters.
+                Users can change the default using this argument. Defaults to {}.
+            plot (bool, optional): Whether to plot intermediate results. Used for debugging. Defaults to False.
+            gene_plot (list, optional): Genes to plot. Effective only when plot is True. Defaults to [].
+            cluster_key (str, optional): Key in adata.obs storing the cell type annotation.. Defaults to "clusters".
+            figure_path (str, optional): Path to the folder for saving plots. Defaults to "figures".
+            embed (str, optional): Low dimensional embedding in adata.obsm.
+                The actual key storing the embedding should be f'X_{embed}'. Defaults to "umap".
         """
         self.load_config(config)
         if self.config["learning_rate"] is None:
@@ -1349,27 +1326,27 @@ class VAE(VanillaVAE):
         for epoch in range(n_epochs):
             # Train the encoder
             if epoch >= self.config["n_warmup"]:
-                stop_training = self.train_epoch(data_loader,
-                                                 test_set,
-                                                 optimizer_ode,
-                                                 optimizer,
-                                                 self.config["k_alt"])
+                stop_training = self._train_epoch(data_loader,
+                                                  test_set,
+                                                  optimizer_ode,
+                                                  optimizer,
+                                                  self.config["k_alt"])
             else:
-                stop_training = self.train_epoch(data_loader,
-                                                 test_set,
-                                                 optimizer,
-                                                 None,
-                                                 self.config["k_alt"])
+                stop_training = self._train_epoch(data_loader,
+                                                  test_set,
+                                                  optimizer,
+                                                  None,
+                                                  self.config["k_alt"])
 
             if plot and (epoch == 0 or (epoch+1) % self.config["save_epoch"] == 0):
-                elbo_train = self.test(train_set,
-                                       Xembed[self.train_idx],
-                                       f"train{epoch+1}",
-                                       False,
-                                       gind,
-                                       gene_plot,
-                                       plot,
-                                       figure_path)
+                elbo_train = self._test(train_set,
+                                        Xembed[self.train_idx],
+                                        f"train{epoch+1}",
+                                        False,
+                                        gind,
+                                        gene_plot,
+                                        plot,
+                                        figure_path)
                 self.set_mode('train')
                 elbo_test = self.loss_test[-1] if len(self.loss_test) > 0 else -np.inf
                 print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f},\t"
@@ -1404,37 +1381,37 @@ class VAE(VanillaVAE):
             self.config['early_stop_thred'] *= 0.95
             stop_training = (x0_change - x0_change_prev >= -0.01 and r > 1) or (x0_change < 0.01)
             if (not self.is_discrete) and (noise_change > 0.001) and (r < self.config['n_refine']-1):
-                self.update_std_noise(train_set.data)
+                self._update_std_noise(train_set.data)
                 stop_training = False
             if stop_training:
                 print(f"Stage 2: Early Stop Triggered at round {r}.")
                 break
-            self.update_x0(X[:, :X.shape[1]//2], X[:, X.shape[1]//2:])
+            self._update_x0(X[:, :X.shape[1]//2], X[:, X.shape[1]//2:])
             self.n_drop = 0
 
             for epoch in range(self.config["n_epochs_post"]):
                 if epoch >= self.config["n_warmup"]:
-                    stop_training = self.train_epoch(data_loader,
-                                                     test_set,
-                                                     optimizer_post,
-                                                     optimizer_ode,
-                                                     self.config["k_alt"])
+                    stop_training = self._train_epoch(data_loader,
+                                                      test_set,
+                                                      optimizer_post,
+                                                      optimizer_ode,
+                                                      self.config["k_alt"])
                 else:
-                    stop_training = self.train_epoch(data_loader,
-                                                     test_set,
-                                                     optimizer_post,
-                                                     None,
-                                                     self.config["k_alt"])
+                    stop_training = self._train_epoch(data_loader,
+                                                      test_set,
+                                                      optimizer_post,
+                                                      None,
+                                                      self.config["k_alt"])
 
                 if plot and (epoch == 0 or (epoch+count_epoch+1) % self.config["save_epoch"] == 0):
-                    elbo_train = self.test(train_set,
-                                           Xembed[self.train_idx],
-                                           f"train{epoch+count_epoch+1}",
-                                           False,
-                                           gind,
-                                           gene_plot,
-                                           plot,
-                                           figure_path)
+                    elbo_train = self._test(train_set,
+                                            Xembed[self.train_idx],
+                                            f"train{epoch+count_epoch+1}",
+                                            False,
+                                            gind,
+                                            gene_plot,
+                                            plot,
+                                            figure_path)
                     self.decoder.train()
                     elbo_test = self.loss_test[-1] if len(self.loss_test) > n_test1 else -np.inf
                     print(f"Epoch {epoch+count_epoch+1}: Train ELBO = {elbo_train:.3f},\t"
@@ -1465,22 +1442,22 @@ class VAE(VanillaVAE):
             u0_prev = self.u0
             s0_prev = self.s0
 
-        elbo_train = self.test(train_set,
-                               Xembed[self.train_idx],
-                               "final-train",
-                               False,
+        elbo_train = self._test(train_set,
+                                Xembed[self.train_idx],
+                                "final-train",
+                                False,
+                                gind,
+                                gene_plot,
+                                plot,
+                                figure_path)
+        elbo_test = self._test(test_set,
+                               Xembed[self.test_idx],
+                               "final-test",
+                               True,
                                gind,
                                gene_plot,
                                plot,
                                figure_path)
-        elbo_test = self.test(test_set,
-                              Xembed[self.test_idx],
-                              "final-test",
-                              True,
-                              gind,
-                              gene_plot,
-                              plot,
-                              figure_path)
         self.loss_train.append(elbo_train)
         self.loss_test.append(elbo_test)
         # Plot final results
@@ -1498,7 +1475,12 @@ class VAE(VanillaVAE):
         print(f"Final: Train ELBO = {elbo_train:.3f},\tTest ELBO = {elbo_test:.3f}")
         return
 
-    def pred_all(self, data, cell_labels, mode='test', output=["uhat", "shat", "t", "z"], gene_idx=None):
+    def _pred_all(self,
+                  data,
+                  cell_labels,
+                  mode='test',
+                  output=["uhat", "shat", "t", "z"],
+                  gene_idx=None):
         N, G = data.shape[0], data.shape[1]//2
         if gene_idx is None:
             gene_idx = np.array(range(G))
@@ -1729,16 +1711,16 @@ class VAE(VanillaVAE):
 
         return out, elbo.detach().cpu().item()
 
-    def test(self,
-             dataset,
-             Xembed,
-             testid=0,
-             test_mode=True,
-             gind=None,
-             gene_plot=None,
-             plot=False,
-             path='figures',
-             **kwargs):
+    def _test(self,
+              dataset,
+              Xembed,
+              testid=0,
+              test_mode=True,
+              gind=None,
+              gene_plot=None,
+              plot=False,
+              path='figures',
+              **kwargs):
         """Evaluate the model upon training/test dataset.
 
         Arguments
@@ -1800,9 +1782,8 @@ class VAE(VanillaVAE):
         plt.close()
         return elbo
 
-    def update_std_noise(self, train_data):
+    def _update_std_noise(self, train_data):
         """Update the standard deviation of Gaussian noise.
-        .. deprecated:: 1.0
         """
         G = train_data.shape[1]//2
         out, elbo = self.pred_all(train_data,
@@ -1823,17 +1804,14 @@ class VAE(VanillaVAE):
         return
 
     def save_anndata(self, adata, key, file_path, file_name=None):
-        """Save the ODE parameters and cell time to the anndata object and write it to disk.
+        """Updates an input AnnData object with inferred latent variable and estimations from the model and write it to disk.
 
-        Arguments
-        ---------
-        adata : :class:`anndata.AnnData`
-        key : str
-            Used to store all parameters of the model.
-        file_path : str
-            Saving path.
-        file_name : str, optional
-            If set to a string ending with .h5ad, the updated anndata object will be written to disk.
+        Args:
+            adata (`anndata.AnnData`): Input AnnData object
+            key (str): Signature used to store all parameters of the model.
+                Users can save outputs from different models to the same AnnData object using different keys.
+            file_path (str): Path to the folder for saving.
+            file_name (str, optional): If set to a string ending with .h5ad, the updated anndata object will be written to disk.. Defaults to None.
         """
         self.set_mode('eval')
         os.makedirs(file_path, exist_ok=True)
