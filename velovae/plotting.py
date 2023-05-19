@@ -19,6 +19,13 @@ TAB20C = list(plt.get_cmap("tab20c").colors)
 RAINBOW = [plt.cm.rainbow(i) for i in range(256)]
 
 markers = ["o", "x", "s", "v", "+", "d", "1", "*", "^", "p", "h", "8", "1", "2", "|"]
+# change dpi via the function set_dpi()
+DPI = 'figure'
+
+
+def set_dpi(dpi):
+    global DPI
+    DPI = dpi
 
 
 def get_colors(n, color_map=None):
@@ -53,10 +60,15 @@ def get_colors(n, color_map=None):
 
 
 def save_fig(fig, save, bbox_extra_artists=None):
+    global DPI
     if save is not None:
         try:
-            idx = save.find('.')
-            fig.savefig(save, bbox_extra_artists=bbox_extra_artists, format=save[idx+1:], bbox_inches='tight')
+            idx = save.rfind('.')
+            fig.savefig(save,
+                        dpi=DPI,
+                        bbox_extra_artists=bbox_extra_artists,
+                        format=save[idx+1:],
+                        bbox_inches='tight')
         except FileNotFoundError:
             print("Saving failed. File path doesn't exist!")
         # plt.close(fig)
@@ -274,14 +286,14 @@ def plot_sig(t,
             ax[0, 1].set_title('Spliced, True Label')
             ax[1, 0].set_title('Unspliced, VAE')
             ax[1, 1].set_title('Spliced, VAE')
-
-    lgd = fig.legend(handles,
-                     labels,
-                     fontsize=15,
-                     markerscale=5,
-                     ncol=4,
-                     bbox_to_anchor=(0.0, 1.0, 1.0, 0.25),
-                     loc='center')
+    if not LEGEND_OFF:
+        lgd = fig.legend(handles,
+                         labels,
+                         fontsize=15,
+                         markerscale=5,
+                         ncol=4,
+                         bbox_to_anchor=(0.0, 1.0, 1.0, 0.25),
+                         loc='center')
     fig.suptitle(title, fontsize=28)
     plt.tight_layout()
 
@@ -349,7 +361,8 @@ def plot_vel(t,
     ax[0].set_ylabel("U", fontsize=16)
     ax[1].set_ylabel("S", fontsize=16)
     fig.suptitle(title, fontsize=28)
-    fig.legend(loc=1, fontsize=18)
+    if not LEGEND_OFF:
+        fig.legend(loc=1, fontsize=18)
     plt.tight_layout()
 
     save_fig(fig, save)
@@ -392,8 +405,7 @@ def plot_phase(u, s,
     ax.plot(spred, upred, 'k.', label="ode")
     # Plot the correspondence
     if track_idx is None:
-        rng = np.random.default_rng()
-        perm = rng.permutation(len(s))
+        perm = np.random.permutation(len(s))
         Nsample = 50
         s_comb = np.stack([s[perm[:Nsample]], spred[perm[:Nsample]]]).ravel('F')
         u_comb = np.stack([u[perm[:Nsample]], upred[perm[:Nsample]]]).ravel('F')
@@ -752,6 +764,23 @@ def plot_phase_vel(adata,
 #########################################################################
 # Post Analysis
 #########################################################################
+def plot_legend(adata, cluster_key='clusters', ncol=1, save='figures/legend.png'):
+    cell_labels = adata.obs[cluster_key].to_numpy()
+    cell_labels = np.array([str(x) for x in cell_labels])
+    cell_types = np.unique(cell_labels)
+    colors = get_colors(len(cell_types))
+    lines = []
+
+    fig, ax = plt.subplots()
+    for i, x in enumerate(cell_types):
+        line = ax.plot([], 'o', color=colors[i], label=x)
+        lines.append(line)
+    ax.axis("off")
+    plt.tight_layout()
+    lgd = ax.legend(markerscale=2.0, ncol=ncol, fontsize=20, loc='center', frameon=False)
+    save_fig(fig, save, (lgd,))
+
+
 def _plot_heatmap(ax,
                   vals,
                   X_embed,
@@ -773,12 +802,12 @@ def _plot_heatmap(ax,
     sm = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
     cbar = plt.colorbar(sm, ax=ax)
     cbar.ax.get_yaxis().labelpad = 15
-    cbar.ax.set_ylabel(colorbar_name, rotation=270, fontsize=15)
+    cbar.ax.set_ylabel(colorbar_name, rotation=270, fontsize=24)
     if colorbar_ticklabels is not None:
         if len(colorbar_ticklabels) == 2:
             cbar.ax.get_yaxis().labelpad = 5
         cbar.set_ticks(np.linspace(vmin, vmax, len(colorbar_ticklabels)))
-        cbar.ax.set_yticklabels(colorbar_ticklabels, fontsize=12)
+        cbar.ax.set_yticklabels(colorbar_ticklabels, fontsize=15)
     if axis_off:
         ax.axis("off")
 
@@ -824,7 +853,7 @@ def plot_heatmap(vals,
     save : str, optional
         Figure name for saving (including path)
     """
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     ax = _plot_heatmap(ax, vals, X_embed, colorbar_name, colorbar_ticks, axis_off=True)
     save_fig(fig, save)
 
@@ -848,7 +877,7 @@ def plot_time(t_latent,
     save : str, optional
         Figure name for saving (including path)
     """
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     _plot_heatmap(ax, t_latent, X_embed, legend_label, ['early', 'late'], cmap=cmap, axis_off=True)
     save_fig(fig, save)
 
@@ -882,7 +911,7 @@ def plot_time_var(std_t,
     if hist_eq:
         diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     ax = _plot_heatmap(ax, diff_entropy, X_embed, "Time Variance", ['low', 'high'], cmap=cmap, axis_off=True)
     save_fig(fig, save)
 
@@ -916,7 +945,7 @@ def plot_state_var(std_z,
     if hist_eq:
         diff_entropy = histeq(diff_entropy, Nbin=len(diff_entropy)//50)
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     ax = _plot_heatmap(ax, diff_entropy, X_embed, "State Uncertainty", ['low', 'high'], cmap=cmap, axis_off=True)
     save_fig(fig, save)
 
@@ -1259,6 +1288,23 @@ def sample_scatter_plot(x, down_sample, n_bins=20):
     return np.array(idx_downsample).astype(int)
 
 
+def sample_scatter_plot_disc(x, t, dt, count_thred=50):
+    tmax, tmin = t.max()+1e-3, t.min()
+    indices = []
+    for t_lb in np.arange(tmin, tmax, dt):
+        batch_idx = np.where((t >= t_lb) & (t <= t_lb + dt))[0]
+        if len(batch_idx) > 0:
+            edges = (np.linspace(0, x[batch_idx].max()+1, count_thred+1)
+                     if x[batch_idx].max() > count_thred else
+                     np.array(range(x[batch_idx].max()+2)))
+            for j in range(len(edges)-1):
+                mask = (x[batch_idx] >= edges[j]) & (x[batch_idx] < edges[j+1])
+                if np.any(mask):
+                    indices.append(np.random.choice(batch_idx[mask]))
+
+    return np.array(indices).astype(int)
+
+
 def plot_sig_axis(ax,
                   t,
                   x,
@@ -1408,13 +1454,13 @@ def plot_vel_axis(ax,
                   sparsity_correction=False,
                   color_map=None,
                   title=None):
-    dt_sample = (t.max()-t.min())/50
     if labels is None or legends is None:
+        dt_sample = (t.max()-t.min())/50
         torder = np.argsort(t)
         try:
-            indices = (sample_quiver_plot(t[torder], dt_sample, x[torder])
+            indices = (sample_quiver_plot(t[torder], dt_sample, x[torder], n_bins=5)
                        if sparsity_correction else
-                       sample_quiver_plot(t[torder], dt_sample))
+                       sample_quiver_plot(t[torder], dt_sample, n_bins=5))
         except ValueError:
             np.random.seed(42)
             indices = np.random.choice(len(t), len(t)//30, replace=False)
@@ -1434,12 +1480,13 @@ def plot_vel_axis(ax,
         for i in range(len(legends)):
             mask = labels == i
             t_type = t[mask]
+            dt_sample = (t_type.max()-t_type.min())/30
             if np.any(mask):
                 torder = np.argsort(t_type)
                 try:
-                    indices = (sample_quiver_plot(t_type[torder], dt_sample, x[mask][torder])
+                    indices = (sample_quiver_plot(t_type[torder], dt_sample, x[mask][torder], n_bins=4)
                                if sparsity_correction else
-                               sample_quiver_plot(t_type[torder], dt_sample))
+                               sample_quiver_plot(t_type[torder], dt_sample, n_bins=4))
                 except ValueError:
                     np.random.seed(42)
                     indices = np.random.choice(len(t_type), len(t_type)//30+1, replace=False)
@@ -1624,11 +1671,13 @@ def plot_sig_grid(Nr,
                                                 Legends[methods[0]],
                                                 frac=frac)
                         elif 'Discrete' in methods[0]:
-                            plot_sig_pred_axis(ax_sig[3*i], that[::K], Uhat[methods[0]][:, idx][::K])
-                            plot_sig_pred_axis(ax_sig[3*i+1], that[::K], Shat[methods[0]][:, idx][::K])
+                            uhat_plot = np.random.poisson(Uhat[methods[0]][:, idx])
+                            shat_plot = np.random.poisson(Shat[methods[0]][:, idx])
+                            plot_sig_pred_axis(ax_sig[3*i], that, uhat_plot)
+                            plot_sig_pred_axis(ax_sig[3*i+1], that, shat_plot)
                         plot_vel_axis(ax_sig[3 * i + 2],
                                       t,
-                                      S[:, idx],
+                                      Shat[methods[0]][:, idx],
                                       V[methods[0]][:, idx],
                                       Labels[methods[0]],
                                       Legends[methods[0]],
@@ -1701,7 +1750,7 @@ def plot_sig_grid(Nr,
                             that = That[method]
 
                         title = f"{gene_list[idx]} (VeloVAE)" if method == "FullVB" else f"{gene_list[idx]} ({method})"
-                        plot_sig_axis(ax_sig[3 * i, M * j + k],
+                        plot_sig_axis(ax_sig[3*i, M*j+k],
                                       t,
                                       U[:, idx],
                                       Labels[method],
@@ -1712,7 +1761,7 @@ def plot_sig_grid(Nr,
                                       True,
                                       color_map=color_map,
                                       title=title)
-                        plot_sig_axis(ax_sig[3 * i + 1, M * j + k],
+                        plot_sig_axis(ax_sig[3*i+1, M*j+k],
                                       t,
                                       S[:, idx],
                                       Labels[method],
@@ -1743,11 +1792,13 @@ def plot_sig_grid(Nr,
                                                         Labels_demo[method][::K],
                                                         Legends[method], frac=frac)
                                 elif 'Discrete' in method:
-                                    plot_sig_pred_axis(ax_sig[3*i, M*j+k], that[::K], Uhat[method][:, idx][::K])
-                                    plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that[::K], Shat[method][:, idx][::K])
+                                    uhat_plot = np.random.poisson(Uhat[method][:, idx])
+                                    shat_plot = np.random.poisson(Shat[method][:, idx])
+                                    plot_sig_pred_axis(ax_sig[3*i, M*j+k], that, uhat_plot)
+                                    plot_sig_pred_axis(ax_sig[3*i+1, M*j+k], that, shat_plot)
                                 plot_vel_axis(ax_sig[3*i+2, M*j+k],
                                               t,
-                                              S[:, idx],
+                                              Shat[method][:, idx],
                                               V[method][:, idx],
                                               Labels[method],
                                               Legends[method],
@@ -2095,9 +2146,9 @@ def plot_rate_grid(adata,
                     ax[3*i+k].set_xticks([])
                     ax[3*i+k].set_yticks([])
                     if plot_depth:
-                        ax[3*i+k].set_xlabel("depth", fontsize=20)
+                        ax[3*i+k].set_xlabel("Depth", fontsize=30)
                     else:
-                        ax[3*i+k].set_xlabel("time", fontsize=20)
+                        ax[3*i+k].set_xlabel("Time", fontsize=30)
                     ax[3*i+k].yaxis.set_label_coords(-0.03, 0.5)
                     ax[3*i+k].set_title(gene_list[idx], fontsize=30)
             handles, labels = ax[0].get_legend_handles_labels()
@@ -2133,23 +2184,24 @@ def plot_rate_grid(adata,
                                                 label_dic_rev,
                                                 color_map=color_map)
 
-                    ax[3*i, j].set_ylabel(r"$\alpha$", fontsize=20, rotation=0)
-                    ax[3*i+1, j].set_ylabel(r"$\beta$", fontsize=20, rotation=0)
-                    ax[3*i+2, j].set_ylabel(r"$\gamma$", fontsize=20, rotation=0)
+                    ax[3*i, j].set_ylabel(r"$\alpha$", fontsize=30, rotation=0)
+                    ax[3*i+1, j].set_ylabel(r"$\beta$", fontsize=30, rotation=0)
+                    ax[3*i+2, j].set_ylabel(r"$\gamma$", fontsize=30, rotation=0)
                     for k in range(3):
                         ax[3*i+k, j].set_xticks([])
                         ax[3*i+k, j].set_yticks([])
-                        ax[3*i+k, j].set_xlabel("time", fontsize=20)
+                        ax[3*i+k, j].set_xlabel("Time", fontsize=30)
                         ax[3*i+k, j].yaxis.set_label_coords(-0.03, 0.5)
                         ax[3*i+k, j].set_title(gene_list[idx], fontsize=30)
             handles, labels = ax[0, 0].get_legend_handles_labels()
         plt.tight_layout()
 
         l_indent = 1 - 0.02/Nr
-
+        legend_fontsize = np.min([int(30*Nr), int(10*Nc)])
+        # min(Nr*10, Nr*120/len(graph.keys()))
         lgd = fig.legend(handles,
                          labels,
-                         fontsize=min(Nr*10, Nr*120/len(graph.keys())),
+                         fontsize=legend_fontsize,
                          markerscale=1,
                          bbox_to_anchor=(-0.03/Nc, l_indent),
                          loc='upper right')
@@ -2631,7 +2683,8 @@ def plot_trajectory_3d(X_embed,
     fontsize = kwargs['legend_fontsize'] if 'legend_fontsize' in kwargs else 12
     lgd = ax.legend(fontsize=fontsize, ncol=ncol, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
     fig.tight_layout()
-
+    if 'axis_off' in kwargs:
+        ax.axis('off')
     save_fig(fig, save, (lgd,))
 
     return
