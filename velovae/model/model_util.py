@@ -1364,6 +1364,8 @@ def knnx0_index(t,
             knn_model = NearestNeighbors(n_neighbors=k_neighbor)
             knn_model.fit(z[indices])
             dist, ind = knn_model.kneighbors(z_query[i:i+1])
+            if isinstance(ind, int):
+                ind = np.array([int])
             neighbor_index.append(indices[ind.flatten()].astype(int))
         elif k_ == 1:
              neighbor_index.append(indices)
