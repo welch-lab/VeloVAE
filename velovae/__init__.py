@@ -1,6 +1,7 @@
 from velovae.model import *
 from velovae.analysis import *
-from .plotting import (get_colors,
+from .plotting import (set_dpi,
+                       get_colors,
                        plot_sig,
                        plot_sig_,
                        plot_phase,
@@ -21,5 +22,6 @@ from .plotting import (get_colors,
                        plot_velocity,
                        plot_umap_transition,
                        plot_transition_graph,
-                       plot_rate_grid)
+                       plot_rate_grid,
+                       plot_trajectory_3d)
 from .preprocessing import preprocess
