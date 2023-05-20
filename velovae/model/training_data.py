@@ -4,25 +4,26 @@ from torch.utils.data import Dataset
 
 class SCData(Dataset):
     """This is a simple pytorch dataset class for batch training.
-    Each sample represents a cell. Each dimension represents a single gene.
+    Each sample represents a cell. Each dimension represents an 
+    unspliced or spliced count number of a single gene.
     The dataset also contains the cell labels (types).
     """
     def __init__(self, D, labels, u0=None, s0=None, t0=None, weight=None):
-        """Class constructor
+        """Constructor
 
-        Arguments
-        ---------
-
-        D : `numpy array`
-            Cell by gene data matrix, (N,G)
-        labels : `numpy array`
-            Cell type information, (N,1)
-        u0, s0 : `numpy array`, optional
-            Cell-specific initial condition, (N,G)
-        t0 : `numpy array`, optional
-            Cell-specific initial time, (N,1)
-        weight : `numpy array`, optional
-            Training weight of each sample.
+        Args:
+            D (:class:`numpy array`):
+                Cell-by-gene data matrix, (N, G)
+            labels (:class:`numpy array`):
+                Cell type annotation, (N, 1)
+            u0 (:class:`numpy array`, optional):
+                Cell-by-gene unspliced initial condition, (N, G). Defaults to None.
+            s0 (:class:`numpy array`, optional):
+                Cell-by-gene spliced initial condition, (N, G). Defaults to None.
+            t0 (:class:`numpy array`, optional): 
+                Time at the initial condition for each cell. Defaults to None.
+            weight (:class:`numpy array`, optional):
+                Sample weight. Defaults to None.
         """
         self.N, self.G = D.shape[0], D.shape[1]//2
         self.data = D
@@ -57,23 +58,23 @@ class SCTimedData(Dataset):
     of cell time. This is used for training the branching ODE.
     """
     def __init__(self, D, labels, t, u0=None, s0=None, t0=None, weight=None):
-        """Class constructor
+        """Constructor
 
-        Arguments
-        ---------
-
-        D : `numpy array`
-            Cell by gene data matrix, (N,G)
-        labels : `numpy array`
-            Cell type information, (N,1)
-        t : `numpy array`
-            Cell time, (N,1)
-        u0, s0 : `numpy array`, optional
-            Cell-specific initial condition, (N,G)
-        t0 : `numpy array`, optional
-            Cell-specific initial time, (N,1)
-        weight : `numpy array`, optional
-            Training weight of each sample.
+        Args:
+            D (:class:`numpy array`):
+                Cell-by-gene data matrix, (N, G)
+            labels (:class:`numpy array`):
+                Cell type annotation, (N, 1)
+            t (:class:`numpy array`):
+                Cell time, (N, 1)
+            u0 (:class:`numpy array`, optional):
+                Cell-by-gene unspliced initial condition, (N, G). Defaults to None.
+            s0 (:class:`numpy array`, optional):
+                Cell-by-gene spliced initial condition, (N, G). Defaults to None.
+            t0 (:class:`numpy array`, optional): 
+                Time at the initial condition for each cell. Defaults to None.
+            weight (:class:`numpy array`, optional):
+                Sample weight. Defaults to None.
         """
         self.N, self.G = D.shape[0], D.shape[1]//2
         self.data = D

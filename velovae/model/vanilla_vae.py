@@ -1,3 +1,6 @@
+"""Vanilla VAE Module
+This module implements the basic variational mixture of ODEs model with constant rate parameters.
+"""
 import numpy as np
 import torch
 import torch.nn as nn
@@ -21,10 +24,10 @@ from .velocity import rna_velocity_vanillavae
 # KL Divergence
 ############################################################
 def kl_uniform(mu_t, std_t, t_start, t_end, **kwargs):
-    # KL Divergence for the 1D near-uniform model
-    # KL(q||p) where
-    # q = uniform(t0, t0+dt)
-    # p = uniform(t_start, t_end) with exponential decays on both sides
+    """KL Divergence for the 1D near-uniform model
+        KL(q||p) where
+        q = uniform(t0, t0+dt)
+        p = uniform(t_start, t_end) with exponential decays on both sides"""
 
     tail = kwargs["tail"] if "tail" in kwargs else 0.05
     t0 = mu_t - np.sqrt(3)*std_t
@@ -43,7 +46,7 @@ def kl_uniform(mu_t, std_t, t_start, t_end, **kwargs):
 
 
 def kl_gaussian(mu1, std1, mu2, std2, **kwargs):
-    # Compute the KL divergence between two Gaussian distributions with diagonal covariance
+    """Compute the KL divergence between two Gaussian distributions with diagonal covariance"""
     term_1 = torch.log(std2) - torch.log(std1)
     term_2 = std1.pow(2)/(2*std2.pow(2))
     term_3 = (mu1-mu2).pow(2)/(2*std2.pow(2))
@@ -102,6 +105,8 @@ class encoder(nn.Module):
 
 
 class decoder(nn.Module):
+    """Decoder of the vanilla VAE
+    """
     def __init__(self,
                  adata,
                  tmax,
@@ -229,23 +234,28 @@ class VanillaVAE():
                  init_key=None,
                  tprior=None,
                  checkpoints=None):
-        """VeloVAE with latent time only
+        """VeloVAE with constant rates
 
-        Arguments
-        ---------
-        adata : :class:`anndata.AnnData`
-        tmax : float
-            Time Range
-        device : {'cpu','gpu'}, optional
-        hidden_size : tuple, optional
-            Width of the first and second hidden layer
-        init_key : str, optional
-            column in the AnnData object containing the capture time
-        tprior : str, optional
-            key in adata.obs that stores the capture time.
-            Used for informative time prior
-        checkpoints : string list
-            Contains the path to saved encoder and decoder models. Should be a .pt file.
+        Args:
+            adata (:class:`anndata.AnnData`):
+                Input AnnData object.
+            tmax (float):
+                Time Range.
+            device (str, optional):
+                {'cpu','gpu'}. Defaults to 'cpu'.
+            hidden_size (tuple, optional):
+                Width of the first and second hidden layers of the encoder. Defaults to (500, 250).
+            filter_gene (bool, optional):
+                Whether to filter out non-velocity genes based on scVelo-style initialization. Defaults to False.
+            init_method (str, optional):
+                {'steady', 'tprior'}, initialization method. Defaults to "steady".
+            init_key (_type_, optional):
+                column in the AnnData object containing the capture time. Defaults to None.
+            tprior (_type_, optional):
+                key in adata.obs that stores the capture time.
+                Used for informative time prior. Defaults to None.
+            checkpoints (_type_, optional):
+                Contains the path to saved encoder and decoder models (.pt files). Defaults to None.
         """
         t_start = time.time()
         self.timer = 0
@@ -282,8 +292,8 @@ class VanillaVAE():
             "sparsify": 1
         }
 
-        self.set_device(device)
-        self.split_train_test(adata.n_obs)
+        self._set_device(device)
+        self._split_train_test(adata.n_obs)
 
         # Create a decoder
         self.decoder = decoder(adata,
@@ -301,7 +311,7 @@ class VanillaVAE():
             print('Please provide two dimensions!')
         self.tmax = torch.tensor(tmax, device=self.device)
         # Time prior
-        self.get_prior(adata, tmax, tprior)
+        self._get_prior(adata, tmax, tprior)
         # class attributes for training
         self.loss_train, self.loss_test = [], []
         self.counter = 0  # Count the number of iterations
@@ -309,19 +319,18 @@ class VanillaVAE():
         self.train_stage = 1
         self.timer = time.time() - t_start
 
-    def get_prior(self, adata, tmax, tprior=None):
+    def _get_prior(self, adata, tmax, tprior=None):
         """Compute the parameters of time prior distribution
 
-        Arguments
-        ---------
-        adata : :class:`anndata.AnnData`
-        tmax : float
-            Maximum time
-        tprior : str, optional
-            Key in adata.obs storing the capture time
+        Args:
+            adata (:class:`anndata.AnnData`):
+                Input AnnData object
+            tmax (float):
+                Time range.
+            tprior (str, optional):
+                Key in adata.obs storing the capture time. Defaults to None.
         """
         self.kl_time = kl_gaussian
-        self.sample = self.reparameterize
         if tprior is None:
             self.p_t = torch.stack([torch.ones(adata.n_obs, 1, device=self.device)*tmax*0.5,
                                     torch.ones(adata.n_obs, 1, device=self.device)*tmax
@@ -340,9 +349,7 @@ class VanillaVAE():
             self.p_t = torch.stack([torch.tensor(t, device=self.device).view(-1, 1),
                                     torch.tensor(std_t, device=self.device).view(-1, 1)]).float()
 
-    def set_device(self, device):
-        """Set the device of the model.
-        """
+    def _set_device(self, device):
         if 'cuda' in device:
             if torch.cuda.is_available():
                 self.device = torch.device(device)
@@ -352,28 +359,53 @@ class VanillaVAE():
         else:
             self.device = torch.device('cpu')
 
-    def reparameterize(self, mu, std):
-        # Apply the reparameterization trick for Gaussian random variables.
+    def _reparameterize(self, mu, std):
+        """Apply the reparameterization trick for Gaussian random variables."""
         eps = torch.normal(mean=torch.zeros(mu.shape, device=self.device),
                            std=torch.ones(mu.shape, device=self.device))
         return std*eps+mu
 
-    def reparameterize_uniform(self, mu, std):
-        # Apply the reparameterization trick for uniform random variables.
+    def _reparameterize_uniform(self, mu, std):
+        """Apply the reparameterization trick for uniform random variables."""
 
         eps = torch.rand(mu.shape, device=self.device)
         return np.sqrt(12)*std*eps + (mu - np.sqrt(3)*std)
 
     def forward(self, data_in):
+        """Forward funciton
+
+        Args:
+            data_in (:class:torch.Tensor):
+                Cell-by-gene tensor.
+                Unspliced and spliced counts are concatenated at the gene dimension (dim=1).
+
+        Returns:
+            tuple:
+                mu_t, std_t: time posterior mean and standard deviation
+                t_global: sampled time values
+                uhat, shat: predicted unspliced and spliced counts
+        """
         data_in_scale = torch.cat((data_in[:, :data_in.shape[1]//2]/torch.exp(self.decoder.scaling),
                                    data_in[:, data_in.shape[1]//2:]), 1)
         mu_t, std_t = self.encoder.forward(data_in_scale)
-        t_global = self.reparameterize(mu_t, std_t)
+        t_global = self._reparameterize(mu_t, std_t)
         # uhat is scaled
         uhat, shat = self.decoder.forward(t_global, neg_slope=self.config["neg_slope"])
         return mu_t, std_t, t_global, uhat, shat
 
     def eval_model(self, data_in):
+        """Evaluate the model in validation/test
+
+        Args:
+            data_in (:class:torch.Tensor):
+                Cell-by-gene tensor.
+                Unspliced and spliced counts are concatenated at the gene dimension (dim=1).
+
+        Returns:
+            tuple:
+                mu_t, std_t: time posterior mean and standard deviation
+                uhat, shat: predicted unspliced and spliced counts
+        """
         data_in_scale = torch.cat((data_in[:, :data_in.shape[1]//2]/torch.exp(self.decoder.scaling),
                                    data_in[:, data_in.shape[1]//2:]), 1)
         mu_t, std_t = self.encoder.forward(data_in_scale)
@@ -382,7 +414,7 @@ class VanillaVAE():
         return mu_t, std_t, uhat, shat
 
     def set_mode(self, mode):
-        # Set the model to either training or evaluation mode.
+        """Set the model to either training or evaluation mode."""
         if mode == 'train':
             self.encoder.train()
             self.decoder.train()
@@ -397,11 +429,11 @@ class VanillaVAE():
     # Training Objective
     ############################################################
 
-    def vae_risk(self, q_tx, p_t, u, s, uhat, shat, sigma_u, sigma_s, weight=None, b=1.0):
+    def _vae_risk(self, q_tx, p_t, u, s, uhat, shat, sigma_u, sigma_s, weight=None, b=1.0):
         # This is the negative ELBO.
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
         # u and sigma_u has the original scale
-        logp = -0.5*((u-uhat)/sigma_u).pow(2)-0.5*((s-shat)/sigma_s).pow(2) \
+        logp = -0.5*((u-uhat)/sigma_u).pow(2) - 0.5*((s-shat)/sigma_s).pow(2) \
                - torch.log(sigma_u) - torch.log(sigma_s*2*np.pi)
         if weight is not None:
             logp = logp*weight
@@ -409,38 +441,33 @@ class VanillaVAE():
 
         return (- err_rec + b*(kldt))
 
-    def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
-        ##########################################################################
-        # Training in each epoch.
-        # Early stopping if enforced by default.
-        # < Input Arguments >
-        # 1.  train_loader [torch.utils.data.DataLoader]
-        #     Data loader of the input data.
-        # 2.  test_set [torch.utils.data.Dataset]
-        #     Validation dataset
-        # 3.  optimizer  [optimizer from torch.optim]
-        # 4.  optimizer2 [optimizer from torch.optim]
-        #     (Optional) A second optimizer.
-        #     This is used when we optimize NN and ODE simultaneously in one epoch.
-        #     By default, VeloVAE performs alternating optimization in each epoch.
-        #     The argument will be set to proper value automatically.
-        # 5.  K [int]
-        #     Alternating update period.
-        #     For every K updates of optimizer, there's one update for optimizer2.
-        #     If set to 0, optimizer2 will be ignored and only optimizer will be
-        #     updated. Users can set it to 0 if they want to update sorely NN in one
-        #     epoch and ODE in the next epoch.
-        # < Output >
-        # 1.  stop_training [bool]
-        #     Whether to stop training based on the early stopping criterium.
-        ##########################################################################
+    def _train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
+        """Training in each epoch with early stopping.
+
+        Args:
+            train_loader (:class:torch.utils.data.DataLoader):
+                Data loader of the input data.
+            test_set (:class:torch.utils.data.Dataset):
+                Validation dataset
+            optimizer (optimizer from :class:torch.optim):
+                Optimizer for neural network parameters.
+            optimizer2 (optimizer from :class:torch.optim, optional): Defaults to None.
+                Optimizer for ODE parameters.
+            K (int, optional): For every K updates of optimizer, there's one update for optimizer2.
+                If set to 0, `optimizer2` will be ignored and only `optimizer` will be
+                updated. Users can set it to 0 if they want to update sorely NN in one
+                epoch and ODE in the next epoch. Defaults to 1.
+
+        Returns:
+            stop_training (bool): Whether to stop training based on the early stopping criterium.
+        """
         B = len(train_loader)
         self.set_mode('train')
         stop_training = False
 
         for i, batch in enumerate(train_loader):
             if self.counter == 1 or self.counter % self.config["test_iter"] == 0:
-                elbo_test = self.test(test_set, None, self.counter)
+                elbo_test = self._test(test_set, None, self.counter)
                 if len(self.loss_test) > 0:
                     if elbo_test - self.loss_test[-1] <= self.config["early_stop_thred"]:
                         self.n_drop = self.n_drop+1
@@ -460,13 +487,13 @@ class VanillaVAE():
             s = xbatch[:, xbatch.shape[1]//2:]
             mu_tx, std_tx, t_global, uhat, shat = self.forward(xbatch)
 
-            loss = self.vae_risk((mu_tx, std_tx),
-                                 self.p_t[:, self.train_idx[idx], :],
-                                 u, s,
-                                 uhat, shat,
-                                 torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
-                                 None,
-                                 self.config["kl_t"])
+            loss = self._vae_risk((mu_tx, std_tx),
+                                  self.p_t[:, self.train_idx[idx], :],
+                                  u, s,
+                                  uhat, shat,
+                                  torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
+                                  None,
+                                  self.config["kl_t"])
 
             loss.backward()
             if K == 0:
@@ -484,9 +511,11 @@ class VanillaVAE():
         return stop_training
 
     def load_config(self, config):
-        # Update hyper-parameters
-        # We don't have to specify all the hyperparameters. Just pass the ones we want to modify.
+        """Update hyper-parameters.
 
+        Args:
+            config (dict): Contains all hyper-parameters users want to modify.
+        """
         for key in config:
             if key in self.config:
                 self.config[key] = config[key]
@@ -494,7 +523,7 @@ class VanillaVAE():
                 self.config[key] = config[key]
                 print(f"Warning: unknown hyperparameter: {key}")
 
-    def split_train_test(self, N):
+    def _split_train_test(self, N):
         # Randomly select indices as training samples.
 
         rand_perm = np.random.permutation(N)
@@ -511,24 +540,25 @@ class VanillaVAE():
               cluster_key="clusters",
               figure_path="figures",
               embed="umap"):
-        """The high-level API for training.
+        """The high-level API for training
 
-        Arguments
-        ---------
-        adata : :class:`anndata.AnnData`
-            AnnData Object
-        config : dictionary, optional
-            Contains all hyper-parameters.
-        plot : bool, optional
-            Whether to plot some sample genes during training. Used for debugging.
-        gene_plot : string list, optional
-            List of gene names to plot. Used only if plot==True
-        cluster_key : str, optional
-            Key in adata.obs storing the cell type annotation
-        figure_path : str, optional
-            Path to the folder for saving plots
-        embed : str, optional
-            Low dimensional embedding in adata.obsm. The actual key storing the embedding should be f'X_{embed}'
+        Args:
+            adata (:class:`anndata.AnnData`):
+                Input AnnData object
+            config (dict, optional):
+                Contains the hyper-parameters users want to modify.
+                Users can change the default using this argument. Defaults to {}.
+            plot (bool, optional):
+                Whether to plot intermediate results. Used for debugging. Defaults to False.
+            gene_plot (list, optional):
+                Genes to plot. Effective only when plot is True. Defaults to [].
+            cluster_key (str, optional):
+                Key in adata.obs storing the cell type annotation.. Defaults to "clusters".
+            figure_path (str, optional):
+                Path to the folder for saving plots. Defaults to "figures".
+            embed (str, optional):
+                Low dimensional embedding in adata.obsm. Used for plotting.
+                The actual key storing the embedding should be f'X_{embed}'. Defaults to "umap".
         """
         self.load_config(config)
 
@@ -580,34 +610,34 @@ class VanillaVAE():
         for epoch in range(n_epochs):
             # Train the encoder
             if self.config["k_alt"] is None:
-                stop_training = self.train_epoch(data_loader, test_set, optimizer)
+                stop_training = self._train_epoch(data_loader, test_set, optimizer)
                 if epoch >= n_warmup:
-                    stop_training_ode = self.train_epoch(data_loader, test_set, optimizer_ode)
+                    stop_training_ode = self._train_epoch(data_loader, test_set, optimizer_ode)
                     if stop_training_ode:
                         print(f"********* Early Stop Triggered at epoch {epoch+1}. *********")
                         break
             else:
                 if epoch >= n_warmup:
-                    stop_training = self.train_epoch(data_loader,
-                                                     test_set,
-                                                     optimizer_ode,
-                                                     optimizer,
-                                                     self.config["k_alt"])
+                    stop_training = self._train_epoch(data_loader,
+                                                      test_set,
+                                                      optimizer_ode,
+                                                      optimizer,
+                                                      self.config["k_alt"])
                 else:
-                    stop_training = self.train_epoch(data_loader,
-                                                     test_set,
-                                                     optimizer,
-                                                     None,
-                                                     self.config["k_alt"])
+                    stop_training = self._train_epoch(data_loader,
+                                                      test_set,
+                                                      optimizer,
+                                                      None,
+                                                      self.config["k_alt"])
             if plot and (epoch == 0 or (epoch+1) % n_save == 0):
-                elbo_train = self.test(train_set,
-                                       Xembed[self.train_idx],
-                                       f"train{epoch+1}",
-                                       False,
-                                       gind,
-                                       gene_plot,
-                                       plot,
-                                       figure_path)
+                elbo_train = self._test(train_set,
+                                        Xembed[self.train_idx],
+                                        f"train{epoch+1}",
+                                        False,
+                                        gind,
+                                        gene_plot,
+                                        plot,
+                                        figure_path)
                 self.set_mode('train')
                 elbo_test = self.loss_test[-1] if len(self.loss_test) > 0 else -np.inf
                 print(f"Epoch {epoch+1}: Train ELBO = {elbo_train:.3f}, \
@@ -617,22 +647,22 @@ class VanillaVAE():
                 print(f"********* Early Stop Triggered at epoch {epoch+1}. *********")
                 break
 
-        elbo_train = self.test(train_set,
-                               Xembed[self.train_idx],
-                               "final-train",
-                               False,
+        elbo_train = self._test(train_set,
+                                Xembed[self.train_idx],
+                                "final-train",
+                                False,
+                                gind,
+                                gene_plot,
+                                plot,
+                                figure_path)
+        elbo_test = self._test(test_set,
+                               Xembed[self.test_idx],
+                               "final-test",
+                               True,
                                gind,
                                gene_plot,
                                plot,
                                figure_path)
-        elbo_test = self.test(test_set,
-                              Xembed[self.test_idx],
-                              "final-test",
-                              True,
-                              gind,
-                              gene_plot,
-                              plot,
-                              figure_path)
         self.loss_train.append(elbo_train)
         self.loss_test.append(elbo_test)
         if plot:
@@ -649,6 +679,33 @@ class VanillaVAE():
         return
 
     def pred_all(self, data, mode='test', output=["uhat", "shat", "t"], gene_idx=None):
+        """Generate different types of predictions from the model for all cells.
+
+        Args:
+            data (:class:torch.Tensor):
+                Input cell-by-gene tensor, with U and S concatenated at the gene dimension (dim=1).
+            cell_labels (:class:torch.Tensor):
+                Cell type annotations encoded in integers.
+                This is effective only for conditional VAEs with cell type as the condition.
+            mode (str, optional):
+                {'train','test','all}. Whether to predict on the training, validation or entire dataset.
+                Defaults to 'test'.
+            output (list, optional):
+                Types of output to generate.
+                Elements choosen from {'uhat', 'shat, 't', 'z', 'uhat_fw', 'shat_fw', 'v'}.
+                'uhat' and 'shat' are predicted unspliced and spliced counts for each cell.
+                't' is the cell time.
+                'z' is the cell state.
+                'uhat_fw' and 'shat_fw' are predictions for the future state given the current cell state.
+                'v' is the velocity for both unspliced and spliced counts.
+                Defaults to ['uhat', 'shat', 't', 'z'].
+            gene_idx (array like, optional):
+                Indices of genes for subsetting.
+                If given, the outputs only preserve the selected genes. Defaults to None.
+
+        Returns:
+            _type_: _description_
+        """
         N, G = data.shape[0], data.shape[1]//2
         if "uhat" in output:
             Uhat = None if gene_idx is None else np.zeros((N, len(gene_idx)))
@@ -670,13 +727,13 @@ class VanillaVAE():
                     p_t = self.p_t[:, self.train_idx[i*B:(i+1)*B], :]
                 else:
                     p_t = self.p_t[:, i*B:(i+1)*B, :]
-                loss = self.vae_risk((mu_tx, std_tx),
-                                     p_t,
-                                     data_in[:, :G], data_in[:, G:],
-                                     uhat, shat,
-                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
-                                     None,
-                                     1.0)
+                loss = self._vae_risk((mu_tx, std_tx),
+                                      p_t,
+                                      data_in[:, :G], data_in[:, G:],
+                                      uhat, shat,
+                                      torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
+                                      None,
+                                      1.0)
                 elbo = elbo-loss*B
                 if "uhat" in output and gene_idx is not None:
                     Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].detach().cpu().numpy()
@@ -694,15 +751,15 @@ class VanillaVAE():
                     p_t = self.p_t[:, self.train_idx[B*Nb:], :]
                 else:
                     p_t = self.p_t[:, B*Nb:, :]
-                loss = self.vae_risk((mu_tx, std_tx),
-                                     p_t,
-                                     data_in[:, :G],
-                                     data_in[:, G:],
-                                     uhat, shat,
-                                     torch.exp(self.decoder.sigma_u),
-                                     torch.exp(self.decoder.sigma_s),
-                                     None,
-                                     1.0)
+                loss = self._vae_risk((mu_tx, std_tx),
+                                      p_t,
+                                      data_in[:, :G],
+                                      data_in[:, G:],
+                                      uhat, shat,
+                                      torch.exp(self.decoder.sigma_u),
+                                      torch.exp(self.decoder.sigma_s),
+                                      None,
+                                      1.0)
                 elbo = elbo-loss*(N-B*Nb)
                 if "uhat" in output and gene_idx is not None:
                     Uhat[Nb*B:] = uhat[:, gene_idx].detach().cpu().numpy()
@@ -721,41 +778,43 @@ class VanillaVAE():
             out.append(std_t_out)
         return out, elbo.detach().cpu().item()/N
 
-    def test(self,
-             test_set,
-             Xembed,
-             testid=0,
-             test_mode=True,
-             gind=None,
-             gene_plot=None,
-             plot=False,
-             path='figures',
-             **kwargs):
+    def _test(self,
+              dataset,
+              Xembed,
+              testid=0,
+              test_mode=True,
+              gind=None,
+              gene_plot=None,
+              plot=False,
+              path='figures',
+              **kwargs):
         """Evaluate the model upon training/test dataset.
 
-        Arguments
-        ---------
-        test_set : `torch.utils.data.Dataset`
-            Training or validation dataset
-        Xembed : `numpy array`
-            Low-dimensional embedding for plotting
-        testid : string or int, optional
-            Used to name the figures
-        gind : `numpy array`
-            Index of genes in adata.var_names. Used for plotting.
-        gene_plot : `numpy array`, optional
-            Gene names.
-        plot : bool, optional
-            Whether to generate plots.
-        path : str, optional
-            Saving path.
+        Args:
+            dataset (:class:`torch.utils.data.Dataset`):
+                Training or validation dataset
+            Xembed (:class:`numpy array`):
+                Low-dimensional embedding for plotting
+            testid (int, optional):
+                Used to name the figures.. Defaults to 0.
+            test_mode (bool, optional):
+                Whether dataset is training or validation dataset.
+                This is used when retreiving certain class variable,
+                e.g. cell-specific initial condition.. Defaults to True.
+            gind (array like, optional):
+                Index of genes in adata.var_names. Used for plotting. Defaults to None.
+            gene_plot (:class:`numpy array`, optional):
+                Gene names for plotting. Defaults to None.
+            plot (bool, optional):
+                Whether to generate plots.. Defaults to False.
+            path (str, optional):
+                Path for saving figures. Defaults to './figures'.
 
-        Returns
-        -------
-        elbo : float
+        Returns:
+            elbo: VAE training/validation loss
         """
         self.set_mode('eval')
-        data = test_set.data
+        data = dataset.data
         mode = "test" if test_mode else "train"
         out, elbo = self.pred_all(data, mode, gene_idx=gind)
         Uhat, Shat, t = out[0], out[1], out[2]
@@ -780,7 +839,7 @@ class VanillaVAE():
                 plot_sig(t.squeeze(),
                          data[:, idx], data[:, idx+G],
                          Uhat[:, i], Shat[:, i],
-                         test_set.labels,
+                         dataset.labels,
                          gene_plot[i],
                          save=f"{path}/sig-{gene_plot[i]}-{testid}-vanilla.png",
                          sparsify=self.config["sparsify"])
@@ -789,31 +848,33 @@ class VanillaVAE():
     def save_model(self, file_path, enc_name='encoder_vanilla', dec_name='decoder_vanilla'):
         """Save the encoder parameters to a .pt file.
 
-        Arguments
-        ---------
-        file_path : str
-            Path to the folder for saving model parameters
-        enc_name : str, optional
-            Name of the .pt file containing encoder parameters
-        dec_name : str, optional
-            Name of the .pt file containing decoder parameters
+        Args:
+            file_path (str):
+                Path to the folder for saving model parameters
+            enc_name (str, optional):
+                Name of the .pt file containing encoder parameters
+            dec_name (str, optional): 
+                Name of the .pt file containing decoder parameters
         """
         os.makedirs(file_path, exist_ok=True)
         torch.save(self.encoder.state_dict(), f"{file_path}/{enc_name}.pt")
         torch.save(self.decoder.state_dict(), f"{file_path}/{dec_name}.pt")
 
     def save_anndata(self, adata, key, file_path, file_name=None):
-        """Save the ODE parameters and cell time to the anndata object and write it to disk.
+        """Updates an input AnnData object with inferred latent variable
+            and estimations from the model and write it to disk.
 
-        Arguments
-        ---------
-        adata : :class:`anndata.AnnData`
-        key : str
-            Used to store all parameters of the model.
-        file_path : str
-            Saving path.
-        file_name : str, optional
-            If set to a string ending with .h5ad, the updated anndata object will be written to disk.
+        Args:
+            adata (:class:`anndata.AnnData`):
+                Input AnnData object
+            key (str):
+                Signature used to store all parameters of the model.
+                Users can save outputs from different models to the same AnnData object using different keys.
+            file_path (str):
+                Path to the folder for saving.
+            file_name (str, optional):
+                If set to a string ending with .h5ad, the updated anndata object will be written to disk.
+                Defaults to None.
         """
         os.makedirs(file_path, exist_ok=True)
 
@@ -1074,8 +1135,8 @@ class CycleVAE(VanillaVAE):
             "sparsify": 1
         }
 
-        self.set_device(device)
-        self.split_train_test(adata.n_obs)
+        self._set_device(device)
+        self._split_train_test(adata.n_obs)
 
         # Create a decoder
         self.decoder = CycleDecoder(adata,
@@ -1117,7 +1178,7 @@ class CycleVAE(VanillaVAE):
         data_in_scale = torch.cat((data_in[:, :data_in.shape[1]//2]/torch.exp(self.decoder.scaling),
                                    data_in[:, data_in.shape[1]//2:]), 1)
         mu_theta, std_theta = self.encoder.forward(data_in_scale)
-        theta = self.reparameterize(mu_theta, std_theta)
+        theta = self._reparameterize(mu_theta, std_theta)
 
         uhat, shat = self.decoder.forward(theta, neg_slope=self.config["neg_slope"])  # uhat is scaled
         return mu_theta, std_theta, uhat, shat
@@ -1129,7 +1190,7 @@ class CycleVAE(VanillaVAE):
         uhat, shat, t = self.decoder.pred_su(mu_theta)  # uhat is scaled
         return mu_theta, std_theta, uhat, shat, t
 
-    def train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
+    def _train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
         B = len(train_loader)
         self.set_mode('train')
         stop_training = False
@@ -1157,13 +1218,13 @@ class CycleVAE(VanillaVAE):
             s = xbatch[:, xbatch.shape[1]//2:]
             mu_thetax, std_thetax, uhat, shat = self.forward(xbatch)
 
-            loss = self.vae_risk((mu_thetax, std_thetax),
-                                 self.p_theta[:, self.train_idx[idx], :],
-                                 u, s,
-                                 uhat, shat,
-                                 torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
-                                 None,
-                                 self.config["kl_theta"])
+            loss = self._vae_risk((mu_thetax, std_thetax),
+                                  self.p_theta[:, self.train_idx[idx], :],
+                                  u, s,
+                                  uhat, shat,
+                                  torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
+                                  None,
+                                  self.config["kl_theta"])
 
             loss.backward()
             if K == 0:
@@ -1203,13 +1264,13 @@ class CycleVAE(VanillaVAE):
                     p_theta = self.p_theta[:, self.train_idx[i*B:(i+1)*B], :]
                 else:
                     p_theta = self.p_theta[:, i*B:(i+1)*B, :]
-                loss = self.vae_risk((mu_thetax, std_thetax),
-                                     p_theta,
-                                     data_in[:, :G], data_in[:, G:],
-                                     uhat, shat,
-                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
-                                     None,
-                                     1.0)
+                loss = self._vae_risk((mu_thetax, std_thetax),
+                                      p_theta,
+                                      data_in[:, :G], data_in[:, G:],
+                                      uhat, shat,
+                                      torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
+                                      None,
+                                      1.0)
                 elbo = elbo-loss*B
                 if "uhat" in output and gene_idx is not None:
                     Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].detach().cpu().numpy()
@@ -1228,13 +1289,13 @@ class CycleVAE(VanillaVAE):
                     p_theta = self.p_theta[:, self.train_idx[B*Nb:], :]
                 else:
                     p_theta = self.p_theta[:, B*Nb:, :]
-                loss = self.vae_risk((mu_thetax, std_thetax),
-                                     p_theta,
-                                     data_in[:, :G], data_in[:, G:],
-                                     uhat, shat,
-                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
-                                     None,
-                                     1.0)
+                loss = self._vae_risk((mu_thetax, std_thetax),
+                                      p_theta,
+                                      data_in[:, :G], data_in[:, G:],
+                                      uhat, shat,
+                                      torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s),
+                                      None,
+                                      1.0)
                 elbo = elbo-loss*(N-B*Nb)
                 if "uhat" in output and gene_idx is not None:
                     Uhat[Nb*B:] = uhat[:, gene_idx].detach().cpu().numpy()

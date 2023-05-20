@@ -1,3 +1,6 @@
+"""Branching ODE Module
+This module implements the basic variational mixture of ODEs model with constant rate parameters.
+"""
 import numpy as np
 import torch
 import torch.nn as nn
@@ -124,8 +127,6 @@ class decoder(nn.Module):
         self.t_trans.requires_grad = False
 
     def forward(self, t, y, neg_slope=0.0):
-        #sample descendants for each cell
-
         return ode_br(t,
                       y,
                       self.par,
@@ -171,6 +172,8 @@ class decoder(nn.Module):
 
 
 class BrODE():
+    """High-level ODE model for RNA velocity with branching structure.
+    """
     def __init__(self,
                  adata,
                  cluster_key,
@@ -181,37 +184,37 @@ class BrODE():
                  device='cpu',
                  checkpoint=None,
                  graph_param={}):
-        """High-level ODE model for RNA velocity with branching structure.
+        """Constructor
 
-        Arguments
-        ---------
-
-        adata : :class:`anndata.AnnData`
-        cluster_key : str
-            Key in adata.obs storing the cell type annotation.
-        tkey : str
-            Key in adata.obs storing the latent cell time
-        embed_key : str
-            Key in adata.obsm storing the latent cell state
-        param_key : str, optional
-            Used to extract sigma_u, sigma_s and scaling from adata.var
-        device : `torch.device`, optional
-            Either cpu or gpu
-        checkpoint : string, optional
-            Path to a file containing a pretrained model. \
-            If given, initialization will be skipped and arguments relating to initialization will be ignored.
-        graph_param : dictionary, optional
-            Hyper-parameters for the transition graph computation.
-            Keys should contain:
-            (1) partition_k: num_neighbors in graph partition (a KNN graph is computed by scanpy)
-            (2) partition_res: resolution of Louvain clustering in graph partition
-            (3) n_par: number of parents to keep in graph pruning
-            (4) dt: tuple (r1,r2), proportion of time range to consider as the parent time window
-                Let t_range be the time range. Then for any cell with time t, only cells in the
-                time window (t-r2*t_range, t-r1*t_range)
-            (5) k: KNN in parent counting.
-                This is different from partition_k. When we pick the time window, KNN
-                is computed to choose the most likely parents from the cells in the window.
+        Args:
+            adata (:class:`anndata.AnnData`):
+            cluster_key (str):
+                Key in adata.obs storing the cell type annotation.
+            tkey (str):
+                Key in adata.obs storing the latent cell time
+            embed_key (str):
+                Key in adata.obsm storing the latent cell state
+            param_key (str, optional):
+                Used to extract sigma_u, sigma_s and scaling from adata.var. Default to None.
+            device (:class:`torch.device`, optional):
+                {'cpu' or 'gpu'}.  Default to 'cpu'.
+            checkpoint (str, optional):
+                Path to a file containing a pretrained model.
+                If given, initialization will be skipped and arguments relating to initialization will be ignored.
+                Default to None.
+            graph_param (dict, optional):
+                Hyper-parameters for the transition graph computation.
+                Keys should contain:
+                (1) partition_k: num_neighbors in graph partition (a KNN graph is computed by scanpy)
+                (2) partition_res: resolution of Louvain clustering in graph partition
+                (3) n_par: number of parents to keep in graph pruning
+                (4) dt: tuple (r1,r2), proportion of time range to consider as the parent time window
+                    Let t_range be the time range. Then for any cell with time t, only cells in the
+                    time window (t-r2*t_range, t-r1*t_range)
+                (5) k: KNN in parent counting.
+                    This is different from partition_k. When we pick the time window, KNN
+                    is computed to choose the most likely parents from the cells in the window.
+                Default to {}.
         """
         t_start = time.time()
         self.timer = 0
@@ -239,8 +242,8 @@ class BrODE():
             "sparsify": 1
         }
 
-        self.set_device(device)
-        self.split_train_test(adata.n_obs)
+        self._set_device(device)
+        self._split_train_test(adata.n_obs)
 
         self.decoder = decoder(adata,
                                cluster_key,
@@ -260,7 +263,7 @@ class BrODE():
 
         self.timer = time.time() - t_start
 
-    def set_device(self, device):
+    def _set_device(self, device):
         if 'cuda' in device:
             if torch.cuda.is_available():
                 self.device = torch.device(device)
@@ -270,7 +273,7 @@ class BrODE():
         else:
             self.device = torch.device('cpu')
 
-    def split_train_test(self, N):
+    def _split_train_test(self, N):
         rand_perm = np.random.permutation(N)
         n_train = int(N*self.config["train_test_split"])
         self.train_idx = rand_perm[:n_train]
@@ -281,18 +284,14 @@ class BrODE():
     def forward(self, t, y):
         """Evaluate the model in training.
 
-        Arguments
-        ---------
+        Args:
+            t (:class:`torch.tensor`):
+                Cell time, (N,1)
+            y (:class:`torch.tensor`):
+                Cell type encoded in integers, (N,1)
 
-        t : `torch.tensor`
-            Cell time, (N,1)
-        y : `torch.tensor`
-            Cell type encoded in integers, (N,1)
-
-        Returns
-        -------
-        uhat, shat : `torch.tensor`
-            Predicted u and s values, (N,G)
+        Returns:
+            uhat, shat (:class:`torch.tensor`): Predicted u and s values, (N,G)
         """
         uhat, shat = self.decoder.forward(t, y, neg_slope=self.config['neg_slope'])
 
@@ -301,20 +300,16 @@ class BrODE():
     def eval_model(self, t, y, gidx=None):
         """Evaluate the model in validation/test.
 
-        Arguments
-        ---------
+        Args:
+            t (:class:`torch.tensor`):
+                Cell time, (N,1)
+            y (:class:`torch.tensor`):
+                Cell type encoded in integers, (N,1)
+            gidx (:class:`numpy array`, optional): 
+                A subset of genes to compute
 
-        t : `torch.tensor`
-            Cell time, (N,1)
-        y : `torch.tensor`
-            Cell type encoded in integers, (N,1)
-        gidx : `numpy array`, optional
-            A subset of genes to compute
-
-        Returns
-        -------
-        uhat, shat : `torch.tensor`
-            Predicted u and s values, (N,G)
+        Returns:
+            uhat, shat (:class:`torch.tensor`): Predicted u and s values, (N,G)
         """
         uhat, shat = self.decoder.pred_su(t, y, gidx)
 
@@ -332,13 +327,13 @@ class BrODE():
     # Training Objective
     ############################################################
 
-    def ode_risk(self,
-                 u,
-                 s,
-                 uhat,
-                 shat,
-                 sigma_u, sigma_s,
-                 weight=None):
+    def _ode_risk(self,
+                  u,
+                  s,
+                  uhat,
+                  shat,
+                  sigma_u, sigma_s,
+                  weight=None):
         # 1. u,s,uhat,shat: raw and predicted counts
         # 2. sigma_u, sigma_s : standard deviation of the Gaussian likelihood (decoder)
         # 3. weight: sample weight
@@ -352,10 +347,23 @@ class BrODE():
 
         return torch.mean(torch.sum(neg_log_gaussian, 1))
 
-    def train_epoch(self,
-                    train_loader,
-                    test_set,
-                    optimizer):
+    def _train_epoch(self,
+                     train_loader,
+                     test_set,
+                     optimizer):
+        """Training in each epoch with early stopping.
+
+        Args:
+            train_loader (:class:torch.utils.data.DataLoader):
+                Data loader of the input data.
+            test_set (:class:torch.utils.data.Dataset):
+                Validation dataset
+            optimizer (optimizer from :class:torch.optim):
+                Optimizer for ODE parameters.
+
+        Returns:
+            stop_training (bool): Whether to stop training based on the early stopping criterium.
+        """
         self.set_mode('train')
         stop_training = False
 
@@ -379,9 +387,9 @@ class BrODE():
 
             uhat, shat = self.forward(tbatch, label_batch.squeeze())
 
-            loss = self.ode_risk(u, s,
-                                 uhat, shat,
-                                 torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
+            loss = self._ode_risk(u, s,
+                                  uhat, shat,
+                                  torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
             loss.backward()
             # gradient clipping
             torch.nn.utils.clip_grad_value_(self.decoder.parameters(), GRAD_MAX)
@@ -392,7 +400,11 @@ class BrODE():
         return stop_training
 
     def load_config(self, config):
-        # We don't have to specify all the hyperparameters. Just pass the ones we want to modify.
+        """Update hyper-parameters.
+
+        Args:
+            config (dict): Contains all hyper-parameters users want to modify.
+        """
         for key in config:
             if key in self.config:
                 self.config[key] = config[key]
@@ -401,6 +413,9 @@ class BrODE():
                 print(f"Added new hyperparameter: {key}")
 
     def print_weight(self):
+        """Print out cell type transition probability matrix as a pandas.DataFrame.
+        Each row represents a descendant cell type and columns are progenitors.
+        """
         w = self.decoder.w.cpu().numpy()
         with pd.option_context('display.max_rows', None,
                                'display.max_columns', None,
@@ -414,13 +429,11 @@ class BrODE():
             w_df = pd.DataFrame(w_dic, index=pd.Index(cell_types))
             print(w_df)
 
-    def update_std_noise(self, train_set):
+    def _update_std_noise(self, train_set):
         G = train_set.G
         Uhat, Shat, ll = self.pred_all(train_set.data,
                                        torch.tensor(train_set.time).float().to(self.device),
                                        train_set.labels,
-                                       train_set.N,
-                                       train_set.G,
                                        np.array(range(G)))
         self.decoder.sigma_u = nn.Parameter(torch.tensor(np.log((Uhat-train_set.data[:, :G]).std(0)+1e-16),
                                             device=self.device))
@@ -429,6 +442,11 @@ class BrODE():
         return
 
     def _set_lr(self, p):
+        """Set the learning rates based data sparsity.
+
+        Args:
+            p (float): Data sparsity, should be between 0 and 1.
+        """
         self.config["learning_rate"] = 10**(-4*p-3)
 
     def train(self,
@@ -515,7 +533,7 @@ class BrODE():
             print(f"*********                        Round {r+1}                      *********")
             self.n_drop = 0
             for epoch in range(n_epochs):
-                stop_training = self.train_epoch(data_loader, test_set, optimizer)
+                stop_training = self._train_epoch(data_loader, test_set, optimizer)
                 if plot and (epoch == 0 or (epoch+1) % self.config["save_epoch"] == 0):
                     ll_train = self.test(train_set,
                                          f"train{count_epoch+epoch+1}",
@@ -550,7 +568,7 @@ class BrODE():
                 print(f"Training converged at round {r}")
                 break
             else:
-                self.update_std_noise(train_set)
+                self._update_std_noise(train_set)
         if plot:
             plot_train_loss(self.loss_train,
                             range(1, len(self.loss_train)+1),
@@ -564,10 +582,23 @@ class BrODE():
         print(f"*********              Finished. Total Time = {convert_time(self.timer)}             *********")
         return
 
-    def pred_all(self, data, t, cell_labels, N, G, gene_idx=None):
-        # data [N x 2G] : input mRNA count
-        # mode : train or test or both
-        # gene_idx : gene index, used for reducing unnecessary memory usage
+    def pred_all(self, data, t, cell_labels, gene_idx=None):
+        """Generate different types of predictions from the model for all cells.
+
+        Args:
+            data (:class:torch.Tensor):
+                Input cell-by-gene tensor, with U and S concatenated at the gene dimension (dim=1).
+            cell_labels (:class:torch.Tensor):
+                Cell type annotations encoded in integers.
+            gene_idx (array like, optional):
+                Indices of genes for subsetting.
+                If set to None, only the log likelihood will be computed. Defaults to None.
+
+        Returns:
+            Uhat, Shat: Predicted unspliced and spliced counts.
+            Also returns ODE training/validation loss.
+        """
+        N, G = data.shape
         if gene_idx is None:
             Uhat, Shat = None, None
         else:
@@ -581,20 +612,20 @@ class BrODE():
                 if gene_idx is not None:
                     Uhat[i*B:(i+1)*B] = uhat[:, gene_idx].cpu().numpy()
                     Shat[i*B:(i+1)*B] = shat[:, gene_idx].cpu().numpy()
-                loss = self.ode_risk(torch.tensor(data[i*B:(i+1)*B, :G]).float().to(self.device),
-                                     torch.tensor(data[i*B:(i+1)*B, G:]).float().to(self.device),
-                                     uhat, shat,
-                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
+                loss = self._ode_risk(torch.tensor(data[i*B:(i+1)*B, :G]).float().to(self.device),
+                                      torch.tensor(data[i*B:(i+1)*B, G:]).float().to(self.device),
+                                      uhat, shat,
+                                      torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
                 ll = ll - (B/N)*loss
             if N > B*Nb:
                 uhat, shat = self.eval_model(t[B*Nb:], torch.tensor(cell_labels[B*Nb:]).to(self.device))
                 if gene_idx is not None:
                     Uhat[Nb*B:] = uhat[:, gene_idx].cpu().numpy()
                     Shat[Nb*B:] = shat[:, gene_idx].cpu().numpy()
-                loss = self.ode_risk(torch.tensor(data[B*Nb:, :G]).float().to(self.device),
-                                     torch.tensor(data[B*Nb:, G:]).float().to(self.device),
-                                     uhat, shat,
-                                     torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
+                loss = self._ode_risk(torch.tensor(data[B*Nb:, :G]).float().to(self.device),
+                                      torch.tensor(data[B*Nb:, G:]).float().to(self.device),
+                                      uhat, shat,
+                                      torch.exp(self.decoder.sigma_u), torch.exp(self.decoder.sigma_s))
                 ll = ll - ((N-B*Nb)/N)*loss
         return Uhat, Shat, ll.cpu().item()
 
@@ -611,8 +642,6 @@ class BrODE():
         Uhat, Shat, ll = self.pred_all(dataset.data,
                                        torch.tensor(dataset.time).float().to(self.device),
                                        dataset.labels,
-                                       dataset.N,
-                                       dataset.G,
                                        gind)
         cell_labels_raw = int2str(dataset.labels, self.decoder.label_dic_rev)
         if plot:
@@ -632,31 +661,30 @@ class BrODE():
     def save_model(self, file_path, name='brode'):
         """Save the decoder parameters to a .pt file.
 
-        Arguments
-        ---------
-
-        file_path : str
-            Path to the folder for saving the model parameters
-        name : str
-            Name of the saved file.
+        Args:
+            file_path (str): 
+                Path to the folder for saving the model parameters
+            name (str): 
+                Name of the saved file.
         """
         os.makedirs(file_path, exist_ok=True)
         torch.save(self.decoder.state_dict(), f"{file_path}/{name}.pt")
 
     def save_anndata(self, adata, key, file_path, file_name=None):
-        """Save the ODE parameters and cell time to the anndata object and write it to disk.
+        """Updates an input AnnData object with inferred latent variable
+            and estimations from the model and write it to disk.
 
-        Arguments
-        ---------
-
-        adata : :class:`anndata`
-        key : str
-            Key name used to store all results
-        file_path : str
-            Path to the folder for saving the output file
-        file_name : str, optional
-            Name of the output file. If set to None, the original anndata object will be overwritten,
-            but nothing will be saved to disk.
+        Args:
+            adata (:class:`anndata.AnnData`):
+                Input AnnData object
+            key (str):
+                Signature used to store all parameters of the model.
+                Users can save outputs from different models to the same AnnData object using different keys.
+            file_path (str):
+                Path to the folder for saving.
+            file_name (str, optional):
+                If set to a string ending with .h5ad, the updated anndata object will be written to disk.
+                Defaults to None.
         """
         self.set_mode('eval')
         os.makedirs(file_path, exist_ok=True)
@@ -681,8 +709,6 @@ class BrODE():
         Uhat, Shat, ll = self.pred_all(X,
                                        torch.tensor(t.reshape(-1, 1)).to(self.device),
                                        label_int,
-                                       adata.n_obs,
-                                       adata.n_vars,
                                        np.array(range(adata.n_vars)))
         adata.layers[f"{key}_uhat"] = Uhat
         adata.layers[f"{key}_shat"] = Shat
