@@ -1284,11 +1284,6 @@ def knnx0_index(t,
             n1 = n1+1
     print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
     print(f"Average Set Size: {len_avg//Nq}")
-    for i in range(len(neighbor_index)):
-        try:
-            temp = len(neighbor_index[i])
-        except TypeError:
-            print(neighbor_index[i])
     return neighbor_index
 
 
