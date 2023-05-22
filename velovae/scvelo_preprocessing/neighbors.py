@@ -24,6 +24,7 @@ def neighbors(
     copy=False,
 ):
     """
+    :noindex:
     Compute a neighborhood graph of observations.
 
     The neighbor graph methods (umap, hnsw, sklearn) only differ in runtime and
@@ -394,7 +395,9 @@ def compute_connectivities_umap(
     set_op_mix_ratio=1.0,
     local_connectivity=1.0,
 ):
-    """\
+    """
+    :noindex:
+
     This is from umap.fuzzy_simplicial_set [McInnes18]_.
     Given a set of data X, a neighborhood size, and a measure of distance
     compute the fuzzy simplicial set (here represented as a fuzzy graph in

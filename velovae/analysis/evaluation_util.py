@@ -999,11 +999,8 @@ def summary_scores(all_scores):
             {group name: score list of individual cells}.
 
     Returns:
-        dict{str,float}:
-            Group-wise aggregation scores.
-        float:
-            score aggregated on all samples
-
+        dict{str,float}: Group-wise aggregation scores.
+        float: score aggregated on all samples
     """
     sep_scores = {k: np.mean(s) for k, s in all_scores.items() if s}
     overal_agg = np.mean([s for k, s in sep_scores.items() if s])
@@ -1452,14 +1449,10 @@ def calibrated_cross_boundary_correctness(
             Key to time standard deviation. Defaults to None.
 
     Returns:
-        dict:
-            all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
-        float:
-            averaged score over all cells.
-        dict:
-            time score := proportion of cells with correct time order in a cell type transition
-        float:
-            averaged time score
+        dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
+        float: averaged score over all cells.
+        dict: time score := proportion of cells with correct time order in a cell type transition
+        float: averaged time score
     """
     scores = {}
     all_scores = {}
