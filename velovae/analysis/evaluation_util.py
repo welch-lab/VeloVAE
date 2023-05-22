@@ -1,11 +1,10 @@
 import numpy as np
-from scipy.stats import spearmanr, poisson, norm, ttest_ind, mannwhitneyu
+from scipy.stats import spearmanr, poisson, norm, mannwhitneyu
 from scipy.special import loggamma
 from sklearn.metrics.pairwise import pairwise_distances
 from ..model.model_util import pred_su_numpy, ode_numpy, ode_br_numpy, scv_pred, scv_pred_single
 import hnswlib
 from sklearn.decomposition import PCA
-from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics.pairwise import cosine_similarity
 import torch
 import torch.nn.functional as F
@@ -32,6 +31,24 @@ def poisson_log_likelihood(mu, obs):
 
 
 def cell_state(adata, method, key, gene_indices=None, **kwargs):
+    """Assigns cells to one of three states: 'off', 'induction' or 'repression'.
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData Object
+        method (str):
+            Model name.
+            Now supports 'scVelo', 'Vanilla VAE', 'VeloVAE', 'FullVB',
+            'Discrete VeloVAE', 'Discrete FullVB' and 'VeloVI'.
+        key (str):
+            Key for extracting model outputs.
+        gene_indices (:class:`numpy.ndarray`, optional):
+            . Defaults to None.
+
+    Returns:
+        :class:`numpy.ndarray`:
+            Cell state assignment.
+    """
     cell_state = None
     if gene_indices is None:
         gene_indices = np.array(np.range(adata.n_vars))
@@ -74,6 +91,8 @@ def cell_state(adata, method, key, gene_indices=None, **kwargs):
 
 
 def get_err_scv(adata, key='fit'):
+    """Get performance metrics from scVelo results.
+    """
     Uhat, Shat = scv_pred(adata, key)
     mse = get_mse(adata.layers['Mu'], adata.layers['Ms'], Uhat, Shat)
     mae = get_mae(adata.layers['Mu'], adata.layers['Ms'], Uhat, Shat)
@@ -85,6 +104,8 @@ def get_err_scv(adata, key='fit'):
 
 
 def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
+    """Get prediction from scVelo for plotting.
+    """
     if genes is None:
         genes = adata.var_names
     alpha = adata.var[f"{key}_alpha"].to_numpy()
@@ -118,6 +139,8 @@ def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
 
 
 def get_pred_vanilla(adata, key):
+    """Get prediction from vanilla VAE.
+    """
     # Vanilla VAE
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()
@@ -136,6 +159,8 @@ def get_pred_vanilla(adata, key):
 
 
 def get_err_vanilla(adata, key, gene_mask=None):
+    """Get performance metrics from vanilla VAE results.
+    """
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     Uhat, Shat = get_pred_vanilla(adata, key)
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
@@ -174,6 +199,8 @@ def get_err_vanilla(adata, key, gene_mask=None):
 
 
 def get_pred_vanilla_demo(adata, key, genes=None, N=100):
+    """Get prediction from scVelo for plotting.
+    """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()
     gamma = adata.var[f"{key}_gamma"].to_numpy()
@@ -202,6 +229,8 @@ def get_pred_vanilla_demo(adata, key, genes=None, N=100):
 
 
 def get_pred_cycle(adata, key):
+    """Get prediction from CycleVAE.
+    """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()
     gamma = adata.var[f"{key}_gamma"].to_numpy()
@@ -219,6 +248,8 @@ def get_pred_cycle(adata, key):
 
 
 def get_err_cycle(adata, key, gene_mask=None):
+    """Get performance metrics from CycleVAE results.
+    """
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     Uhat, Shat = get_pred_cycle(adata, key)
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
@@ -251,6 +282,8 @@ def get_err_cycle(adata, key, gene_mask=None):
 
 
 def get_pred_cycle_demo(adata, key, genes=None, N=100):
+    """Get prediction from CycleVAE for plotting.
+    """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()
     gamma = adata.var[f"{key}_gamma"].to_numpy()
@@ -278,6 +311,8 @@ def get_pred_cycle_demo(adata, key, genes=None, N=100):
 
 # VeloVAE
 def get_pred_velovae(adata, key, scv_key=None, full_vb=False, discrete=False):
+    """Get prediction from VeloVAE.
+    """
     if (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers):
         rho = adata.layers[f"{key}_rho"]
         alpha = (adata.var[f"{key}_alpha"].to_numpy() if not full_vb else
@@ -301,6 +336,8 @@ def get_pred_velovae(adata, key, scv_key=None, full_vb=False, discrete=False):
 
 
 def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n_sample=25, seed=2022):
+    """Get performance metrics from VeloVAE results.
+    """
     Uhat, Shat = get_pred_velovae(adata, key, full_vb, discrete)
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
     if gene_mask is None:
@@ -394,6 +431,8 @@ def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n
 
 
 def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False):
+    """Get prediction from VeloVAE for plotting.
+    """
     if (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers):
         alpha = (adata.var[f"{key}_alpha"].to_numpy() if not full_vb else
                  np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy()))
@@ -435,6 +474,8 @@ def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False)
 
 # Branching ODE
 def get_pred_brode(adata, key):
+    """Get prediction from Branching ODE.
+    """
     if (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers):
         alpha = adata.varm[f"{key}_alpha"]
         beta = adata.varm[f"{key}_beta"]
@@ -468,6 +509,8 @@ def get_pred_brode(adata, key):
 
 
 def get_err_brode(adata, key, gene_mask=None):
+    """Get performance metrics from Branching ODE results.
+    """
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     Uhat, Shat = get_pred_brode(adata, key)
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
@@ -513,6 +556,8 @@ def get_err_brode(adata, key, gene_mask=None):
 
 
 def get_pred_brode_demo(adata, key, genes=None, N=None):
+    """Get prediction from Branching ODE for plotting.
+    """
     if isinstance(N, int):
         t_trans = adata.uns[f"{key}_t_trans"]
         t = adata.obs[f"{key}_time"].to_numpy()
@@ -535,7 +580,8 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
             alpha = adata.varm[f"{key}_alpha"][gene_indices].T
             beta = adata.varm[f"{key}_beta"][gene_indices].T
             gamma = adata.varm[f"{key}_gamma"][gene_indices].T
-            u0_root, s0_root = adata.varm[f"{key}_u0_root"][gene_indices].T, adata.varm[f"{key}_s0_root"][gene_indices].T
+            u0_root = adata.varm[f"{key}_u0_root"][gene_indices].T
+            s0_root = adata.varm[f"{key}_s0_root"][gene_indices].T
             scaling = adata.var[f"{key}_scaling"][gene_indices].to_numpy()
             if rate_transition is not None:
                 rate_transition = rate_transition[gene_indices]
@@ -565,6 +611,8 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
 
 
 def get_pred_utv(adata, B=5000):
+    """Get prediction from UniTVelo.
+    """
     t = adata.layers['fit_t']
     o = adata.var['fit_offset'].values
     a0 = adata.var['fit_a'].values
@@ -587,6 +635,8 @@ def get_pred_utv(adata, B=5000):
 
 
 def get_err_utv(adata, key, gene_mask=None, B=5000):
+    """Get performance metrics from UniTVelo results.
+    """
     Uhat, Shat = get_pred_utv(adata, B)
     U, S = adata.layers['Mu'], adata.layers['Ms']
 
@@ -615,6 +665,8 @@ def get_err_utv(adata, key, gene_mask=None, B=5000):
 
 
 def get_pred_utv_demo(adata, genes=None, N=100):
+    """Get prediction from UniTVelo for plotting.
+    """
     t = adata.layers['fit_t']
 
     if genes is None:
@@ -677,7 +729,7 @@ def _loss_dv_gene(
     idx: torch.LongTensor,
     candidate_states: torch.Tensor,
     n_spliced: int = None,
-    l: int = 2,
+    l_norm: int = 2,
     *args,
     **kwargs,
 ):
@@ -697,7 +749,7 @@ def _loss_dv_gene(
 
         # t+1 direction
         candidates = cos_sim.detach() > 0
-        if l == 1:
+        if l_norm == 1:
             squared_difference = torch.mean(torch.abs(output - delta), dim=1)
         else:
             squared_difference = torch.mean(torch.pow(output - delta, 2), dim=1)
@@ -706,16 +758,14 @@ def _loss_dv_gene(
 
         # t-1 direction, (-output) - delta
         candidates = cos_sim.detach() < 0
-        if l == 1:
+        if l_norm == 1:
             squared_difference = torch.mean(torch.pow(output + delta, 1), dim=1)
         else:
             squared_difference = torch.mean(torch.pow(output + delta, 2), dim=1)
         squared_difference = squared_difference[candidates]
         loss.append(torch.sum(squared_difference, 0) / len(candidates))
-        # TODO: check why the memory usage is high for this one
     loss = torch.stack(loss).mean(0)
     return loss.detach().cpu().numpy()
-
 
 
 def _loss_dv(
@@ -724,7 +774,7 @@ def _loss_dv(
     idx: torch.LongTensor,
     candidate_states: torch.Tensor,
     n_spliced: int = None,
-    l: int = 2,
+    l_norm: int = 2,
     *args,
     **kwargs,
 ):
@@ -743,7 +793,7 @@ def _loss_dv(
 
         # t+1 direction
         candidates = cos_sim.detach() > 0
-        if l == 1:
+        if l_norm == 1:
             squared_difference = torch.mean(torch.abs(output - delta), dim=1)
         else:
             squared_difference = torch.mean(torch.pow(output - delta, 2), dim=1)
@@ -752,18 +802,19 @@ def _loss_dv(
 
         # t-1 direction, (-output) - delta
         candidates = cos_sim.detach() < 0
-        if l == 1:
+        if l_norm == 1:
             squared_difference = torch.mean(torch.pow(output + delta, 1), dim=1)
         else:
             squared_difference = torch.mean(torch.pow(output + delta, 2), dim=1)
         squared_difference = squared_difference[candidates]
         loss.append(torch.sum(squared_difference) / len(candidates))
-        # TODO: check why the memory usage is high for this one
     loss = torch.stack(loss).mean()
     return loss.detach().cpu().item()
 
 
 def get_err_dv(adata, key, gene_mask=None):
+    """Get performance metrics from DeepVelo results.
+    """
     if gene_mask is None:
         gene_mask = np.array(range(adata.n_vars))
     nn_t_idx = get_neighbor_idx(adata)
@@ -820,6 +871,8 @@ def get_err_dv(adata, key, gene_mask=None):
 # bioRxiv.
 ##########################################################################
 def get_err_pv(adata, key, gene_mask=None, discrete=True):
+    """Get performance metrics from PyroVelocity results.
+    """
     if 'err' in adata.uns:
         err_dic = adata.uns['err']
         return (err_dic['MSE Train'], err_dic['MSE Test'],
@@ -841,8 +894,10 @@ def get_err_pv(adata, key, gene_mask=None, discrete=True):
             U, S = adata.layers['Mu'], adata.layers['Ms']
             Uhat, Shat = adata.layers[f'{key}_u'], adata.layers[f'{key}_s']
             # MLE of variance
-            var_s_train, var_s_test = np.var((S[train_idx]-Shat[train_idx]), 0), np.var((S[test_idx]-Shat[test_idx]), 0)
-            var_u_train, var_u_test = np.var((U[train_idx]-Uhat[train_idx]), 0), np.var((U[test_idx]-Uhat[test_idx]), 0)
+            var_s_train = np.var((S[train_idx]-Shat[train_idx]), 0)
+            var_s_test = np.var((S[test_idx]-Shat[test_idx]), 0)
+            var_u_train = np.var((U[train_idx]-Uhat[train_idx]), 0)
+            var_u_test = np.var((U[test_idx]-Uhat[test_idx]), 0)
 
         if gene_mask is None:
             gene_mask = np.ones((adata.n_vars)).astype(bool)
@@ -886,6 +941,8 @@ def get_err_pv(adata, key, gene_mask=None, discrete=True):
 # for RNA velocity analysis in single cells." bioRxiv (2022).
 ##########################################################################
 def get_err_velovi(adata, key, gene_mask=None):
+    """Get performance metrics from VeloVI results.
+    """
     if gene_mask is None:
         gene_mask = np.ones((adata.n_vars)).astype(bool)
     U, S = adata.layers['Mu'][:, gene_mask], adata.layers['Ms'][:, gene_mask]
@@ -935,36 +992,41 @@ def get_err_velovi(adata, key, gene_mask=None):
 
 
 def summary_scores(all_scores):
-    # Summarize group scores.
-    # Args:
-    #    all_scores (dict{str,list}):
-    #        {group name: score list of individual cells}.
-    #
-    # Returns:
-    #    dict{str,float}:
-    #        Group-wise aggregation scores.
-    #    float:
-    #        score aggregated on all samples
+    """Summarize group scores.
 
+    Args:
+        all_scores (dict{str,list}):
+            {group name: score list of individual cells}.
+
+    Returns:
+        dict{str,float}:
+            Group-wise aggregation scores.
+        float:
+            score aggregated on all samples
+
+    """
     sep_scores = {k: np.mean(s) for k, s in all_scores.items() if s}
     overal_agg = np.mean([s for k, s in sep_scores.items() if s])
     return sep_scores, overal_agg
 
 
 def keep_type(adata, nodes, target, k_cluster):
-    # Select cells of targeted type
-    # Args:
-    #    adata (Anndata):
-    #        Anndata object.
-    #    nodes (list):
-    #        Indexes for cells
-    #    target (str):
-    #        Cluster name.
-    #    k_cluster (str):
-    #        Cluster key in adata.obs dataframe
-    # Returns:
-    #    list:
-    #        Selected cells.
+    """Select cells of targeted type
+
+    Args:
+        adata (anndata.AnnData):
+            Anndata object.
+        nodes (list):
+            Indexes for cells
+        target (str):
+            Cluster name.
+        k_cluster (str):
+            Cluster key in adata.obs dataframe
+
+    Returns:
+        list:
+             Selected cells.
+    """
 
     return nodes[adata.obs[k_cluster][nodes].values == target]
 
@@ -976,36 +1038,37 @@ def remove_type(adata, nodes, target, k_cluster):
 
 
 def cross_boundary_correctness(
-    adata,
-    k_cluster,
-    k_velocity,
-    cluster_edges,
-    return_raw=False,
-    x_emb="X_umap",
-    gene_mask=None
-):
-    # Cross-Boundary Direction Correctness Score (A->B)
-    # Args:
-    #    adata (Anndata):
-    #        Anndata object.
-    #    k_cluster (str):
-    #        key to the cluster column in adata.obs DataFrame.
-    #    k_velocity (str):
-    #        key to the velocity matrix in adata.obsm.
-    #    cluster_edges (list of tuples("A", "B")):
-    #        pairs of clusters has transition direction A->B
-    #    return_raw (bool):
-    #        return aggregated or raw scores.
-    #    x_emb (str):
-    #        key to x embedding for visualization.
-    #   gene_mask (numpy array):
-    #       Boolean array to filter out non-velocity genes
-    # Returns:
-    #    dict:
-    #        all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
-    #    float:
-    #        averaged score over all cells.
+        adata,
+        k_cluster,
+        k_velocity,
+        cluster_edges,
+        return_raw=False,
+        x_emb="X_umap",
+        gene_mask=None
+        ):
+    """Cross-Boundary Direction Correctness Score (A->B)
 
+    Args:
+        adata (:class:`anndata.AnnData`):
+            Anndata object.
+        k_cluster (str):
+            Key to the cluster column in adata.obs.
+        k_velocity (str):
+            Key to the velocity matrix in adata.obsm.
+        cluster_edges (list[tuple[str]]):
+            Pairs of clusters has transition direction A->B
+        return_raw (bool, optional):
+            Return aggregated or raw scores. Defaults to False.
+        x_emb (str, optional):
+            Key to x embedding for visualization or a count matrix in adata.layers.
+            Defaults to "X_umap".
+        gene_mask (:class:`numpy.ndarray`, optional):
+            Boolean array to filter out non-velocity genes. Defaults to None.
+
+    Returns:
+        dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
+        float: averaged score over all cells
+    """
     scores = {}
     all_scores = {}
     x_emb_name = x_emb
@@ -1070,7 +1133,43 @@ def gen_cross_boundary_correctness(
     n_prune=30,
     random_state=2022
 ):
-    # Generalized Cross-Boundary Direction Correctness Score (A->B)
+    """Generalized Cross-Boundary Direction Correctness Score (A->B)
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            Anndata object.
+        k_cluster (str):
+            Key to the cluster column in adata.obs.
+        k_velocity (str):
+            Key to the velocity matrix in adata.obsm.
+        cluster_edges (list[tuple[str]]):
+            Pairs of clusters has transition direction A->B
+        tkey (str):
+            Key to the cell time in adata.obs
+        k_hop (int, optional):
+            Number of steps to consider.
+            CBDir will be computed for 1 to k-step neighbors.
+            Defaults to 5.
+        dir_test (bool, optional):
+            Whether to subtract CBDir of random walk from CBDir of desired direction.
+            Defaults to False.
+        x_emb (str, optional):
+            Low dimensional embedding in adata.obsm
+            or original count matrix in adata.layers.
+            Defaults to "X_umap".
+        gene_mask (:class:`numpy.ndarray`, optional):
+            Boolean array to filter out non-velocity genes. Defaults to None.
+        n_prune (int, optional):
+            Maximum number of neighbors to keep.
+            This is necessary because number of neighbors grows exponentially.
+            Defaults to 30.
+        random_state (int, optional):
+            Seed for random walk sampling. Defaults to 2022.
+
+    Returns:
+        dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
+        :class:`numpy.ndarray`: Averaged score over all cells for all step numbers
+    """
     # Use k-hop neighbors
     scores = {}
     x_emb_name = x_emb
@@ -1136,8 +1235,8 @@ def gen_cross_boundary_correctness(
             # Compute the same k-hop metric for neigbhors not in the descent v
             if dir_test and len(nodes_null) > 0:
                 for k in range(k_hop-1):
-                    # nodes_null = np.random.choice(random_pool, min(len(random_pool), n_prune), replace=False)
-                    nodes_null = adata.uns['neighbors']['indices'][nodes_null].flatten()  # [num (k-1)-hop neighbors * 30]
+                    # [num (k-1)-hop neighbors * 30]
+                    nodes_null = adata.uns['neighbors']['indices'][nodes_null].flatten()
                     nodes_null = np.unique(nodes_null)
                     nodes_null = nodes_null if len(all_nodes) < n_prune else np.random.choice(nodes_null, n_prune)
                     position_dif_null = x_emb[nodes_null] - x_pos
@@ -1161,14 +1260,54 @@ def gen_cross_boundary_correctness_test(
     k_cluster,
     k_velocity,
     cluster_edges,
-    tkey=None,
+    tkey,
     k_hop=5,
     x_emb="X_umap",
     gene_mask=None,
     n_prune=30,
     random_state=2022
 ):
-    # Generalized Cross-Boundary Direction Correctness Score (A->B)
+    """Mann-Whitney U Test of RNA velocity
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            Anndata object.
+        k_cluster (str):
+            Key to the cluster column in adata.obs.
+        k_velocity (str):
+            Key to the velocity matrix in adata.obsm.
+        cluster_edges (list[tuple[str]]):
+            Pairs of clusters has transition direction A->B
+        tkey (str):
+            Key to the cell time in adata.obs
+        k_hop (int, optional):
+            Number of steps to consider.
+            CBDir will be computed for 1 to k-step neighbors.
+            Defaults to 5.
+        dir_test (bool, optional):
+            Whether to subtract CBDir of random walk from CBDir of desired direction.
+            Defaults to False.
+        x_emb (str, optional):
+            Low dimensional embedding in adata.obsm
+            or original count matrix in adata.layers.
+            Defaults to "X_umap".
+        gene_mask (:class:`numpy.ndarray`, optional):
+            Boolean array to filter out non-velocity genes. Defaults to None.
+        n_prune (int, optional):
+            Maximum number of neighbors to keep.
+            This is necessary because number of neighbors grows exponentially.
+            Defaults to 30.
+        random_state (int, optional):
+            Seed for random walk sampling. Defaults to 2022.
+
+    Returns:
+        dict: Proportional of cells with correct velocity flow (velocity accuracy)
+        indexed by cluster_edges
+
+        `numpy.ndarray`: Averaged velocity accuracy over all cells for all step numbers
+        dict: Mann-Whitney U test statistics indexed by cluster_edges
+        `numpy.ndarray`: Averaged Mann-Whitney U test statistics over all cells for all step numbers
+    """
     # Use k-hop neighbors
     test_stats, accuracy = {}, {}
     x_emb_name = x_emb
@@ -1288,36 +1427,40 @@ def calibrated_cross_boundary_correctness(
     gene_mask=None,
     k_std_t=None
 ):
-    # Calibrated Cross-Boundary Direction Correctness Score (A->B)
-    # Args:
-    #    adata (Anndata):
-    #        Anndata object.
-    #    k_cluster (str):
-    #        key to the cluster column in adata.obs DataFrame.
-    #    k_velocity (str):
-    #        key to the velocity matrix in adata.obsm.
-    #    k_time (str):
-    #       key to the cell time in adata.obs
-    #    cluster_edges (list of tuples("A", "B")):
-    #        pairs of clusters has transition direction A->B
-    #    return_raw (bool):
-    #        return aggregated or raw scores.
-    #    sum_up (bool):
-    #        Whether sum or take the mean (default)
-    #    x_emb (str):
-    #        key to x embedding for visualization.
-    #   gene_mask (numpy array):
-    #       Boolean array to filter out non-velocity genes
-    # Returns:
-    #    dict:
-    #        all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
-    #    float:
-    #        averaged score over all cells.
-    #    dict:
-    #        time score := proportion of cells with correct time order in a cell type transition
-    #    float:
-    #        averaged time score
+    """Calibrated Cross-Boundary Direction Correctness Score (A->B)
 
+    Args:
+        adata (:class:`anndata.AnnData`):
+            Anndata object.
+        k_cluster (str):
+            key to the cluster column in adata.obs DataFrame.
+        k_velocity (str):
+            key to the velocity matrix in adata.obsm.
+        k_time (_type_):
+            key to the cell time in adata.obs
+        cluster_edges (_type_, optional):
+            Pairs of clusters has transition direction A->B. Defaults to None.
+        return_raw (bool, optional):
+            Return aggregated or raw scores.. Defaults to False.
+        sum_up (bool, optional):
+            Whether sum or take the mean (default). Defaults to False.
+        x_emb (str, optional):
+            key to x embedding for visualization.. Defaults to "X_umap".
+        gene_mask (:class:`numpy.ndarray`, optional):
+            Boolean array to filter out non-velocity genes. Defaults to None.
+        k_std_t (str, optional):
+            Key to time standard deviation. Defaults to None.
+
+    Returns:
+        dict:
+            all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
+        float:
+            averaged score over all cells.
+        dict:
+            time score := proportion of cells with correct time order in a cell type transition
+        float:
+            averaged time score
+    """
     scores = {}
     all_scores = {}
     p_fw = {}
@@ -1420,6 +1563,24 @@ def _edge2adj(cell_types, cluster_edges):
 
 
 def time_score(adata, tkey, cluster_key, cluster_edges):
+    """Compute Time Accuracy Score.
+    Defined as the average proportion of descendant cells that
+    appear after their progenitor cells.
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        tkey (str):
+            Key for the inferred cell time.
+        cluster_key (str):
+            Key for cell type annotations.
+        cluster_edges (_type_, optional):
+            Pairs of clusters has transition direction A->B.
+
+    Returns:
+        dict: Time Accuracy Score for each transitio pair.
+        float: Mean Time Accuracy Score.
+    """
     # Compute time inference accuracy based on
     # progenitor-descendant pairs
     t = adata.obs[tkey].to_numpy()
@@ -1439,61 +1600,6 @@ def time_score(adata, tkey, cluster_key, cluster_edges):
             tscore_out[f'{u} -> {v}'] = tscore[f'{u} -> {v}']
     return tscore_out, np.mean([sc for sc in tscore.values()])
 
-
-def timed_direction_correctness(adata,
-                                tkey,
-                                vkey,
-                                x_emb,
-                                n_bins=51,
-                                n_neighbors=5,
-                                gene_mask=None):
-    t = adata.obs[tkey].to_numpy()
-    dt = (np.quantile(t, 0.99) - np.quantile(t, 0.01)) / n_bins
-    tmin, tmax = t.min(), t.max()
-    scores = []
-    if x_emb in adata.obsm:
-        x_emb = adata.obsm[x_emb]
-        if x_emb == "X_umap":
-            v_emb = adata.obsm['{}_umap'.format(vkey)]
-        else:
-            v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(vkey)][0]]
-    else:
-        x_emb = adata.layers[x_emb]
-        v_emb = adata.layers[vkey]
-        if gene_mask is None:
-            gene_mask = ~np.isnan(v_emb[0])
-        x_emb = x_emb[:, gene_mask]
-        v_emb = v_emb[:, gene_mask]
-    bin_size = adata.n_obs // n_bins
-    if bin_size < n_neighbors:
-        bin_size = n_neighbors * 2
-        n_bins = adata.n_obs // bin_size
-    for i in range(n_bins-1):
-        bin_scores = []
-        cell_indices = np.where((t >= tmin+i*dt) & (t < tmin+(i+1)*dt))[0]  # cells in the current bin
-        if len(cell_indices) == 0:  # edge case: not cell exists in the current bin
-            continue
-        if i < n_bins - 2:
-            t_lb, t_ub = tmin+(i+1)*dt, tmin+(i+2)*dt
-            next_cell_indices = np.where((t >= t_lb) & (t < t_ub))[0]
-            while len(next_cell_indices) == 0 and t_ub <= tmax:
-                t_ub += dt
-                next_cell_indices = np.where((t >= t_lb) & (t < t_ub))[0]
-        else:
-            next_cell_indices = np.where(t >= tmin+(i+1)*dt)[0]
-        _n_neighbors = 1 if len(next_cell_indices) < n_neighbors else n_neighbors
-        knn = NearestNeighbors(n_neighbors=_n_neighbors)
-        knn.fit(adata.obsm['X_pca'][next_cell_indices])
-        neigh_idx = knn.kneighbors(adata.obsm['X_pca'][cell_indices],
-                                   _n_neighbors,
-                                   return_distance=False)
-        for i, cell_idx in enumerate(cell_indices):
-            pos_diff = x_emb[next_cell_indices[neigh_idx[i]]] - x_emb[cell_idx]
-            dir_scores = cosine_similarity(pos_diff, v_emb[cell_idx].reshape(1, -1)).flatten()
-            bin_scores.append(np.nanmean(dir_scores))
-        scores.append(np.mean(bin_scores))
-        
-    return scores, np.mean(scores)
 
 
 def inner_cluster_coh(adata, k_cluster, k_velocity, gene_mask=None, return_raw=False):
@@ -1572,67 +1678,6 @@ def velocity_consistency(adata, vkey, gene_mask=None):
 # End of Reference
 ##########################################################################
 
-# New performance metric based on the idea of CBDir
-
-
-def branch_fit_score(adata, k_cluster, k_velocity, branches, x_emb="X_umap"):
-    cell_labels = adata.obs[k_cluster].to_numpy()
-    x_emb_name = x_emb
-    if x_emb in adata.obsm:
-        x_emb = adata.obsm[x_emb]
-        if x_emb_name == "X_umap":
-            v_emb = adata.obsm['{}_umap'.format(k_velocity)]
-        else:
-            v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(k_velocity)][0]]
-    else:
-        x_emb = adata.layers[x_emb]
-        v_emb = adata.layers[k_velocity]
-
-    all_boundary_nodes = {}
-    for u in branches:
-        sel = adata.obs[k_cluster] == u
-        nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
-        for v in branches[u]:
-            # cells of type v that are neighbors of type u
-            boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
-            indices = np.concatenate([x for x in boundary_nodes]).astype(int)
-            all_boundary_nodes[v] = indices
-
-    for u in branches:
-        sel = adata.obs[k_cluster] == u
-        nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
-        branch_score = []
-        for v in branches[u]:
-            boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
-            x_points = x_emb[sel]
-            x_velocities = v_emb[sel]
-
-            type_score = []
-            weights = []
-            for x_pos, x_vel, nodes in zip(x_points, x_velocities, boundary_nodes):
-                if len(nodes) == 0:
-                    continue
-                # check if the cell has the most transition to type v
-                weights.append(np.sum(cell_labels[nodes] == v))
-
-                # cosine similarity with desired neighbor
-                position_dif = x_emb[nodes] - x_pos
-                dir_scores = cosine_similarity(position_dif, x_vel.reshape(1, -1)).flatten()
-                theta_1 = np.nanmean(np.arccos(dir_scores))/np.pi
-
-                # cosine similarity with other branches
-                dir_scores = np.array([])
-                for w in branches[u]:
-                    if w == v:
-                        continue
-                    position_dif = x_emb[all_boundary_nodes[w]] - x_pos
-                    dir_scores = np.concatenate((dir_scores,
-                                                 cosine_similarity(position_dif, x_vel.reshape(1, -1)).flatten()))
-                theta_2 = np.nanmean(np.arccos(dir_scores))/np.pi
-                type_score.append(theta_2-theta_1)
-            branch_score.append(np.sum(np.array(type_score)*np.array(weights))/np.sum(weights))
-    return branch_score, np.mean(branch_score)
-
 
 # Cell Cycle Assignment based on scanpy
 # Reference: https://github.com/scverse/scanpy_usage/blob/master/180209_cell_cycle/cell_cycle.ipynb
@@ -1664,6 +1709,18 @@ G2M_GENES_MOUSE = ['Hmgb2', 'Cdk1', 'Nusap1', 'Ube2c', 'Birc5', 'Tpx2', 'Top2a',
 
 
 def assign_phase(adata, model='human', embed='umap', save=None):
+    """Assign cell cycle phases
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object
+        model (str, optional):
+            {'human', 'mouse'}. Defaults to 'human'.
+        embed (str, optional):
+            Low-dimensional embedding for visualization. Defaults to 'umap'.
+        save (str, optional):
+            Figure name with path for saving. Defaults to None.
+    """
     import scanpy as sc
     if model == 'human':
         s_genes, g2m_genes = S_GENES_HUMAN, G2M_GENES_HUMAN

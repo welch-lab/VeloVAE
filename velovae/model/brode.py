@@ -291,7 +291,8 @@ class BrODE():
                 Cell type encoded in integers, (N,1)
 
         Returns:
-            uhat, shat (:class:`torch.tensor`): Predicted u and s values, (N,G)
+            :class:`torch.Tensor`:
+                Predicted u and s values, (N, G)
         """
         uhat, shat = self.decoder.forward(t, y, neg_slope=self.config['neg_slope'])
 
@@ -309,7 +310,8 @@ class BrODE():
                 A subset of genes to compute
 
         Returns:
-            uhat, shat (:class:`torch.tensor`): Predicted u and s values, (N,G)
+            :class:`torch.Tensor`:
+                Predicted u and s values, (N, G)
         """
         uhat, shat = self.decoder.pred_su(t, y, gidx)
 
@@ -362,7 +364,7 @@ class BrODE():
                 Optimizer for ODE parameters.
 
         Returns:
-            stop_training (bool): Whether to stop training based on the early stopping criterium.
+            bool: Whether to stop training based on the early stopping criterium.
         """
         self.set_mode('train')
         stop_training = False
@@ -595,10 +597,11 @@ class BrODE():
                 If set to None, only the log likelihood will be computed. Defaults to None.
 
         Returns:
-            Uhat, Shat: Predicted unspliced and spliced counts.
-            Also returns ODE training/validation loss.
+            :class:`torch.Tensor`: Predicted unspliced and spliced counts.
+            float: ODE training/validation loss.
         """
         N, G = data.shape
+        G = G//2
         if gene_idx is None:
             Uhat, Shat = None, None
         else:

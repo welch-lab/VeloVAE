@@ -331,6 +331,7 @@ class VanillaVAE():
                 Key in adata.obs storing the capture time. Defaults to None.
         """
         self.kl_time = kl_gaussian
+        self.sample = self._reparameterize
         if tprior is None:
             self.p_t = torch.stack([torch.ones(adata.n_obs, 1, device=self.device)*tmax*0.5,
                                     torch.ones(adata.n_obs, 1, device=self.device)*tmax
@@ -853,7 +854,7 @@ class VanillaVAE():
                 Path to the folder for saving model parameters
             enc_name (str, optional):
                 Name of the .pt file containing encoder parameters
-            dec_name (str, optional): 
+            dec_name (str, optional):
                 Name of the .pt file containing decoder parameters
         """
         os.makedirs(file_path, exist_ok=True)

@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from torch.distributions.negative_binomial import NegativeBinomial
 from torch.distributions.poisson import Poisson
 import time
-from velovae.plotting import plot_sig, plot_time, plot_vel
+from velovae.plotting import plot_sig, plot_time
 from velovae.plotting import plot_train_loss, plot_test_loss
 
 from .model_util import hist_equal, init_params, get_ts_global, reinit_params
@@ -92,8 +92,10 @@ class encoder(nn.Module):
             condition (torch.Tensor, optional): Condition features. Defaults to None.
 
         Returns:
-            tuple of torch.Tensor: Parameters of variational posterior,
-            i.e. mean and standard deviation of q(t,z|x) = q(z|x)q(t|x).
+            :class:`torch.Tensor`: Mean of time variational posterior.
+            :class:`torch.Tensor`: Standard deviation of time variational posterior.
+            :class:`torch.Tensor`: Mean of cell state variational posterior.
+            :class:`torch.Tensor`: Standard deviation of cell state variational posterior.
         """
         h = self.net(data_in)
         if condition is not None:
@@ -125,7 +127,7 @@ class decoder(nn.Module):
         """Constructor of the VeloVAE decoder module
 
         Args:
-            adata (:class:anndata.AnnData):
+            adata (:class:`anndata.AnnData`):
                 Input AnnData object containing spliced and unspliced count matrices
                 and other cell and gene annotations.
             tmax (float):
@@ -372,7 +374,7 @@ class decoder(nn.Module):
                 Whether to randomly sample parameters from their posterior distributions. Defaults to True.
 
         Returns:
-            alpha, beta, gamma: sampled or fixed rate parameters
+            :class:`torch.Tensor`: sampled or fixed rate parameters
         """
         ####################################################
         # Sample rate parameters for full vb or
@@ -433,18 +435,27 @@ class decoder(nn.Module):
         """top-level forward function for the decoder class
 
         Args:
-            t (torch.Tensor): Cell time of size (n x 1)
-            z (torch.Tensor): Cell state of size (n x dim_z)
-            u0 (torch.Tensor, optional): Estimated initial condition (u) of each cell. Defaults to None.
-            s0 (torch.Tensor, optional): Estimated initial condition (s) of each cell. Defaults to None.
-            t0 (torch.Tensor, optional): Estimated time at the initial condition of each cell. Defaults to None.
-            condition (torch.Tensor, optional): _description_. Defaults to None.
-            eval_mode (bool, optional): Whether this function is called in model evaluation. If set to True,
+            t (torch.Tensor):
+                Cell time of size (n x 1)
+            z (torch.Tensor):
+                Cell state of size (n x dim_z)
+            u0 (torch.Tensor, optional): 
+                Estimated initial condition (u) of each cell. Defaults to None.
+            s0 (torch.Tensor, optional): 
+                Estimated initial condition (s) of each cell. Defaults to None.
+            t0 (torch.Tensor, optional): 
+                Estimated time at the initial condition of each cell. Defaults to None.
+            condition (torch.Tensor, optional):
+                Condition features. Defaults to None.
+            eval_mode (bool, optional):
+                Whether this function is called in model evaluation. If set to True,
                 the mean time and cell state will be used to provide a deterministic prediction. Defaults to False.
-            neg_slope (float, optional): Leaky ReLU slope to allow negative time intervals when cell time < t0. Defaults to 0.0.
+            neg_slope (float, optional):
+                Leaky ReLU slope to allow negative time intervals when cell time < t0. Defaults to 0.0.
 
         Returns:
-            tuple of torch.Tensor: Reconstructed unspliced and spliced counts, along with their corresponding velocity
+            :class:`torch.Tensor`:
+                Reconstructed unspliced and spliced counts, along with their corresponding velocity
         """
         if u0 is None or s0 is None or t0 is None:
             return self._forward_basis(t, z, condition, eval_mode, neg_slope)
@@ -499,7 +510,7 @@ class VAE(VanillaVAE):
         """VeloVAE Model
 
         Args:
-            adata (anndata.AnnData): Input AnnData object
+            adata ((:class:`anndata.AnnData`)): Input AnnData object
             tmax (float): Maximum time, specifies the time range.
             dim_z (int): Latent cell state dimension.
             dim_cond (int, optional): Dimension of any condition features. Defaults to 0.
@@ -715,39 +726,27 @@ class VAE(VanillaVAE):
                 Condition features. Defaults to None.
 
         Returns:
-            tuple of torch.Tensor: Contains the following:
-                mu_t : `torch.tensor`
-                    time mean, (N,1)
-                std_t : `torch.tensor`
-                    time standard deviation, (N,1)
-                mu_z : `torch.tensor`
-                    cell state mean, (N, Cz)
-                std_z : `torch.tensor`
-                    cell state standard deviation, (N, Cz)
-                t : `torch.tensor`
-                    sampled cell time, (N,1)
-                z : `torch.tensor`
-                    sampled cell sate, (N,Cz)
-                uhat : `torch.tensor`
-                    predicted mean u values, (N,G)
-                shat : `torch.tensor`
-                    predicted mean s values, (N,G)
-                uhat_fw : `torch.tensor`
-                    predicted mean u values of the future state, (N,G)
-                    Valid only when `vel_continuity_loss` is set to True
-                shat_fw : `torch.tensor`
-                    predicted mean s values of the future state, (N,G)
-                    Valid only when `vel_continuity_loss` is set to True
-                vu : `torch.tensor`
-                    unspliced velocity
-                vs : `torch.tensor`
-                    spliced velocity
-                vu_fw : `torch.tensor`
-                    unspliced velocity at the future state
-                    Valid only when `vel_continuity_loss` is set to True
-                vs_fw : `torch.tensor`
-                    spliced velocity at the future state
-                    Valid only when `vel_continuity_loss` is set to True
+            :class:`torch.Tensor`: time mean, (N,1)
+            :class:`torch.Tensor`: time standard deviation, (N,1)
+            :class:`torch.Tensor`: cell state mean, (N, Cz)
+            :class:`torch.Tensor`: cell state standard deviation, (N, Cz)
+            :class:`torch.Tensor`: sampled cell time, (N,1)
+            :class:`torch.Tensor`: sampled cell sate, (N,Cz)
+            :class:`torch.Tensor`: predicted mean u values, (N,G)
+            :class:`torch.Tensor`: predicted mean s values, (N,G)
+            :class:`torch.Tensor`: predicted mean u values of the future state, (N,G)
+            Valid only when `vel_continuity_loss` is set to True
+
+            :class:`torch.Tensor`: predicted mean s values of the future state, (N,G)
+            Valid only when `vel_continuity_loss` is set to True
+
+            :class:`torch.Tensor`: unspliced velocity
+            :class:`torch.Tensor`: spliced velocity
+            :class:`torch.Tensor`: unspliced velocity at the future state
+            Valid only when `vel_continuity_loss` is set to True
+
+            :class:`torch.Tensor`: spliced velocity at the future state
+            Valid only when `vel_continuity_loss` is set to True
         """
         data_in_scale = data_in
         # optional data scaling
@@ -1082,7 +1081,8 @@ class VAE(VanillaVAE):
                 epoch and ODE in the next epoch. Defaults to 1.
 
         Returns:
-            stop_training (bool): Whether to stop training based on the early stopping criterium.
+            bool:
+                Whether to stop training based on the early stopping criterium.
         """
 
         B = len(train_loader)
@@ -1537,8 +1537,8 @@ class VAE(VanillaVAE):
                 If given, the outputs only preserve the selected genes. Defaults to None.
 
         Returns:
-            A tuple containing all outputs listed in `output` as :class:numpy.array
-            Also returns VAE training/validation loss.
+            tuple[:class:`numpy.ndarray`]: Contains all output arrays specified in 'output' argument.
+            float: VAE training/validation loss.
         """
         N, G = data.shape[0], data.shape[1]//2
         if gene_idx is None:
@@ -1803,7 +1803,8 @@ class VAE(VanillaVAE):
                 Path for saving figures. Defaults to './figures'.
 
         Returns:
-            elbo: VAE training/validation loss
+            float:
+                VAE training/validation loss
         """
         self.set_mode('eval')
         mode = "test" if test_mode else "train"

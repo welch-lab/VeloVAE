@@ -5,6 +5,19 @@ from tqdm import tqdm
 
 
 def count_peak_expression(adata, cluster_key="clusters"):
+    """Figure out genes with the highest expression in each cell type.
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        cluster_key (str, optional):
+            Key for cell type annotation. Defaults to "clusters".
+
+    Returns:
+        dict: Number of genes with peak expression in each cell type.
+        dict: Peak gene expression levels corresponding to each cell type.
+        dict: Peak gene indices corresponding to each cell type.
+    """
     # Count the number of genes with peak expression in each cell type.
     def encodeType(cell_types_raw):
         # Use integer to encode the cell types.
@@ -25,7 +38,7 @@ def count_peak_expression(adata, cluster_key="clusters"):
 
     X = np.array(adata.layers["spliced"].A+adata.layers["unspliced"].A)
     peak_expression = np.stack([np.quantile(X[cell_labels == j], 0.9, 0) for j in range(n_type)])
-    peak_type = np.argmax(peak_expression, 0)
+    peak_type = np.argmax(peak_expression, 0)  # cell type with the highest expression level for all genes
     peak_hist = np.array([np.sum(peak_type == i) for i in range(n_type)])  # gene count
     peak_val_hist = [peak_expression[:, peak_type == i][i] for i in range(n_type)]  # peak expression
     peak_gene = [np.where(peak_type == i)[0] for i in range(n_type)]  # peak gene index list
@@ -42,7 +55,16 @@ def count_peak_expression(adata, cluster_key="clusters"):
 
 
 def balanced_gene_selection(adata, n_gene, cluster_key):
-    # select the same number of genes for each cell type.
+    """select the same number of genes for each cell type.
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        n_gene (int):
+            Number of genes to select.
+        cluster_key (str):
+            Key for cell type annotation.
+    """
     if n_gene > adata.n_vars:
         return
     cell_labels = adata.obs[cluster_key].to_numpy()
@@ -88,6 +110,14 @@ def filt_gene_sparsity(adata, thred_u=0.99, thred_s=0.99):
 
 
 def rank_gene_selection(adata, cluster_key, **kwargs):
+    """Select genes using wilcoxon test.
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        cluster_key (str):
+            Key for cell type annotation.
+    """
     if "cell_types" not in kwargs:
         cell_types = np.unique(adata.obs[cluster_key].to_numpy())
     else:
@@ -160,36 +190,52 @@ def preprocess(adata,
                **kwargs):
     """Run the entire preprocessing pipeline using scanpy
 
-    Arguments
-    ---------
-
-    adata : :class:`anndata.AnnData`
-    n_gene : int, optional
-        Number of genes to keep
-    cluster_key : str, optional
-        Key in adata.obs containing the cell type
-    tkey : str, optional
-        Key in adata.obs containing the capture time
-    selection_method : {'scv','balanced'}, optional
-        If set to 'balanced', the function will call balanced_gene_selection.
-        Otherwise, it uses scanpy to pick highly variable genes.
-    min_count_per_cell...max_cells_u : int, optional
-        RNA count threshold
-    npc : int, optional
-        Number of principal components in PCA dimension reduction
-    n_neighbors : int, optional
-        Number of neighbors in KNN graph
-    genes_retain : `numpy array` or string list, optional
-        By setting genes_retain to a specific list of gene names
-        preprocessing will pick these exact genes regardless of their counts and gene selection method.
-    perform_clustering : bool, optional
-        Whether to perform Leiden clustering
-    resolution : float, optional
-        Leiden clustering hyperparameter.
-    compute_umap : bool, optional
-        Whether to compute 2D UMAP
-    umap_min_dist : float, optional
-        UMAP hyperparameter. Usually is set to less than 1
+    Args:
+        adata (:class:`anndata.AnnData`): 
+            AnnData object.
+        n_gene (int, optional):
+            Number of genes to keep. Defaults to 1000.
+        cluster_key (str, optional):
+            Key for cell type annotations. Defaults to "clusters".
+        tkey (str, optional):
+            Key in adata.obs containing the capture time. Defaults to None.
+        selection_method (str, optional):
+            {'scv','balanced'}. 
+            If set to 'balanced', the function will call balanced_gene_selection.
+            Otherwise, it uses scanpy to pick highly variable genes.
+            Defaults to "scv".
+        min_count_per_cell (int, optional):
+            Minimum total count per cell. Defaults to 0.
+        min_genes_expressed (int, optional): Defaults to None.
+        min_shared_counts (int, optional): Defaults to 10.
+        min_shared_cells (int, optional): Defaults to 10.
+        min_counts_s (int, optional): Defaults to None.
+        min_cells_s (int, optional): Defaults to None.
+        max_counts_s (int, optional): Defaults to None.
+        max_cells_s (int, optional): Defaults to None.
+        min_counts_u (int, optional): Defaults to None.
+        min_cells_u (int, optional): Defaults to None.
+        max_counts_u (int, optional): Defaults to None.
+        max_cells_u (int, optional): Defaults to None.
+        npc (int, optional):
+            Number of PCA dimensions. Defaults to 30.
+        n_neighbors (int, optional):
+            Number of neighbors in KNN. Defaults to 30.
+        genes_retain (array like, optional):
+            Preprocessing will pick these exact genes
+            regardless of their counts and gene selection method.
+            Defaults to None.
+        perform_clustering (bool, optional):
+            Whether to perform leiden clustering. Defaults to False.
+        resolution (float, optional):
+            Leiden clustering hyperparameter. Defaults to 1.0.
+        compute_umap (bool, optional):
+            Whether to compute 2D UMAP. Defaults to False.
+        umap_min_dist (float, optional):
+            UMAP hyperparameter. Defaults to 0.5.
+        keep_raw (bool, optional):
+            Whether to keep the original raw counts (without normalization).
+            Defaults to True.
     """
     # Preprocessing
     # 1. Cell, Gene filtering and data normalization

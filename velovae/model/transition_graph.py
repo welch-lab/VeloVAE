@@ -1,3 +1,9 @@
+"""Transition Graph
+This module implements the TransGraph class as part of the Branching ODE model.
+A transition graph represents relations between cell types.
+It is a directed graph with cell types as vertices and
+edges represent progenitor-descendant relations.
+"""
 import numpy as np
 from copy import deepcopy
 import scanpy as sc
@@ -222,6 +228,19 @@ def check_loop(adj_list, n_nodes):
 
 
 def edmond_chu_liu(graph, r):
+    """Find a minimum spanning tree in a directed graph.
+
+    Args:
+        graph (:class:`numpy.ndarray`):
+            A 2-d array representing an adjacency matrix, (num type x num type).
+            Notice that graph[i,j] is the edge from j to i.
+        r (int):
+            Root node.
+
+    Returns:
+        :class:`numpy.ndarray`:
+            Minimum spanning tree in the form of an adjacency matrix.
+    """
     #######################################################################
     # graph: a 2-d array representing an adjacency matrix
     # Notice that graph[i,j] is the edge from j to i
@@ -313,27 +332,25 @@ class TransGraph():
                  res=0.005):
         """Class constructor
 
-        Arguments
-        ---------
-        adata : :class:`anndata.AnnData`
-        tkey : str
-            Key in adata.obs storing the cell time
-        embed_key : str
-            Key in adata.obs storing the cell state
-        cluster_key : str
-            Key in adata.obs storing the cell type annotation
-        vkey : str, optional
-            Key in adata.layers or adata.obsm storing RNA velocity (raw or embedding)
-            If set to any none-empty key, cell-type transition graph will be built
-            based on CBDir instead of time-windowed KNN.
-        train_idx : `numpy array`, optional
-            List of cell indices in the training data
-        k : int, optional
-            Number of neighbors used in Louvain clustering during graph partition.
-            Effective only if vkey is None.
-        res : int, optional
-            Resolution parameter used in Louvain clustering during graph partition
-            Effective only if vkey is None.
+        Args:
+            adata (:class:`anndata.AnnData`): 
+                Input AnnData object
+            tkey (str):
+                Key in adata.obs storing the cell time
+            embed_key (str):
+                Key in adata.obs storing the cell state
+            cluster_key (str):
+                Key in adata.obs storing the cell type annotation
+            vkey (str, optional):
+                Key in adata.layers or adata.obsm storing RNA velocity (raw or embedding)
+                If set to any none-empty key, cell-type transition graph will be built
+                based on CBDir instead of time-windowed KNN. Default to None.
+            train_idx (:class:`numpy array`, optional):
+                List of cell indices in the training data. Default to None.
+            k (int, optional):
+                Number of neighbors used in Louvain clustering during graph partition. Default to 5.
+            res (int, optional):
+                Resolution parameter used in Louvain clustering during graph partition. Default to 0.005.
         """
         cell_labels_raw = (adata.obs[cluster_key].to_numpy()
                            if train_idx is None else
@@ -354,7 +371,6 @@ class TransGraph():
         if vkey is not None:
             self._get_velocity_flow(adata,
                                     tkey,
-                                    embed_key,
                                     cluster_key,
                                     vkey)
 
@@ -363,6 +379,19 @@ class TransGraph():
                               train_idx=None,
                               k=5,
                               res=0.005):
+        """Partition cells into several graphs representing distinct lineages.
+        The algorithm applies Louvain clustering with low resolution.
+
+        Args:
+            adata (:class:anndata.AnnData):
+                Input Anndata Object
+            train_idx (:class:numpy.array, optional):
+                Indices of training samples. Defaults to None.
+            k (int, optional):
+                Number of neighbors used in Louvain clustering. Default to 5.
+            res (int, optional):
+                Resolution parameter used in Louvain clustering. Default to 0.005.
+        """
         # Partition the graph
         print("Graph Partition")
         if "partition" not in adata.obs:
@@ -388,9 +417,20 @@ class TransGraph():
     def _get_velocity_flow(self,
                            adata,
                            tkey,
-                           embed_key,
                            cluster_key,
                            vkey):
+        """Wrapper function for retreving the cross-boundary direction correctness (CBDir).
+
+        Args:
+            adata (:class:anndata.AnnData):
+                Input AnnData object.
+            tkey (str):
+                Key for inferred cell time in adata.obs.
+            cluster_key (str):
+                Key for cell type annotations in adata.obs.
+            vkey (str):
+                Key for RNA velocity in adata.layers.
+        """
         self.cbdir, _, self.tscore, _ = calibrated_cross_boundary_correctness(adata,
                                                                               cluster_key,
                                                                               vkey,
@@ -411,6 +451,24 @@ class TransGraph():
                           dt=(0.01, 0.05),
                           k=5,
                           soft_assign=True):
+        """Build a cell type transition graph using time-based KNN approach.
+
+        Args:
+            n_par (int, optional):
+                Number of possible parent cell type candidates. Defaults to 2.
+            dt (tuple, optional):
+                Timed window parameters. Defaults to (0.01, 0.05).
+            k (int, optional):
+                Number of neighbors. Defaults to 5.
+            soft_assign (bool, optional):
+                Whether to consider multiple parent cell types for each cell.
+                This affects graph edge weights since they are aggregated upon KNN cell pairs.
+                Defaults to True.
+
+        Returns:
+            :class:`numpy.ndarray`:
+                Raw transition weight matrix without normalization.
+        """
         self._get_init_time()
         # Compute cell-type transition probability
         print("Computing type-to-type transition probability")
@@ -450,14 +508,27 @@ class TransGraph():
         return P_raw
 
     def _velocity_based_graph(self, n_par=2):
+        """Build a cell type transition graph using velocity flows.
+
+        Args:
+            n_par (int, optional):
+                Number of possible parent cell type candidates. Defaults to 2.
+
+        Returns:
+            :class:`numpy.ndarray`:
+                Raw transition weight matrix without normalization.
+            In addition, the pruned graph will be stored in self.w.
+        """
         self._get_init_time()
         P_raw = np.zeros((self.n_type, self.n_type))
-        for pair in self.cbdir:
+        for key in self.cbdir:
+            arrow_idx = key.find('->')
+            pair = (key[:arrow_idx-1], key[arrow_idx+3:])
             i, j = self.label_dic[pair[1]], self.label_dic[pair[0]]
-            if self.tscore[pair] < 0.5 and self.cbdir[pair] < 0:
-                P_raw[i, j] = (1-self.tscore[pair])*(-self.cbdir[pair])
+            if self.tscore[key] < 0.5 and self.cbdir[key] < 0:
+                P_raw[i, j] = (1-self.tscore[key])*(-self.cbdir[key])
             else:
-                P_raw[i, j] = self.tscore[pair]*np.clip(self.cbdir[pair], 1e-16, None)
+                P_raw[i, j] = self.tscore[key]*np.clip(self.cbdir[key], 1e-16, None)
         P = np.zeros(P_raw.shape)
         for i in range(P.shape[0]):
             idx_sort = np.flip(np.argsort(P_raw[i]))
@@ -477,7 +548,7 @@ class TransGraph():
         psum[psum == 0] = 1
         P = P/psum.reshape(-1, 1)
 
-        self.w = P
+        self.w = P  # pruned graph
         return P_raw
 
     def compute_transition_deterministic(self,
@@ -487,29 +558,26 @@ class TransGraph():
                                          soft_assign=True):
         """Compute a type-to-type transition based a cell-to-cell transition matrix
 
-        Arguments
-        ---------
+        Args:
+            n_par (int):
+                Number of parents to keep in graph pruning.
+            dt (tuple):
+                Time window coefficient used in cell type transition counting.
+                For a cell with time t and a population with a time range of range_t,
+                we apply KNN to cells in the time window [dt[0]*range_t, dt[1]*range_t]
+                and the k nearest neighbors will be considered as the parents of the cell.
+                The frequency of cell type transition will be the approximated cell type
+                transition probability, which will be the weight of the transition graph.
+            k (int):
+                Number of neighbors in each time window.
+            soft_assign (bool):
+                If set to False, only one cell type will be counted as the parent for
+                each cell. Otherwise, we consider all transitions and aggregate them
+                across the cells.
 
-        n_par : int
-            Number of parents to keep in graph pruning.
-        dt : tuple
-            Time window coefficient used in cell type transition counting.
-            For a cell with time t and a population with a time range of range_t,
-            we apply KNN to cells in the time window [dt[0]*range_t, dt[1]*range_t]
-            and the k nearest neighbors will be considered as the parents of the cell.
-            The frequency of cell type transition will be the approximated cell type
-            transition probability, which will be the weight of the transition graph.
-        k : int
-            Number of neighbors in each time window.
-        soft_assign : bool
-            If set to False, only one cell type will be counted as the parent for
-            each cell. Otherwise, we consider all transitions and aggregate them
-            across the cells.
-
-        Returns
-        -------
-        out : `numpy array`
-            Cell type transition probability matrix
+        Returns:
+            :class:`numpy array`:
+                Cell type transition probability matrix
         """
         if self.use_vel_graph:
             P_raw = self._velocity_based_graph(n_par)
