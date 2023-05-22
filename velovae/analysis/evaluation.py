@@ -17,10 +17,14 @@ def get_n_cpu(n_cell):
 
 
 def get_velocity_metric_placeholder(cluster_edges):
-    cbdir_embed = dict.fromkeys(cluster_edges)
-    cbdir = dict.fromkeys(cluster_edges)
-    tscore = dict.fromkeys(cluster_edges)
-    iccoh = dict.fromkeys(cluster_edges)
+    # Convert tuples to a single string
+    cluster_edges_ = []
+    for pair in cluster_edges:
+        cluster_edges_.append(f'{pair[0]} -> {pair[1]}')
+    cbdir_embed = dict.fromkeys(cluster_edges_)
+    cbdir = dict.fromkeys(cluster_edges_)
+    tscore = dict.fromkeys(cluster_edges_)
+    iccoh = dict.fromkeys(cluster_edges_)
     return (iccoh, np.nan,
             cbdir_embed, np.nan,
             cbdir, np.nan,
