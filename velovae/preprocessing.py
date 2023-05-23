@@ -191,7 +191,7 @@ def preprocess(adata,
     """Run the entire preprocessing pipeline using scanpy
 
     Args:
-        adata (:class:`anndata.AnnData`): 
+        adata (:class:`anndata.AnnData`):
             AnnData object.
         n_gene (int, optional):
             Number of genes to keep. Defaults to 1000.
@@ -200,23 +200,35 @@ def preprocess(adata,
         tkey (str, optional):
             Key in adata.obs containing the capture time. Defaults to None.
         selection_method (str, optional):
-            {'scv','balanced'}. 
+            {'scv','balanced','wilcoxon'}.
             If set to 'balanced', the function will call balanced_gene_selection.
+            If set to 'wilcoxon', the function will call rank_gene_selection.
             Otherwise, it uses scanpy to pick highly variable genes.
             Defaults to "scv".
         min_count_per_cell (int, optional):
             Minimum total count per cell. Defaults to 0.
-        min_genes_expressed (int, optional): Defaults to None.
-        min_shared_counts (int, optional): Defaults to 10.
-        min_shared_cells (int, optional): Defaults to 10.
-        min_counts_s (int, optional): Defaults to None.
-        min_cells_s (int, optional): Defaults to None.
-        max_counts_s (int, optional): Defaults to None.
-        max_cells_s (int, optional): Defaults to None.
-        min_counts_u (int, optional): Defaults to None.
-        min_cells_u (int, optional): Defaults to None.
-        max_counts_u (int, optional): Defaults to None.
-        max_cells_u (int, optional): Defaults to None.
+        min_genes_expressed (int, optional):
+            Defaults to None.
+        min_shared_counts (int, optional):
+            Defaults to 10.
+        min_shared_cells (int, optional):
+            Defaults to 10.
+        min_counts_s (int, optional):
+            Defaults to None.
+        min_cells_s (int, optional):
+            Defaults to None.
+        max_counts_s (int, optional):
+            Defaults to None.
+        max_cells_s (int, optional):
+            Defaults to None.
+        min_counts_u (int, optional):
+            Defaults to None.
+        min_cells_u (int, optional):
+            Defaults to None.
+        max_counts_u (int, optional):
+            Defaults to None.
+        max_cells_u (int, optional):
+            Defaults to None.
         npc (int, optional):
             Number of PCA dimensions. Defaults to 30.
         n_neighbors (int, optional):

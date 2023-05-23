@@ -640,7 +640,8 @@ def plot_velocity(X_embed, vx, vy, save=None):
             Velocity in the x direction.
         vy (:class:`numpy.ndarray`):
             Velocity in the y direction.
-        save (str, optional): _description_. Defaults to None.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
     """
     umap1, umap2 = X_embed[:, 0], X_embed[:, 1]
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -957,7 +958,7 @@ def plot_phase_grid(Nr,
             If the labels are phase labels, then the legends are usually
             {'off', induction', 'repression'}.
             If the labels are cell type annotations, the legends will be the unique
-        cell type names.
+            cell type names.
         Uhat (dict, optional):
             Predicted unspliced counts.
             Keys are method names and values are arrays of size (N_pred, N_gene).
@@ -977,14 +978,17 @@ def plot_phase_grid(Nr,
             Transparency of the data points. Defaults to 0.2.
         downsample (int, optional):
             Down-sampling factor to display the data points.. Defaults to 1.
-        legend_fontsize (int/float, optional): Defaults to None.
+        legend_fontsize (int/float, optional):
+            Defaults to None.
         color_map (str, optional):
             User-defined colormap for cell labels. Defaults to None.
         path (str, optional):
             Path to the saved figure. Defaults to 'figures'.
         figname (_type_, optional):
             Name of the saved figure, without format at the end. Defaults to None.
-        format (str, optional): Figure format. Defaults to 'png'.
+        format (str, optional):
+            Figure format. Defaults to 'png'.
+
     """
     D = downsample
     methods = list(Uhat.keys())
@@ -1507,7 +1511,8 @@ def plot_sig_grid(Nr,
             Transparency of the data points.. Defaults to 1.0.
         down_sample (int, optional):
             Down-sampling factor to reduce the overlapping of data points. Defaults to 1.
-        legend_fontsize (int, optional): Defaults to None.
+        legend_fontsize (int, optional):
+            Defaults to None.
         sparsity_correction (bool, optional):
             Whether to sample u/s uniformly in the range to avoid
             sapling most zeros in sparse expression profiles.
@@ -1525,6 +1530,7 @@ def plot_sig_grid(Nr,
             Figures will not be saved if set to None. Defaults to None.
         format (str, optional):
             Figure format, could be png, pdf, svg, eps and ps. Defaults to 'png'.
+
     """
     methods = list(Uhat.keys())
     M = max(1, len(methods))
@@ -2019,13 +2025,15 @@ def plot_rate_grid(adata,
         plot_depth (bool, optional):
             Whether to plot the depth in transition graph as a surrogate of time.
             Set to true by default for better visualization. Defaults to True.
-        color_map (str, optional): Defaults to None.
+        color_map (str, optional):
+            Defaults to None.
         path (str, optional):
             Path to the folder for saving the figure. Defaults to "figures".
         figname (str, optional):
             Name of the saved figure. Defaults to "genes".
         format (str, optional):
             Figure format, could be png, pdf, svg, eps and ps. Defaults to 'png'. Defaults to "png".
+
     """
     Nfig = len(gene_list) // (Nr*Nc)
     if Nfig * Nr * Nc < len(gene_list):
@@ -2157,7 +2165,7 @@ def plot_velocity_stream(X_embed,
                          figsize=(8, 6),
                          save='figures/velstream.png'):
     """
-    .. deprecated:: 1.0
+    .. deprecated:: 0.1.0
     """
     # Compute velocity on a grid
     knn_model = pynndescent.NNDescent(X_embed, n_neighbors=2*k)
@@ -2236,7 +2244,7 @@ def plot_cell_trajectory(X_embed,
                          color_map=None,
                          save=None):
     """Plot the velocity stream based on time. This is not stable yet and we suggest not using it for now.
-    .. deprecated:: 1.0
+    .. deprecated:: 0.1.0
     """
     # Compute the time on a grid
     knn_model = pynndescent.NNDescent(X_embed, n_neighbors=k+20)
@@ -2332,7 +2340,7 @@ def plot_velocity_3d(X_embed,
     """3D velocity quiver plot.
     Arrows follow the direction of time to nearby points.
     This is not stable yet and we suggest not using it for now.
-    .. deprecated:: 1.0
+    .. deprecated:: 0.1.0
     """
     fig = plt.figure(figsize=(30, 15))
     ax = fig.add_subplot(projection='3d')
@@ -2483,14 +2491,17 @@ def plot_trajectory_3d(X_embed,
             Parameter to control boundary detection. Defaults to 1.5.
         angle (tuple, optional):
             Angle of the 3D plot. Defaults to (15, 45).
-        figsize (tuple, optional): Defaults to (12, 9).
+        figsize (tuple, optional):
+            Defaults to (12, 9).
         eps_t (float, optional):
             Parameter to control the relative time order of cells. Defaults to None.
-        color_map (str, optional): Defaults to None.
+        color_map (str, optional):
+            Defaults to None.
         embed (str, optional):
             Name of the embedding.. Defaults to 'umap'.
         save (str, optional):
             Figure name for saving (including path). Defaults to None.
+
     """
     t_clip = np.clip(t, np.quantile(t, 0.01), np.quantile(t, 0.99))
     range_z = np.max(X_embed.max(0) - X_embed.min(0))
@@ -2620,10 +2631,13 @@ def plot_transition_graph(adata,
             AnnData object.
         key (str, optional):
             Key used to extract the transition probability from .uns. Defaults to "brode".
-        figsize (tuple, optional): Defaults to (4, 8).
-        color_map (str, optional): Defaults to None.
+        figsize (tuple, optional):
+            Defaults to (4, 8).
+        color_map (str, optional):
+            Defaults to None.
         save (str, optional):
             Figure name for saving (including path). Defaults to None.
+
     """
     fig, ax = plt.subplots(figsize=figsize)
     adj_mtx = adata.uns[f"{key}_w"]
@@ -2690,8 +2704,9 @@ def plot_rate_hist(adata, model, key, tprior='tprior', figsize=(18, 4), save="fi
             This is used to convert rates to transcript/minute.
             If not provided or doesn't exist in adata, we assume the experiment lasts
             one day. Defaults to 'tprior'.
-        figsize (tuple, optional): Defaults to (18, 4).
-        save (str, optional): 
+        figsize (tuple, optional):
+            Defaults to (18, 4).
+        save (str, optional):
             Figure name for saving (including path). Defaults to "figures/hist.png".
     """
     if 'Discrete' in model:

@@ -28,10 +28,12 @@ def rna_velocity_vanillavae(adata,
             Results will be saved to adata by default. Defaults to False.
 
     Returns:
-        Vu (:class:`numpy.ndarray`): Velocity of u
-        V (:class:`numpy.ndarray`): Velocity of s
-        U (:class:`numpy.ndarray`): Predicted u values
-        S (:class:`numpy.ndarray`): Predicted s values
+        tuple containing:
+
+            - Vu (:class:`numpy.ndarray`): Velocity of u
+            - V (:class:`numpy.ndarray`): Velocity of s
+            - U (:class:`numpy.ndarray`): Predicted u values
+            - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()
@@ -105,10 +107,12 @@ def rna_velocity_vae(adata,
             Results will be saved to adata by default. Defaults to False.
 
     Returns:
-        Vu (:class:`numpy.ndarray`): Velocity of u
-        V (:class:`numpy.ndarray`): Velocity of s
-        U (:class:`numpy.ndarray`): Predicted u values
-        S (:class:`numpy.ndarray`): Predicted s values
+        tuple containing:
+
+            - Vu (:class:`numpy.ndarray`): Velocity of u
+            - V (:class:`numpy.ndarray`): Velocity of s
+            - U (:class:`numpy.ndarray`): Predicted u values
+            - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy()) if full_vb\
         else adata.var[f"{key}_alpha"].to_numpy()
@@ -185,10 +189,12 @@ def rna_velocity_brode(adata,
             Results will be saved to adata by default. Defaults to False.
 
     Returns:
-        Vu (:class:`numpy.ndarray`): Velocity of u
-        V (:class:`numpy.ndarray`): Velocity of s
-        U (:class:`numpy.ndarray`): Predicted u values
-        S (:class:`numpy.ndarray`): Predicted s values
+        tuple containing:
+
+            - Vu (:class:`numpy.ndarray`): Velocity of u
+            - V (:class:`numpy.ndarray`): Velocity of s
+            - U (:class:`numpy.ndarray`): Predicted u values
+            - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = adata.varm[f"{key}_alpha"].T
     beta = adata.varm[f"{key}_beta"].T
@@ -266,10 +272,12 @@ def rna_velocity_cyclevae(adata,
             Results will be saved to adata by default. Defaults to False.
 
     Returns:
-        Vu (:class:`numpy.ndarray`): Velocity of u
-        V (:class:`numpy.ndarray`): Velocity of s
-        U (:class:`numpy.ndarray`): Predicted u values
-        S (:class:`numpy.ndarray`): Predicted s values
+        tuple containing:
+
+            - Vu (:class:`numpy.ndarray`): Velocity of u
+            - V (:class:`numpy.ndarray`): Velocity of s
+            - U (:class:`numpy.ndarray`): Predicted u values
+            - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()

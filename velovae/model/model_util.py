@@ -824,8 +824,10 @@ def encode_type(cell_types_raw):
             unique cell types in a dataset
 
     Returns:
-        label_dic (dict): mapping from cell types to integers
-        label_dic_rev (dict): inverse mapping from integers to cell types
+        tuple containing:
+
+            - label_dic (dict): mapping from cell types to integers
+            - label_dic_rev (dict): inverse mapping from integers to cell types
     """
     # Map cell types to integers
     label_dic = {}
@@ -991,6 +993,7 @@ def get_x0_tree(par, neg_slope=0.0, eps=1e-6, **kwargs):
 
 def ode_br(t, y, par, neg_slope=0.0, eps=1e-6, **kwargs):
     """(PyTorch Version) Branching ODE solution.
+    See the documentation of ode_br_numpy for details.
     """
     alpha, beta, gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma']  # tensor shape: (N type, G)
     t_trans = kwargs['t_trans']
@@ -1075,8 +1078,10 @@ def ode_br_numpy(t, y, par, eps=1e-6, **kwargs):
             Genewise scaling factor between unspliced and spliced counts.
 
     Returns:
-        :class:`numpy.ndarray`: Predicted u values, (N, G)
-        :class:`numpy.ndarray`: Predicted s values, (N, G)
+        tuple containing:
+
+            - :class:`numpy.ndarray`: Predicted u values, (N, G)
+            - :class:`numpy.ndarray`: Predicted s values, (N, G)
     """
     alpha, beta, gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma']  # array shape: (N type, G)
     t_trans = kwargs['t_trans']

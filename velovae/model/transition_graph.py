@@ -321,6 +321,8 @@ def edmond_chu_liu(graph, r):
 
 
 class TransGraph():
+    """Transiton Graph
+    """
     def __init__(self,
                  adata,
                  tkey,
@@ -517,6 +519,7 @@ class TransGraph():
         Returns:
             :class:`numpy.ndarray`:
                 Raw transition weight matrix without normalization.
+
             In addition, the pruned graph will be stored in self.w.
         """
         self._get_init_time()

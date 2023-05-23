@@ -188,6 +188,7 @@ class BrODE():
 
         Args:
             adata (:class:`anndata.AnnData`):
+                AnnData object.
             cluster_key (str):
                 Key in adata.obs storing the cell type annotation.
             tkey (str):
@@ -356,15 +357,16 @@ class BrODE():
         """Training in each epoch with early stopping.
 
         Args:
-            train_loader (:class:torch.utils.data.DataLoader):
+            train_loader (:class:`torch.utils.data.DataLoader`):
                 Data loader of the input data.
-            test_set (:class:torch.utils.data.Dataset):
+            test_set (:class:`torch.utils.data.Dataset`):
                 Validation dataset
-            optimizer (optimizer from :class:torch.optim):
+            optimizer (optimizer from :class:`torch.optim`):
                 Optimizer for ODE parameters.
 
         Returns:
-            bool: Whether to stop training based on the early stopping criterium.
+            bool:
+                Whether to stop training based on the early stopping criterium.
         """
         self.set_mode('train')
         stop_training = False
@@ -461,24 +463,24 @@ class BrODE():
               figure_path="figures"):
         """Train the model.
 
-        Arguments
-        ---------
-        adata : :class:`anndata.AnnData`
-        tkey : str
-            Key in adata.obs storing the latent cell time
-        cluster_key : str
-            Key in adata.obs storing the cell type annotation.
-        config : dictionary, optional
-            Contains training hyperparameters.
-            All hyperparameters have default values, so users don't need to set every one of them.
-        plot : bool, optional
-            Whether to generate gene plots during training. Used mainly for debugging.
-        gene_plot : `numpy array` or string list, optional
-            Genes to plot during training. Effective only if 'plot' is set to True
-        figure_path : str, optional
-            Path to the folder to save figures
-        embed : str, optional
-            2D embedding name in .obsm for visualization.
+        Args:
+            adata (:class:`anndata.AnnData`):
+                AnnData object.
+            tkey (str):
+                Key in adata.obs storing the latent cell time
+            cluster_key (str):
+                Contains training hyperparameters.
+            config (dict, optional):
+                All hyperparameters have default values, so users don't need to set every one of them.
+                Key in adata.obs storing the cell type annotation. Defaults to {}.
+            plot (bool, optional):
+                Whether to generate gene plots during training.
+                Used mainly for debugging.. Defaults to False.
+            gene_plot (list, optional):
+                Genes to plot during training.
+                Effective only if 'plot' is set to True. Defaults to [].
+            figure_path (str, optional):
+                Path to the folder to save figures. Defaults to "figures".
         """
         self.tkey = tkey
         self.cluster_key = cluster_key
@@ -588,17 +590,19 @@ class BrODE():
         """Generate different types of predictions from the model for all cells.
 
         Args:
-            data (:class:torch.Tensor):
+            data (:class:`torch.Tensor`):
                 Input cell-by-gene tensor, with U and S concatenated at the gene dimension (dim=1).
-            cell_labels (:class:torch.Tensor):
+            cell_labels (:class:`torch.Tensor`):
                 Cell type annotations encoded in integers.
             gene_idx (array like, optional):
                 Indices of genes for subsetting.
                 If set to None, only the log likelihood will be computed. Defaults to None.
 
         Returns:
-            :class:`torch.Tensor`: Predicted unspliced and spliced counts.
-            float: ODE training/validation loss.
+            tuple containing:
+
+                - :class:`torch.Tensor`: Predicted unspliced and spliced counts.
+                - float: ODE training/validation loss.
         """
         N, G = data.shape
         G = G//2

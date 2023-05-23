@@ -40,7 +40,8 @@ def get_velocity_metric(adata,
                         gene_mask=None,
                         embed='umap',
                         n_jobs=None):
-    """Computes Cross-Boundary Direction Correctness and In-Cluster Coherence.
+    """
+    Computes Cross-Boundary Direction Correctness and In-Cluster Coherence.
     The function calls scvelo.tl.velocity_graph.
 
     Args:
@@ -64,15 +65,17 @@ def get_velocity_metric(adata,
             Number of parallel jobs. Defaults to None.
 
     Returns:
-        dict: In-Cluster Coherence per cell type transition
-        float: Mean In-Cluster Coherence
-        dict: CBDir per cell type transition
-        float: Mean CBDir
-        dict: CBDir (embedding) per cell type transition
-        float: Mean CBDir (embedding)
-        dict: Time Accuracy Score per cell type transition
-        float: Mean Time Accuracy Score
-        float: Velocity Consistency
+        tuple containing:
+
+            - dict: In-Cluster Coherence per cell type transition
+            - float: Mean In-Cluster Coherence
+            - dict: CBDir per cell type transition
+            - float: Mean CBDir
+            - dict: CBDir (embedding) per cell type transition
+            - float: Mean CBDir (embedding)
+            - dict: Time Accuracy Score per cell type transition
+            - float: Mean Time Accuracy Score
+            - float: Velocity Consistency
     """
     mean_constcy_score = velocity_consistency(adata, vkey, gene_mask)
     if cluster_edges is not None:
@@ -123,7 +126,8 @@ def get_metric(adata,
                cluster_edges=None,
                embed='umap',
                n_jobs=None):
-    """Get performance metrics given a method.
+    """
+    Get performance metrics given a method.
 
     Args:
         adata (:class:`anndata.AnnData`):
@@ -383,9 +387,10 @@ def post_analysis(adata,
             Figure format. Default to 'png'.
 
     Returns:
-        :class:`pandas.DataFrame`: Contains the dataset-wise performance metrics of all methods.
-        :class:`pandas.DataFrame`: Contains the performance metrics of each pair of ancestor.
-        and desendant cell types.
+        tuple containing:
+        
+            - :class:`pandas.DataFrame`: Contains the dataset-wise performance metrics of all methods.
+            - :class:`pandas.DataFrame`: Contains the performance metrics of each pair of ancestor and desendant cell types.
 
         Saves the figures to 'figure_path'.
 

@@ -9,7 +9,7 @@ class PerfLogger:
     """Class for saving the performance metrics
     """
     def __init__(self, save_path='perf', checkpoints=None):
-        """_summary_
+        """Constructor
 
         Args:
             save_path (str, optional):

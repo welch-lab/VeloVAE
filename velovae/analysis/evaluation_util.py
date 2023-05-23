@@ -31,7 +31,8 @@ def poisson_log_likelihood(mu, obs):
 
 
 def cell_state(adata, method, key, gene_indices=None, **kwargs):
-    """Assigns cells to one of three states: 'off', 'induction' or 'repression'.
+    """
+    Assigns cells to one of three states: 'off', 'induction' or 'repression'.
 
     Args:
         adata (:class:`anndata.AnnData`):
@@ -91,7 +92,8 @@ def cell_state(adata, method, key, gene_indices=None, **kwargs):
 
 
 def get_err_scv(adata, key='fit'):
-    """Get performance metrics from scVelo results.
+    """
+    Get performance metrics from scVelo results.
     """
     Uhat, Shat = scv_pred(adata, key)
     mse = get_mse(adata.layers['Mu'], adata.layers['Ms'], Uhat, Shat)
@@ -104,7 +106,8 @@ def get_err_scv(adata, key='fit'):
 
 
 def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
-    """Get prediction from scVelo for plotting.
+    """
+    Get prediction from scVelo for plotting.
     """
     if genes is None:
         genes = adata.var_names
@@ -139,7 +142,8 @@ def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
 
 
 def get_pred_vanilla(adata, key):
-    """Get prediction from vanilla VAE.
+    """
+    Get prediction from vanilla VAE.
     """
     # Vanilla VAE
     alpha = adata.var[f"{key}_alpha"].to_numpy()
@@ -159,7 +163,8 @@ def get_pred_vanilla(adata, key):
 
 
 def get_err_vanilla(adata, key, gene_mask=None):
-    """Get performance metrics from vanilla VAE results.
+    """
+    Get performance metrics from vanilla VAE results.
     """
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     Uhat, Shat = get_pred_vanilla(adata, key)
@@ -199,7 +204,8 @@ def get_err_vanilla(adata, key, gene_mask=None):
 
 
 def get_pred_vanilla_demo(adata, key, genes=None, N=100):
-    """Get prediction from scVelo for plotting.
+    """
+    Get prediction from scVelo for plotting.
     """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()
@@ -225,93 +231,10 @@ def get_pred_vanilla_demo(adata, key, genes=None, N=100):
     return t_demo, Uhat_demo, Shat_demo
 
 
-# Cycle VAE
-
-
-def get_pred_cycle(adata, key):
-    """Get prediction from CycleVAE.
-    """
-    alpha = adata.var[f"{key}_alpha"].to_numpy()
-    beta = adata.var[f"{key}_beta"].to_numpy()
-    gamma = adata.var[f"{key}_gamma"].to_numpy()
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
-
-    if (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers):
-        t = adata.obs[f"{key}_time"].to_numpy()
-        ton = adata.var[f"{key}_ton"].to_numpy()
-        toff = adata.var[f"{key}_toff"].to_numpy()
-        Uhat, Shat = ode_numpy(t.reshape(-1, 1), alpha, beta, gamma, ton, toff, scaling)
-    else:
-        Uhat, Shat = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
-
-    return Uhat, Shat
-
-
-def get_err_cycle(adata, key, gene_mask=None):
-    """Get performance metrics from CycleVAE results.
-    """
-    U, S = adata.layers["Mu"], adata.layers["Ms"]
-    Uhat, Shat = get_pred_cycle(adata, key)
-    train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
-
-    if gene_mask is None:
-        gene_mask = np.ones((adata.n_vars)).astype(bool)
-
-    sigma_u = adata.var[f"{key}_sigma_u"].to_numpy()[gene_mask]
-    sigma_s = adata.var[f"{key}_sigma_s"].to_numpy()[gene_mask]
-    dist_u_train = np.abs(U[train_idx][:, gene_mask]-Uhat[train_idx][:, gene_mask])
-    dist_s_train = np.abs(S[train_idx][:, gene_mask]-Shat[train_idx][:, gene_mask])
-    dist_u_test = np.abs(U[test_idx][:, gene_mask]-Uhat[test_idx][:, gene_mask])
-    dist_s_test = np.abs(S[test_idx][:, gene_mask]-Shat[test_idx][:, gene_mask])
-
-    logp_train = -dist_u_train**2/(2*sigma_u**2) \
-        - dist_s_train**2/(2*sigma_s**2) \
-        - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
-    logp_test = -dist_u_test**2/(2*sigma_u**2) \
-        - dist_s_test**2/(2*sigma_s**2) \
-        - np.log(sigma_u) - np.log(sigma_s) - np.log(2*np.pi)
-    mse_train = np.nanmean(dist_u_train**2+dist_s_train**2)
-    mse_test = np.nanmean(dist_u_test**2+dist_s_test**2)
-    mae_train = np.nanmean(dist_u_train+dist_s_train)
-    mae_test = np.nanmean(dist_u_test+dist_s_test)
-
-    logp_train = np.nanmean(np.sum(logp_train, 1))
-    logp_test = np.nanmean(np.sum(logp_test, 1))
-
-    return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
-
-
-def get_pred_cycle_demo(adata, key, genes=None, N=100):
-    """Get prediction from CycleVAE for plotting.
-    """
-    alpha = adata.var[f"{key}_alpha"].to_numpy()
-    beta = adata.var[f"{key}_beta"].to_numpy()
-    gamma = adata.var[f"{key}_gamma"].to_numpy()
-    scaling = adata.var[f"{key}_scaling"].to_numpy()
-    t = adata.obs[f"{key}_time"].to_numpy()
-    ton = adata.var[f"{key}_ton"].to_numpy()
-    toff = adata.var[f"{key}_toff"].to_numpy()
-
-    t_demo = np.linspace(t.min(), t.max(), N)
-
-    if genes is None:
-        Uhat_demo, Shat_demo = ode_numpy(t_demo.reshape(-1, 1), alpha, beta, gamma, ton, toff, scaling)
-    else:
-        gene_indices = np.array([np.where(adata.var_names == x)[0][0] for x in genes])
-        Uhat_demo, Shat_demo = ode_numpy(t_demo.reshape(-1, 1),
-                                         alpha[gene_indices],
-                                         beta[gene_indices],
-                                         gamma[gene_indices],
-                                         ton[gene_indices],
-                                         toff[gene_indices],
-                                         scaling[gene_indices])
-
-    return t_demo, Uhat_demo, Shat_demo
-
-
 # VeloVAE
 def get_pred_velovae(adata, key, scv_key=None, full_vb=False, discrete=False):
-    """Get prediction from VeloVAE.
+    """
+    Get prediction from VeloVAE.
     """
     if (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers):
         rho = adata.layers[f"{key}_rho"]
@@ -336,7 +259,8 @@ def get_pred_velovae(adata, key, scv_key=None, full_vb=False, discrete=False):
 
 
 def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n_sample=25, seed=2022):
-    """Get performance metrics from VeloVAE results.
+    """
+    Get performance metrics from VeloVAE results.
     """
     Uhat, Shat = get_pred_velovae(adata, key, full_vb, discrete)
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
@@ -431,7 +355,8 @@ def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n
 
 
 def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False):
-    """Get prediction from VeloVAE for plotting.
+    """
+    Get prediction from VeloVAE for plotting.
     """
     if (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers):
         alpha = (adata.var[f"{key}_alpha"].to_numpy() if not full_vb else
@@ -474,7 +399,8 @@ def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False)
 
 # Branching ODE
 def get_pred_brode(adata, key):
-    """Get prediction from Branching ODE.
+    """
+    Get prediction from Branching ODE.
     """
     if (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers):
         alpha = adata.varm[f"{key}_alpha"]
@@ -509,7 +435,8 @@ def get_pred_brode(adata, key):
 
 
 def get_err_brode(adata, key, gene_mask=None):
-    """Get performance metrics from Branching ODE results.
+    """
+    Get performance metrics from Branching ODE results.
     """
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     Uhat, Shat = get_pred_brode(adata, key)
@@ -556,7 +483,8 @@ def get_err_brode(adata, key, gene_mask=None):
 
 
 def get_pred_brode_demo(adata, key, genes=None, N=None):
-    """Get prediction from Branching ODE for plotting.
+    """
+    Get prediction from Branching ODE for plotting.
     """
     if isinstance(N, int):
         t_trans = adata.uns[f"{key}_t_trans"]
@@ -611,7 +539,8 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
 
 
 def get_pred_utv(adata, B=5000):
-    """Get prediction from UniTVelo.
+    """
+    Get prediction from UniTVelo.
     """
     t = adata.layers['fit_t']
     o = adata.var['fit_offset'].values
@@ -635,7 +564,8 @@ def get_pred_utv(adata, B=5000):
 
 
 def get_err_utv(adata, key, gene_mask=None, B=5000):
-    """Get performance metrics from UniTVelo results.
+    """
+    Get performance metrics from UniTVelo results.
     """
     Uhat, Shat = get_pred_utv(adata, B)
     U, S = adata.layers['Mu'], adata.layers['Ms']
@@ -665,7 +595,8 @@ def get_err_utv(adata, key, gene_mask=None, B=5000):
 
 
 def get_pred_utv_demo(adata, genes=None, N=100):
-    """Get prediction from UniTVelo for plotting.
+    """
+    Get prediction from UniTVelo for plotting.
     """
     t = adata.layers['fit_t']
 
@@ -813,7 +744,8 @@ def _loss_dv(
 
 
 def get_err_dv(adata, key, gene_mask=None):
-    """Get performance metrics from DeepVelo results.
+    """
+    Get performance metrics from DeepVelo results.
     """
     if gene_mask is None:
         gene_mask = np.array(range(adata.n_vars))
@@ -871,7 +803,8 @@ def get_err_dv(adata, key, gene_mask=None):
 # bioRxiv.
 ##########################################################################
 def get_err_pv(adata, key, gene_mask=None, discrete=True):
-    """Get performance metrics from PyroVelocity results.
+    """
+    Get performance metrics from PyroVelocity results.
     """
     if 'err' in adata.uns:
         err_dic = adata.uns['err']
@@ -941,7 +874,8 @@ def get_err_pv(adata, key, gene_mask=None, discrete=True):
 # for RNA velocity analysis in single cells." bioRxiv (2022).
 ##########################################################################
 def get_err_velovi(adata, key, gene_mask=None):
-    """Get performance metrics from VeloVI results.
+    """
+    Get performance metrics from VeloVI results.
     """
     if gene_mask is None:
         gene_mask = np.ones((adata.n_vars)).astype(bool)
@@ -992,7 +926,8 @@ def get_err_velovi(adata, key, gene_mask=None):
 
 
 def summary_scores(all_scores):
-    """Summarize group scores.
+    """
+    Summarize group scores.
 
     Args:
         all_scores (dict{str,list}):
@@ -1008,7 +943,8 @@ def summary_scores(all_scores):
 
 
 def keep_type(adata, nodes, target, k_cluster):
-    """Select cells of targeted type
+    """
+    Select cells of targeted type
 
     Args:
         adata (anndata.AnnData):
@@ -1702,7 +1638,8 @@ G2M_GENES_MOUSE = ['Hmgb2', 'Cdk1', 'Nusap1', 'Ube2c', 'Birc5', 'Tpx2', 'Top2a',
 
 
 def assign_phase(adata, model='human', embed='umap', save=None):
-    """Assign cell cycle phases
+    """
+    Assign cell cycle phases
 
     Args:
         adata (:class:`anndata.AnnData`):
