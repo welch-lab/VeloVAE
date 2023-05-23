@@ -1,3 +1,5 @@
+"""Model utility functions
+"""
 import numpy as np
 import os
 import torch
@@ -12,14 +14,13 @@ from sklearn.cluster import SpectralClustering, KMeans
 from scipy.stats import dirichlet, bernoulli, kstest, linregress
 from scipy.linalg import svdvals
 
-"""
-Dynamical Model
-
-Reference:
-Bergen, V., Lange, M., Peidli, S., Wolf, F. A., & Theis, F. J. (2020).
-Generalizing RNA velocity to transient cell states through dynamical modeling.
-Nature biotechnology, 38(12), 1408-1414.
-"""
+###################################################################################
+# Dynamical Model
+# Reference:
+# Bergen, V., Lange, M., Peidli, S., Wolf, F. A., & Theis, F. J. (2020).
+# Generalizing RNA velocity to transient cell states through dynamical modeling.
+# Nature biotechnology, 38(12), 1408-1414.
+###################################################################################
 
 
 def scv_pred_single(t, alpha, beta, gamma, ts, scaling=1.0, uinit=0, sinit=0):
@@ -60,10 +61,8 @@ def scv_pred(adata, key, glist=None):
 
     return ut, st
 
+#End of Reference
 
-"""
-End of Reference
-"""
 
 ############################################################
 # Shared among all VAEs
@@ -150,14 +149,13 @@ def pred_su_back(tau, u1, s1, alpha, beta, gamma):
     return nn.functional.relu(upred), nn.functional.relu(spred)
 
 
-"""
-Initialization Methods
-
-Reference:
-Bergen, V., Lange, M., Peidli, S., Wolf, F. A., & Theis, F. J. (2020).
-Generalizing RNA velocity to transient cell states through dynamical modeling.
-Nature biotechnology, 38(12), 1408-1414.
-"""
+###################################################################################
+# Initialization Methods
+# Reference:
+# Bergen, V., Lange, M., Peidli, S., Wolf, F. A., & Theis, F. J. (2020).
+# Generalizing RNA velocity to transient cell states through dynamical modeling.
+# Nature biotechnology, 38(12), 1408-1414.
+###################################################################################
 
 
 def scale_by_gene(U, S, train_idx=None, mode='scale_u'):
@@ -416,113 +414,9 @@ def init_params(data, percent, fit_offset=False, fit_scaling=True, eps=1e-3):
     return params[:, 0], params[:, 1], params[:, 2], params[:, 3], Ts, U0, S0, sigma_u, sigma_s, T.T, gene_score
 
 
-"""
-Initialization for raw read counts
-"""
-
-
-def logp_poisson(x, rate):
-    return x*np.log(rate)-rate-loggamma(x+1)
-
-
-def init_gene_raw(s, u, percent, fit_scaling=False, poisson_model=True, kde=True):
-    # Adopted from scvelo
-    std_u, std_s = np.std(u), np.std(s)
-    scaling = std_u / std_s if fit_scaling else 1.0
-    u = u/scaling
-    # Pick Quantiles
-    # initialize beta and gamma from extreme quantiles of s
-    mask_s = s >= max(1, np.percentile(s, percent, axis=0))
-    mask_u = u >= max(1, np.percentile(u, percent, axis=0))
-    mask = mask_s & mask_u
-    if not np.any(mask):
-        mask = mask_u | mask_s
-    # Initialize alpha, beta and gamma
-    beta = 1
-    gamma = linreg(u[mask], s[mask]) + 1e-6
-    if gamma < 0.05 / scaling:
-        gamma *= 1.2
-    elif gamma > 1.5 / scaling:
-        gamma /= 1.2
-    u_inf, s_inf = u[mask].mean(), s[mask].mean()
-    u0_, s0_ = u_inf, s_inf
-    alpha = u_inf*beta
-    if alpha == 0:
-        print(np.percentile(s, percent, axis=0), np.percentile(u, percent, axis=0))
-        print(u[mask], s[mask])
-
-    # initialize switching from u quantiles and alpha from s quantiles
-    tstat_u, pval_u, means_u = test_bimodality(u, kde=kde)
-    tstat_s, pval_s, means_s = test_bimodality(s, kde=kde)
-    pval_steady = max(pval_u, pval_s)
-    steady_u = means_u[1]
-    if pval_steady < 1e-3:
-        u_inf = np.mean([u_inf, steady_u])
-        alpha = gamma * s_inf
-        beta = alpha / u_inf
-        u0_, s0_ = u_inf, s_inf
-    t_ = tau_inv(u0_, s0_, 0, 0, alpha, beta, gamma)  # time to reach steady state
-    tau = tau_inv(u, s, 0, 0, alpha, beta, gamma)  # induction
-    tau = np.clip(tau, 0, t_)
-    tau_ = tau_inv(u, s, u0_, s0_, 0, beta, gamma)  # repression
-    tau_ = np.clip(tau_, 0, np.max(tau_[s > 0]))
-    t = np.array([tau, tau_+np.ones((len(tau_)))*t_])
-
-    ut, st = mRNA(tau, 0, 0, alpha, beta, gamma)
-    ut_, st_ = mRNA(tau_, u0_, s0_, 0, beta, gamma)
-
-    if poisson_model:
-        logp_u, logp_u_ = logp_poisson(u, ut), logp_poisson(u, ut_)
-        logp_s, logp_s_ = logp_poisson(s, st), logp_poisson(s, st_)
-        logp = np.array([logp_u+logp_s, logp_u_+logp_s_])
-        o = np.argmax(logp, axis=0)
-    else:
-        distu, distu_ = (u - ut), (u - ut_)
-        dists, dists_ = (s - st), (s - st_)
-        res = np.array([distu ** 2 + dists ** 2, distu_ ** 2 + dists_ ** 2])
-        o = np.argmin(res, axis=0)
-    t_latent = np.array([t[o[i], i] for i in range(len(tau))])
-    return alpha, beta, gamma, t_latent, u0_, s0_, t_, scaling
-
-
-def init_params_raw(data, percent, fit_offset=False, fit_scaling=True, eps=1e-3):
-    # Adopted from SCVELO
-    # Use the steady-state model to estimate alpha, beta,
-    # gamma and the latent time
-    # data: ncell x (2*ngene) tensor
-    # percent: percentage limit to pick the data
-    # Output: a ncellx4 2D array of parameters
-    ngene = data.shape[1]//2
-    u = data[:, :ngene]
-    s = data[:, ngene:]
-
-    params = np.ones((ngene, 4))  # four parameters: alpha, beta, gamma, scaling
-    params[:, 0] = np.random.rand((ngene))*np.max(u, 0)
-    params[:, 2] = np.clip(np.random.rand((ngene))*np.max(u, 0)/(np.max(s, 0)+1e-10), eps, None)
-    T = np.zeros((ngene, len(s)))
-    Ts = np.zeros((ngene))
-    U0, S0 = np.zeros((ngene)), np.zeros((ngene))  # Steady-1 State
-
-    for i in trange(ngene):
-        si, ui = s[:, i], u[:, i]
-        sfilt, ufilt = si[(si > 0) & (ui > 0)], ui[(si > 0) & (ui > 0)]  # Use only nonzero data points
-        if len(sfilt) > 3 and len(ufilt) > 3:
-            alpha, beta, gamma, t, u0_, s0_, ts, scaling = init_gene_raw(si, ui, percent, fit_scaling)
-            params[i, :] = np.array([alpha, beta, np.clip(gamma, eps, None), scaling])
-            T[i] = t
-            U0[i] = u0_
-            S0[i] = s0_
-            Ts[i] = ts
-        else:
-            U0[i] = np.max(u)
-            S0[i] = np.max(s)
-
-    return params[:, 0], params[:, 1], params[:, 2], params[:, 3], Ts, U0, S0, T.T
-
-
-"""
-Reinitialization based on the global time
-"""
+###################################################################################
+# Reinitialization based on the global time
+###################################################################################
 
 
 def get_ts_global(tgl, U, S, perc):
@@ -848,17 +742,18 @@ def ode_numpy(t, alpha, beta, gamma, to, ts, scaling=None, k=10.0):
     """(Numpy Version) ODE solution with fixed rates
 
     Args:
-        t (`numpy array`): Cell time, (N,1)
-        alpha (`numpy array`): Transcription rates
-        beta (`numpy array`): Splicing rates
-        gamma (`numpy array`): Degradation rates
-        to (`numpy array`): switch-on time
-        ts (`numpy array`): switch-off time (induction to repression)
-        scaling (numpy array, optional): Scaling factor (u / s). Defaults to None.
+        t (:class:`numpy.ndarray`): Cell time, (N,1)
+        alpha (:class:`numpy.ndarray`): Transcription rates
+        beta (:class:`numpy.ndarray`): Splicing rates
+        gamma (:class:`numpy.ndarray`): Degradation rates
+        to (:class:`numpy.ndarray`): switch-on time
+        ts (:class:`numpy.ndarray`): switch-off time (induction to repression)
+        scaling (:class:numpy array, optional): Scaling factor (u / s). Defaults to None.
         k (float, optional): Parameter for a smooth clip of tau. Defaults to 10.0.
 
     Returns:
-        tuple: returns the unspliced and spliced counts predicted by the ODE
+        tuple:
+            returns the unspliced and spliced counts predicted by the ODE
     """
     eps = 1e-6
     unstability = (np.abs(beta - gamma) < eps)
@@ -922,10 +817,18 @@ def ode(t, alpha, beta, gamma, to, ts, neg_slope=0.0):
 
 
 def encode_type(cell_types_raw):
-    ############################################################
-    # Use integer to encode the cell types
-    # Each cell type has one unique integer label.
-    ############################################################
+    """Use integer to encode the cell types
+
+    Args:
+        cell_types_raw (array like):
+            unique cell types in a dataset
+
+    Returns:
+        tuple containing:
+
+            - label_dic (dict): mapping from cell types to integers
+            - label_dic_rev (dict): inverse mapping from integers to cell types
+    """
     # Map cell types to integers
     label_dic = {}
     label_dic_rev = {}
@@ -937,10 +840,34 @@ def encode_type(cell_types_raw):
 
 
 def str2int(cell_labels_raw, label_dic):
+    """Convert cell type annotations to integers
+
+    Args:
+        cell_labels_raw (array like):
+            Cell type annotations
+        label_dic (dict):
+            mapping from cell types to integers
+
+    Returns:
+        :class:`numpy.ndarray`:
+            Integer encodings of cell type annotations.
+    """
     return np.array([label_dic[cell_labels_raw[i]] for i in range(len(cell_labels_raw))])
 
 
 def int2str(cell_labels, label_dic_rev):
+    """Convert integer encodings to original cell type annotations
+
+    Args:
+        cell_labels (array like):
+            Integer encodings of cell type annotations
+        label_dic (dict):
+            mapping from integers to cell types
+
+    Returns:
+        :class:`numpy.ndarray`:
+            Original cell type annotations.
+    """
     return np.array([label_dic_rev[cell_labels[i]] for i in range(len(cell_labels))])
 
 
@@ -1066,6 +993,7 @@ def get_x0_tree(par, neg_slope=0.0, eps=1e-6, **kwargs):
 
 def ode_br(t, y, par, neg_slope=0.0, eps=1e-6, **kwargs):
     """(PyTorch Version) Branching ODE solution.
+    See the documentation of ode_br_numpy for details.
     """
     alpha, beta, gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma']  # tensor shape: (N type, G)
     t_trans = kwargs['t_trans']
@@ -1129,19 +1057,31 @@ def ode_br_numpy(t, y, par, eps=1e-6, **kwargs):
     (Numpy Version)
     Branching ODE solution.
 
-    Arguments
-    ---------
-    t : `numpy array`
-        Cell time, (N,1)
-    y : `numpy array`
-        Cell type, encoded in integer, (N,)
-    par : `numpy array`
-        Parent cell type in the transition graph, (N_type,)
+    Args:
+        t (:class:`numpy.ndarray`):
+            Cell time, (N,1)
+        y (:class:`numpy.ndarray`):
+            Cell type, encoded in integer, (N,)
+        par (:class:`numpy.ndarray`):
+            Parent cell type in the transition graph, (N_type,)
 
-    Returns
-    -------
-    uhat, shat : `numpy array`
-        Predicted u and s values, (N,G)
+    kwargs:
+        alpha (:class:`numpy.ndarray`):
+            Transcription rates, (cell type by gene ).
+        beta (:class:`numpy.ndarray`):
+            Splicing rates, (cell type by gene ).
+        gamma (:class:`numpy.ndarray`):
+            Degradation rates, (cell type by gene ).
+        t_trans (:class:`numpy.ndarray`):
+            Start time of splicing dynamics of each cell type.
+        scaling (:class:`numpy.ndarray`):
+            Genewise scaling factor between unspliced and spliced counts.
+
+    Returns:
+        tuple containing:
+
+            - :class:`numpy.ndarray`: Predicted u values, (N, G)
+            - :class:`numpy.ndarray`: Predicted s values, (N, G)
     """
     alpha, beta, gamma = kwargs['alpha'], kwargs['beta'], kwargs['gamma']  # array shape: (N type, G)
     t_trans = kwargs['t_trans']
@@ -1163,25 +1103,6 @@ def ode_br_numpy(t, y, par, eps=1e-6, **kwargs):
         uhat[y == i] = uhat_i
         shat[y == i] = shat_i
     return uhat*scaling, shat
-
-
-############################################################
-#  Optimal Transport
-############################################################
-
-
-"""
-Geoffrey Schiebinger, Jian Shu, Marcin Tabaka, Brian Cleary, Vidya Subramanian,
-  Aryeh Solomon, Joshua Gould, Siyan Liu, Stacie Lin, Peter Berube, Lia Lee,
-  Jenny Chen, Justin Brumbaugh, Philippe Rigollet, Konrad Hochedlinger, Rudolf Jaenisch, Aviv Regev, Eric S. Lander,
-  Optimal-Transport Analysis of Single-Cell Gene Expression Identifies Developmental Trajectories in Reprogramming,
-  Cell,
-  Volume 176, Issue 4,
-  2019,
-  Pages 928-943.e22,
-  ISSN 0092-8674,
-  https://doi.org/10.1016/j.cell.2019.01.006.
-"""
 
 
 ############################################################
@@ -1362,17 +1283,12 @@ def knnx0_index(t,
                 ind = np.array([int])
             neighbor_index.append(indices[ind.flatten()].astype(int))
         elif k_ == 1:
-             neighbor_index.append(indices)
+            neighbor_index.append(indices)
         else:
             neighbor_index.append([])
             n1 = n1+1
     print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
     print(f"Average Set Size: {len_avg//Nq}")
-    for i in range(len(neighbor_index)):
-        try:
-            temp = len(neighbor_index[i])
-        except TypeError:
-            print(neighbor_index[i])
     return neighbor_index
 
 
@@ -1407,136 +1323,6 @@ def get_x0(U,
             u0[i] = u_end
             s0[i] = s_end
             t0[i] = t_98 + (t_98-t.min()) * 0.01
-    return u0, s0, t0
-
-
-def knnx0_quantile(U, S, t, z, t_query, z_query, dt, k, q=0.95):
-    ############################################################
-    # Given cell time and state, find KNN for each cell in a time window ahead of
-    # it. The KNNs are used to compute the initial condition for the ODE of
-    # the cell.
-    # 1-2.    U,S [2D array (N,G)]
-    #         Unspliced and Spliced count matrix
-    # 3-4.    t,z [1D array (N)]
-    #         Latent cell time and state used to build KNN
-    # 5-6.    t_query [1D array (N)]
-    #         Query cell time and state
-    # 7.      dt [float tuple]
-    #         Time window coefficient
-    # 8.      k [int]
-    #         Number of neighbors
-    ############################################################
-    Nq = len(t_query)
-    u0 = np.zeros((Nq, U.shape[1]))
-    s0 = np.zeros((Nq, S.shape[1]))
-    t0 = np.ones((Nq))*(t.min() - dt[0])
-
-    n1 = 0
-    len_avg = 0
-    for i in range(Nq):
-        t_ub, t_lb = t_query[i] - dt[0], t_query[i] - dt[1]
-        indices = np.where((t >= t_lb) & (t < t_ub))[0]
-        k_ = len(indices)
-        len_avg = len_avg+k_
-        if k_ > 0:
-            if k_ < k:
-                u0[i] = U[indices].mean(0)
-                s0[i] = S[indices].mean(0)
-                t0[i] = t[indices].mean()
-                n1 = n1+1
-            else:
-                knn_model = NearestNeighbors(n_neighbors=k)
-                knn_model.fit(z[indices])
-                dist, ind = knn_model.kneighbors(z_query[i:i+1])
-                u0[i] = np.quantile(U[indices[ind.squeeze()].astype(int)], q, 0)
-                s0[i] = np.quantile(S[indices[ind.squeeze()].astype(int)], q, 0)
-                t0[i] = np.mean(t[indices[ind.squeeze()].astype(int)])
-        else:
-            n1 = n1+1
-    print(f"Percentage of Invalid Sets: {n1/Nq:.3f}")
-    print(f"Average Set Size: {len_avg//Nq}")
-    return u0, s0, t0
-
-
-def knnx0_bin(U,
-              S,
-              t,
-              z,
-              t_query,
-              z_query,
-              dt,
-              k=None,
-              n_graph=10,
-              pruning_degree_multiplier=1.5,
-              diversify_prob=1.0,
-              max_bin_size=10000,
-              forward=False):
-    ############################################################
-    # Same functionality as knnx0, but with a different algorithm. Instead of computing
-    # a KNN graph for each cell, we divide the time line into several bins and compute
-    # a KNN for each bin. The parent of each cell is chosen from its previous bin.
-    ############################################################
-    tmin = min(t.min(), t_query.min())
-    Nq = len(t_query)
-    u0 = np.zeros((Nq, U.shape[1]))
-    s0 = np.zeros((Nq, S.shape[1]))
-    t0 = np.ones((Nq))*(t.min() - dt[0])
-
-    delta_t = (np.quantile(t, 0.99)-tmin+1e-6) / (n_graph+1)
-
-    # First Time Interval: Use the average of initial data points.
-    indices = np.where(t < tmin+delta_t)[0]
-    if len(indices) > max_bin_size:
-        indices = np.random.choice(indices, max_bin_size, replace=False)
-    mask_init = t < np.quantile(t[indices], 0.2)
-    u_init = U[mask_init].mean(0)
-    s_init = S[mask_init].mean(0)
-    indices_query = np.where(t_query < tmin+delta_t)[0]
-    u0[indices_query] = u_init
-    s0[indices_query] = s_init
-    t0[indices_query] = tmin
-
-    for i in range(n_graph):
-        if forward:
-            t_ub, t_lb = tmin+(i+1)*delta_t, tmin+i*delta_t
-        else:
-            t_ub, t_lb = tmin+(i+2)*delta_t, tmin+(i+1)*delta_t
-
-        indices = np.where((t >= t_lb) & (t < t_ub))[0]
-        if len(indices) > max_bin_size:
-            indices = np.random.choice(indices, max_bin_size, replace=False)
-        k_ = len(indices)
-        if k_ == 0:
-            continue
-        if k is None:
-            k = max(1, len(indices)//20)
-        knn_model = pynndescent.NNDescent(z[indices],
-                                          n_neighbors=k+1,
-                                          pruning_degree_multiplier=pruning_degree_multiplier,
-                                          diversify_prob=diversify_prob)
-        # The query points are in the next time interval
-        if forward:
-            indices_query = (np.where((t_query >= t_ub) & (t_query < t_ub+delta_t))[0] if i > 0 else
-                             np.where(t_query <= t_lb)[0])
-        else:
-            indices_query = (np.where((t_query >= t_ub) & (t_query < t_ub+delta_t))[0] if i < n_graph-1 else
-                             np.where(t_query >= t_ub)[0])
-
-        if len(indices_query) == 0:
-            continue
-        try:
-            ind, dist = knn_model.query(z_query[indices_query], k=k)
-            ind = ind.astype(int)
-        except ValueError:
-            knn_model = NearestNeighbors(n_neighbors=min(k, len(indices)))
-            knn_model.fit(z[indices])
-            dist, ind = knn_model.kneighbors(z_query[indices_query])
-
-        for j in range(len(indices_query)):
-            neighbor_idx = indices[ind[j]]
-            u0[indices_query[j]] = np.mean(U[neighbor_idx], 0)
-            s0[indices_query[j]] = np.mean(S[neighbor_idx], 0)
-            t0[indices_query[j]] = np.mean(t[neighbor_idx])
     return u0, s0, t0
 
 
@@ -1640,22 +1426,6 @@ def entropy(logits_phi):
 ############################################################
 
 
-def make_dir(file_path):
-    if os.path.exists(file_path):
-        return
-    else:
-        directories = file_path.split('/')
-        cur_path = ''
-        for directory in directories:
-            if directory == '':
-                continue
-            cur_path += directory
-            cur_path += '/'
-            if not (directory == '.' or directory == '..'):
-                if not os.path.exists(cur_path):
-                    os.mkdir(cur_path)
-
-
 def get_gene_index(genes_all, gene_list):
     gind = []
     gremove = []
@@ -1712,40 +1482,3 @@ def add_capture_time(adata, tkey, save_key="tprior"):
 def add_cell_cluster(adata, cluster_key, save_key="clusters"):
     cell_labels = adata.obs[cluster_key].to_numpy()
     adata.obs["clusters"] = np.array([str(x) for x in cell_labels])
-
-
-def count_peak_expression(adata, cluster_key="clusters"):
-    def encodeType(cell_types_raw):
-        # Use integer to encode the cell types
-        # Each cell type has one unique integer label.
-        # Map cell types to integers
-        label_dic = {}
-        label_dic_rev = {}
-        for i, type_ in enumerate(cell_types_raw):
-            label_dic[type_] = i
-            label_dic_rev[i] = type_
-
-        return label_dic, label_dic_rev
-
-    cell_labels = adata.obs[cluster_key]
-    cell_types = np.unique(cell_labels)
-    label_dic, label_dic_rev = encodeType(cell_types)
-    cell_labels = np.array([label_dic[x] for x in cell_labels])
-    n_type = len(cell_types)
-    peak_hist = np.zeros((n_type))
-    peak_val_hist = [[] for i in range(n_type)]
-    peak_gene = [[] for i in range(n_type)]
-    for i in range(adata.n_vars):
-        peak_expression = [np.quantile(adata.layers["Ms"][cell_labels == j, i], 0.9) for j in range(n_type)]
-        peak_hist[np.argmax(peak_expression)] = peak_hist[np.argmax(peak_expression)]+1
-        peak_gene[np.argmax(peak_expression)].append(i)
-        for j in range(n_type):
-            peak_val_hist[j].append(peak_expression[j])
-    out = {}
-    out_val = {}
-    out_peak_gene = {}
-    for i in range(n_type):
-        out[label_dic_rev[i]] = peak_hist[i]
-        out_val[label_dic_rev[i]] = peak_val_hist[i]
-        out_peak_gene[label_dic_rev[i]] = peak_gene[i]
-    return out, out_val, out_peak_gene

@@ -3,8 +3,6 @@ import matplotlib
 import matplotlib.pyplot as plt
 import igraph as ig
 import pynndescent
-import umap
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 from sklearn.neighbors import NearestNeighbors
 from scipy.stats import norm
 
@@ -31,13 +29,17 @@ def set_dpi(dpi):
 def get_colors(n, color_map=None):
     """Get colors for plotting cell clusters.
 
-    Arguments
-    ---------
+    Args:
+        n (int):
+            Number of cell clusters
+        color_map (str, optional):
+            User-defined colormap. 
+            If not set, the colors will be chosen as
+            the colors for tabular data in matplotlib.
+            Defaults to None.
 
-    n : int
-        Number of cell clusters
-    color_map : str, optional
-        User-defined colormap. If not set, the colors will be chosen as the colors for tabular data in matplotlib.
+    Returns:
+        list[tuple]: list of color parameters
     """
     if color_map is None:  # default color
         if n <= 10:
@@ -77,76 +79,6 @@ def save_fig(fig, save, bbox_extra_artists=None):
 ############################################################
 # Functions used in debugging.
 ############################################################
-
-
-def plot_sig_(t,
-              u, s,
-              cell_labels,
-              tpred=None,
-              upred=None, spred=None,
-              type_specific=False,
-              title='Gene',
-              save=None,
-              **kwargs):
-    fig, ax = plt.subplots(2, 1, figsize=(15, 12), facecolor='white')
-    D = kwargs['sparsify'] if 'sparsify' in kwargs else 1
-    cell_types = np.unique(cell_labels)
-    colors = get_colors(len(cell_types), None)
-    for i, type_ in enumerate(cell_types):
-        mask_type = cell_labels == type_
-        ax[0].plot(t[mask_type][::D], u[mask_type][::D], '.', color=colors[i % len(colors)], alpha=0.7, label=type_)
-        ax[1].plot(t[mask_type][::D], s[mask_type][::D], '.', color=colors[i % len(colors)], alpha=0.7, label=type_)
-
-    if (tpred is not None) and (upred is not None) and (spred is not None):
-        if type_specific:
-            for i, type_ in enumerate(cell_types):
-                mask_type = cell_labels == type_
-                order = np.argsort(tpred[mask_type])
-                ax[0].plot(tpred[mask_type][order],
-                           upred[mask_type][order],
-                           '-',
-                           color=colors[i % len(colors)],
-                           label=type_,
-                           linewidth=1.5)
-                ax[1].plot(tpred[mask_type][order],
-                           spred[mask_type][order],
-                           '-',
-                           color=colors[i % len(colors)],
-                           label=type_,
-                           linewidth=1.5)
-        else:
-            order = np.argsort(tpred)
-            ax[0].plot(tpred[order], upred[order], 'k-', linewidth=1.5)
-            ax[1].plot(tpred[order], spred[order], 'k-', linewidth=1.5)
-
-    if 'ts' in kwargs and 't_trans' in kwargs:
-        ts = kwargs['ts']
-        t_trans = kwargs['t_trans']
-        for i, type_ in enumerate(cell_types):
-            ax[0].plot([t_trans[i], t_trans[i]], [0, u.max()], '-x', color=colors[i % len(colors)])
-            ax[0].plot([ts[i], ts[i]], [0, u.max()], '--x', color=colors[i % len(colors)])
-            ax[1].plot([t_trans[i], t_trans[i]], [0, s.max()], '-x', color=colors[i % len(colors)])
-            ax[1].plot([ts[i], ts[i]], [0, s.max()], '--x', color=colors[i % len(colors)])
-
-    ax[0].set_xlabel("Time")
-    ax[0].set_ylabel("U", fontsize=18)
-
-    ax[1].set_xlabel("Time")
-    ax[1].set_ylabel("S", fontsize=18)
-    handles, labels = ax[1].get_legend_handles_labels()
-
-    ax[0].set_title('Unspliced, VAE')
-    ax[1].set_title('Spliced, VAE')
-
-    lgd = fig.legend(handles, labels, fontsize=15, markerscale=5, bbox_to_anchor=(1.0, 1.0), loc='upper left')
-    fig.suptitle(title, fontsize=28)
-    plt.tight_layout()
-
-    save_fig(fig, save, (lgd,))
-
-    return
-
-
 def plot_sig(t,
              u, s,
              upred, spred,
@@ -155,24 +87,24 @@ def plot_sig(t,
              save=None,
              **kwargs):
     """Generate a 2x2 u/s-t plot for a single gene
-    The first row shows the original data, while the second row overlaps prediction with original data
-    because VeloVAE outputs a point cloud instead of line fitting.
 
-    ArgumentS
-    ---------
-
-    t : `numpy array`
-        Cell time, (N,)
-    u, s : `numpy array`
-        Original unspliced and spliced counts of a single gene, (N,)
-    upred, spred : `numpy array`
-        Predicted unspliced and spliced counts of a single gene, (N,)
-    cell_labels : `numpy array`, optional
-        Cell type annotation, (N,)
-    title : str, optional
-        Title of the figure
-    save : str, optional
-        Figure name for saving (including path)
+    Args:
+        t (:class:`numpy.ndarray`):
+            Cell time, (N, )
+        u (:class:`numpy.ndarray`):
+            Unspliced counts of a single gene, (N, )
+        s (:class:`numpy.ndarray`):
+            Spliced counts of a single gene, (N, )
+        upred (:class:`numpy.ndarray`):
+            Predicted unspliced counts of a single gene, (N, )
+        spred (:class:`numpy.ndarray`):
+            Predicted spliced counts of a single gene, (N, )
+        cell_labels (:class:`numpy.ndarray`, optional):
+            Cell type annotations. Defaults to None.
+        title (str, optional):
+            Figure title. Defaults to "Gene".
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
     """
     D = kwargs['sparsify'] if 'sparsify' in kwargs else 1
     tscv = kwargs['tscv'] if 'tscv' in kwargs else t
@@ -286,14 +218,13 @@ def plot_sig(t,
             ax[0, 1].set_title('Spliced, True Label')
             ax[1, 0].set_title('Unspliced, VAE')
             ax[1, 1].set_title('Spliced, VAE')
-    if not LEGEND_OFF:
-        lgd = fig.legend(handles,
-                         labels,
-                         fontsize=15,
-                         markerscale=5,
-                         ncol=4,
-                         bbox_to_anchor=(0.0, 1.0, 1.0, 0.25),
-                         loc='center')
+    lgd = fig.legend(handles,
+                     labels,
+                     fontsize=15,
+                     markerscale=5,
+                     ncol=4,
+                     bbox_to_anchor=(0.0, 1.0, 1.0, 0.25),
+                     loc='center')
     fig.suptitle(title, fontsize=28)
     plt.tight_layout()
 
@@ -301,99 +232,35 @@ def plot_sig(t,
     return
 
 
-def plot_vel(t,
-             uhat, shat,
-             vu, vs,
-             t0,
-             u0, s0,
-             dt=0.2,
-             n_sample=10,
-             title="Gene",
-             save=None,
-             **kwargs):
-    """Generate a velocity quiver plot for a single gene
-    The first row shows the original data, while the second row overlaps prediction with original data
-    because VeloVAE outputs a point cloud instead of line fitting.
-
-    Argument
-    ---------
-
-    t : `numpy array`
-        Cell time, (N,)
-    u,s : `numpy array`
-        Predicted unspliced or spliced counts of a single gene, (N,)
-    vu, vs : `numpy array`
-        RNA velocity of a single gene
-    u0, s0 : `numpy array`
-        Initial conditions
-    cell_labels : `numpy array`, optional
-        Cell type annotation in integer, (N,)
-    cell_types : `numpy array`, optional
-        Unique cell types in string format, used as legend in plots
-    title : str, optional
-        Title of the figure
-    save : str, optional
-        Figure name for saving (including path)
-    """
-    fig, ax = plt.subplots(1, 2, figsize=(18, 6), facecolor='white')
-
-    ax[0].plot(t, uhat, '.', color='grey', alpha=0.1)
-    ax[1].plot(t, shat, '.', color='grey', alpha=0.1)
-    plot_indices = np.random.choice(len(t), n_sample, replace=False)
-    if dt > 0:
-        ax[0].quiver(t[plot_indices],
-                     uhat[plot_indices],
-                     dt*np.ones((len(plot_indices),)),
-                     vu[plot_indices]*dt,
-                     angles='xy')
-        ax[1].quiver(t[plot_indices],
-                     shat[plot_indices],
-                     dt*np.ones((len(plot_indices),)),
-                     vs[plot_indices]*dt,
-                     angles='xy')
-    for i, k in enumerate(plot_indices):
-        if i == 0:
-            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]], 'r-o', label='Prediction')
-        else:
-            ax[0].plot([t0[k], t[k]], [u0[k], uhat[k]], 'r-o')
-        ax[1].plot([t0[k], t[k]], [s0[k], shat[k]], 'r-o')
-
-    ax[0].set_ylabel("U", fontsize=16)
-    ax[1].set_ylabel("S", fontsize=16)
-    fig.suptitle(title, fontsize=28)
-    if not LEGEND_OFF:
-        fig.legend(loc=1, fontsize=18)
-    plt.tight_layout()
-
-    save_fig(fig, save)
-
-
 def plot_phase(u, s,
                upred, spred,
                title,
                track_idx=None,
-               labels=None,  # array/list of integer
-               types=None,  # array/list of string
+               labels=None,
+               types=None,
                save=None):
     """Plot the phase portrait of a gene
 
-    Arguments
-    ---------
-
-    u, s : :class:`numpy array`
-        Original unpsliced and spliced counts, (N,)
-    upred, spred : :class:`numpy array`
-        Predicted u,s values, (N,)
-    title : str
-        Figure title
-    track_idx : `numpy array`, optional
-        Indices of cells with lines connecting input data and prediction, (N,)
-    labels : `numpy array`, optional
-        Cell type annotation
-    types : `numpy array`, optional
-        Unique cell types
-    save : str, optional
-        Figure name for saving (including path)
+    Args:
+        u (:class:`numpy array`):
+            Unspliced counts of a single gene, (N, )
+        s (:class:`numpy array`):
+            Spliced counts of a single gene, (N, )
+        upred (:class:`numpy array`):
+            Predicted unspliced counts of a single gene, (N, )
+        spred (:class:`numpy array`):
+            Predicted spliced counts of a single gene, (N, )
+        title (str):
+            Figure title.
+        track_idx (:class:`numpy array`, optional):
+            Cell indices to plot correspondence between data points and predicted phase portrait.
+            Defaults to None.
+        labels (_type_, optional):
+            Cell state annotation (off, induction or repression). Defaults to None.
+        types (:class:`numpy.ndarray`, optional):
+            Unique cell types
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
     """
     fig, ax = plt.subplots(figsize=(6, 6), facecolor='white')
     if labels is None or types is None:
@@ -434,19 +301,20 @@ def plot_phase(u, s,
 def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels=True, save=None):
     """Plot the predicted cell types from the encoder
 
-    Arguments
-    ---------
-
-    X_embed : `numpy array`
-        2D embedding for visualization, (N,2)
-    cell_labels : `numpy array`
-        Cell type annotation, (N,)
-    color_map : str, optional
-        User-defined colormap for cell clusters
-    save : str, optional
-        Figure name for saving (including path)
+    Args:
+        X_embed (:class:`numpy.ndarray`):
+            2D embedding for visualization, (N,2)
+        cell_labels (:class:`numpy.ndarray`):
+             Cell type annotation, (N,)
+        color_map (str, optional):
+            User-defined colormap for cell clusters. Defaults to None.
+        embed (str, optional):
+            Embedding name. Used for labeling axes. Defaults to 'umap'.
+        show_labels (bool, optional):
+            Whether to add cell cluster names to the plot. Defaults to True.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
     """
-
     cell_types = np.unique(cell_labels)
     fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
     x = X_embed[:, 0]
@@ -472,6 +340,16 @@ def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels
 
 
 def plot_train_loss(loss, iters, save=None):
+    """Plots the training loss values versus iteration numbers.
+
+    Args:
+        loss (array like):
+            Loss values.
+        iters (array like):
+            Iteration numbers.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
+    """
     fig, ax = plt.subplots(facecolor='white')
     ax.plot(iters, loss, '.-')
     ax.set_title("Training Loss")
@@ -481,23 +359,17 @@ def plot_train_loss(loss, iters, save=None):
     save_fig(fig, save)
 
 
-def plot_loss_split(likelihood, kldt, kldz, kldparam, iters, save=None):
-    fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
-    colors = get_colors(4)
-    ax.plot(iters, likelihood, '.-', color=colors[0], label="Likelihood")
-    ax.plot(iters, kldt, '.-', color=colors[1], label="KL Time")
-    if kldz is not None:
-        ax.plot(iters, kldz, '.-', color=colors[2], label="KL State")
-    if kldparam is not None:
-        ax.plot(iters, kldparam, '.-', color=colors[3], label="KL Rates")
-    ax.set_xlabel("Iteration")
-    ax.set_ylabel("Loss")
-    ax.legend(loc=0, fontsize=12)
-
-    save_fig(fig, save)
-
-
 def plot_test_loss(loss, iters, save=None):
+    """Plots the validation loss values versus iteration numbers.
+
+    Args:
+        loss (array like):
+            Loss values.
+        iters (array like):
+            Iteration numbers.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
+    """
     fig, ax = plt.subplots(facecolor='white')
     ax.plot(iters, loss, '.-')
     ax.set_title("Testing Loss")
@@ -507,17 +379,41 @@ def plot_test_loss(loss, iters, save=None):
     save_fig(fig, save)
 
 
-def plot_test_acc(acc, epoch, save=None):
-    fig, ax = plt.subplots(facecolor='white')
-    ax.plot(epoch, acc, '.-')
-    ax.set_title("Test Accuracy")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
+def cellwise_vel(adata,
+                 key,
+                 gidx,
+                 plot_indices,
+                 dt=0.2,
+                 plot_raw=False,
+                 u0=None,
+                 s0=None,
+                 t0=None,
+                 save=None):
+    """Plots u and s vs. time and velocity arrows for a subset of cells.
+    Used for debugging.
 
-    save_fig(fig, save)
-
-
-def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, plot_raw=False, u0=None, s0=None, t0=None, save=None):
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData Object.
+        key (str):
+            Key for extracting inferred latent variables and parameters.
+        gidx (int):
+            Index of the gene to plot.
+        plot_indices (:class:`numpy.ndarray`):
+            Indices of cells for velocity quiver plot.
+        dt (float, optional):
+            Time interval to compute displacement of u and s. Defaults to 0.2.
+        plot_raw (bool, optional):
+            Whether to plot raw count data. Defaults to False.
+        u0 (:class:`numpy.ndarray`, optional):
+            Unspliced initial conditions. Defaults to None.
+        s0 (:class:`numpy.ndarray`, optional):
+            Spliced initial conditions. Defaults to None.
+        t0 (:class:`numpy.ndarray`, optional):
+            Time at initial conditions. Defaults to None.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
+    """
     fig, ax = plt.subplots(1, 2, figsize=(18, 6), facecolor='white')
 
     u = np.array(adata.layers["unspliced"][:, gidx].todense()).squeeze()
@@ -578,13 +474,35 @@ def cellwise_vel(adata, key, gidx, plot_indices, dt=0.2, plot_raw=False, u0=None
 
 
 def cellwise_vel_embedding(adata, key, type_name=None, idx=None, embed='umap', save=None):
+    """Plots velocity of a subset of cells on an embedding space.
+    Used for debugging.
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        key (str):
+            Key for retreiving parameters and data for plotting.
+        type_name (str, optional):
+            Specific cell type to plot. Defaults to None.
+        idx (:class:`numpy.ndarray`, optional):
+            Indices of cells for plotting. Defaults to None.
+            When set to None, cells will be randomly sampled.
+        embed (str, optional):
+            Embedding velocity is computed upon. Defaults to 'umap'.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
+
+    Returns:
+        :class:`numpy.ndarray`:
+            Indices of cells for plotting.
+    """
     if f'{key}_velocity_graph' not in adata.uns:
         print("Please run 'velocity_graph' and 'velocity_embedding' first!")
         return
 
     A = np.array(adata.uns[f"{key}_velocity_graph"].todense())
     A_neg = np.array(adata.uns[f"{key}_velocity_graph_neg"].todense())
-    v_embed = adata.obsm[f'{key}_velocity_umap']
+    v_embed = adata.obsm[f'{key}_velocity_{embed}']
     X_embed = adata.obsm[f'X_{embed}']
     x_embed_1, x_embed_2 = X_embed[:, 0], X_embed[:, 1]
 
@@ -615,86 +533,16 @@ def cellwise_vel_embedding(adata, key, type_name=None, idx=None, embed='umap', s
     return idx
 
 
-def vel_corr_hist(adata, keys, legends=None, save=None):
-    fig, ax = plt.subplots(2, 2, figsize=(24, 18), facecolor='white')
-    for i, key in enumerate(keys):
-        label = key if legends is None else legends[i]
-        A = np.array(adata.uns[f"{key}_velocity_graph"].todense())
-        A_neg = np.array(adata.uns[f"{key}_velocity_graph_neg"].todense())
-        n_pos_corr, n_neg_corr = np.sum(A > 0, 1), np.sum(A_neg < 0, 1)
-        p_corr = n_pos_corr/(n_pos_corr + n_neg_corr + (n_pos_corr + n_neg_corr == 0))
-        max_pos_corr = np.max(A, 1)
-        min_pos_corr = []
-        for i in range(A.shape[0]):
-            if np.any(A[i] > 0):
-                min_pos_corr.append(np.min(A[i][A[i] > 0]))
-        min_pos_corr = np.array(min_pos_corr)
-        mean_pos_corr = np.stack([np.nanmean(A[i][A[i] > 0]) for i in range(A.shape[0])])
-
-        ax[0, 0].hist(p_corr,
-                      bins=np.arange(p_corr.min(), p_corr.max(), 0.02),
-                      alpha=0.2,
-                      label=label)
-        ax[0, 0].legend(loc=1, fontsize=16)
-        ax[0, 0].set_title('Proportion of Positive Correlations', fontsize=24)
-
-        ax[0, 1].hist(max_pos_corr,
-                      bins=np.arange(max_pos_corr.min(), max_pos_corr.max(), 0.02),
-                      alpha=0.2,
-                      label=label)
-        ax[0, 1].set_title('Maximum Positive Correlation', fontsize=24)
-        ax[0, 1].legend(loc=1, fontsize=16)
-
-        ax[1, 0].hist(mean_pos_corr,
-                      bins=np.arange(np.nanmin(mean_pos_corr), np.nanmax(mean_pos_corr), 0.02),
-                      alpha=0.2,
-                      label=label)
-        ax[1, 0].set_title('Mean Positive Correlation', fontsize=24)
-        ax[1, 0].legend(loc=1, fontsize=16)
-
-        ax[1, 1].hist(min_pos_corr,
-                      bins=np.arange(min_pos_corr.min(), min_pos_corr.max(), 0.02),
-                      alpha=0.2,
-                      label=label)
-        ax[1, 1].set_title('Minimum Positive Correlation', fontsize=24)
-        ax[1, 1].legend(loc=1, fontsize=16)
-    plt.tight_layout()
-    save_fig(fig, save)
-
-
-def plot_mtx(K, xlabel=None, ylabel=None, xticklabels=None, yticklabels=None, save=None):
-    fig, ax = plt.subplots(figsize=(K.shape[1] * 0.5, K.shape[0] * 0.5))
-    im = ax.imshow(K, aspect='auto', origin='lower', cmap='plasma')
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="5%", pad=0.05)
-    fig.colorbar(im, cax=cax)
-    if xticklabels is not None:
-        xticks_cur = (ax.get_xticks())
-        xticklabels = np.linspace(np.min(xticklabels), np.max(xticklabels), len(xticks_cur))
-        xticklabels = [f'{x:.2f}' for x in xticklabels]
-        ax.set_xticklabels(xticklabels)
-    if yticklabels is not None:
-        ax.set_yticks(yticklabels)
-        ax.set_yticklabels(yticklabels)
-    if xlabel is not None:
-        ax.set_xlabel(xlabel, fontsize=24)
-    if ylabel is not None:
-        ax.set_ylabel(ylabel, fontsize=24)
-    plt.tight_layout()
-
-    save_fig(fig, save)
-
-
 #########################################################################
 # Velocity quiver plot on the phase portrait
-# Reference: 
+# Reference:
 # Shengyu Li#, Pengzhi Zhang#, Weiqing Chen, Lingqun Ye, 
 # Kristopher W. Brannan, Nhat-Tu Le, Jun-ichi Abe, John P. Cooke, 
 # Guangyu Wang. A relay velocity model infers cell-dependent RNA velocity. 
 # Nature Biotechnology (2023) https://doi.org/10.1038/s41587-023-01728-5
 #########################################################################
-def pick_grid_points(x, grid_size=(30,30), percentile=25):
-    def gaussian_kernel(X, mu = 0, sigma=1):
+def pick_grid_points(x, grid_size=(30, 30), percentile=25):
+    def gaussian_kernel(X, mu=0, sigma=1):
         return np.exp(-(X - mu)**2 / (2*sigma**2)) / np.sqrt(2*np.pi*sigma**2)
     grs = []
     for dim_i in range(x.shape[1]):
@@ -707,7 +555,7 @@ def pick_grid_points(x, grid_size=(30,30), percentile=25):
     gridpoints_coordinates = np.vstack([i.flat for i in meshes_tuple]).T
     gridpoints_coordinates = gridpoints_coordinates + norm.rvs(loc=0, scale=0.15, size=gridpoints_coordinates.shape)
     
-    np.random.seed(10) # set random seed
+    np.random.seed(42)  # set random seed
     
     nn = NearestNeighbors()
 
@@ -715,7 +563,7 @@ def pick_grid_points(x, grid_size=(30,30), percentile=25):
     nn.fit(x)
     dist, ixs = nn.kneighbors(gridpoints_coordinates, neighbors_1)
 
-    ix_choice = ixs[:,0].flat[:]
+    ix_choice = ixs[:, 0].flat[:]
     ix_choice = np.unique(ix_choice)
 
     nn = NearestNeighbors()
@@ -737,6 +585,27 @@ def plot_phase_vel(adata,
                    grid_size=(30, 30),
                    percentile=25,
                    save=None):
+    """Plots RNA velocity stream on a phase portrait.
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object
+        gene (str):
+            Gene name.
+        key (str):
+            Key for retreiving data.
+        dt (float, optional):
+            Time interval used to compute u and s displacement.
+            Defaults to 0.05.
+        grid_size (tuple[int], optional):
+            Number of rows and columns for grid points
+            on which velocity will be computed based on KNN interpolation.
+            Defaults to (30, 30).
+        percentile (int, optional):
+            Hyperparameter for grid point picking. Defaults to 25.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
+    """
     fig, ax = plt.subplots(figsize=(12, 8))
     gidx = np.where(adata.var_names == gene)[0][0]
     scaling = adata.var[f'{key}_scaling'].iloc[gidx]
@@ -761,10 +630,47 @@ def plot_phase_vel(adata,
     save_fig(fig, save)
 
 
+def plot_velocity(X_embed, vx, vy, save=None):
+    """2D quiver plot of velocity
+
+    Args:
+        X_embed (:class:`numpy.ndarray`):
+            2D coordinates for visualization, (N, 2)
+        vx (:class:`numpy.ndarray`):
+            Velocity in the x direction.
+        vy (:class:`numpy.ndarray`):
+            Velocity in the y direction.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
+    """
+    umap1, umap2 = X_embed[:, 0], X_embed[:, 1]
+    fig, ax = plt.subplots(figsize=(12, 8))
+    v = np.sqrt(vx**2+vy**2)
+    vmax, vmin = np.quantile(v, 0.95), np.quantile(v, 0.05)
+    v = np.clip(v, vmin, vmax)
+    ax.plot(umap1, umap2, '.', alpha=0.5)
+    ax.quiver(umap1, umap2, vx, vy, v, angles='xy')
+
+    save_fig(fig, save)
+
 #########################################################################
-# Post Analysis
+# Evaluation Plots
 #########################################################################
+
+
 def plot_legend(adata, cluster_key='clusters', ncol=1, save='figures/legend.png'):
+    """Plots figure legend containing all cell types.
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        cluster_key (str, optional):
+            Key for cell type annotations. Defaults to 'clusters'.
+        ncol (int, optional):
+            Number of columns of the legend. Defaults to 1.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to 'figures/legend.png'.
+    """
     cell_labels = adata.obs[cluster_key].to_numpy()
     cell_labels = np.array([str(x) for x in cell_labels])
     cell_types = np.unique(cell_labels)
@@ -790,6 +696,8 @@ def _plot_heatmap(ax,
                   cmap='plasma',
                   show_color_bar=True,
                   axis_off=True):
+    """General heatmap plotting helper function.
+    """
     ax.scatter(X_embed[:, 0],
                X_embed[:, 1],
                s=markersize,
@@ -839,19 +747,17 @@ def plot_heatmap(vals,
                  save=None):
     """Plots a quantity as a heatmap.
 
-    Arguments
-    ---------
-
-    vals : `numpy array`
-        Values to be plotted as a heatmap, (N,)
-    X_embed : `numpy array`
-        2D coordinates for visualization, (N,2)
-    colorbar_name : str, optional
-        Name shown next to the colorbar
-    colorbar_ticks : str, optional
-        Name shown on the colorbar axis
-    save : str, optional
-        Figure name for saving (including path)
+    Args:
+        vals (:class:`numpy.ndarray`):
+            Values to be plotted as a heatmap, (N,).
+        X_embed (:class:`numpy.ndarray`):
+            2D coordinates for visualization, (N,2).
+        colorbar_name (str, optional):
+            Name shown next to the colorbar. Defaults to "Latent Time".
+        colorbar_ticks (str, optional):
+            Name shown on the colorbar axis. Defaults to None.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
     """
     fig, ax = plt.subplots(figsize=(12, 6))
     ax = _plot_heatmap(ax, vals, X_embed, colorbar_name, colorbar_ticks, axis_off=True)
@@ -865,17 +771,17 @@ def plot_time(t_latent,
               save=None):
     """Plots mean cell time as a heatmap.
 
-    Arguments
-    ---------
-
-    t_latent : `numpy array`
-        Mean latent time, (N,)
-    X_embed : `numpy array`
-        2D coordinates for visualization, (N,2)
-    cmap : str, optional
-        Colormap name
-    save : str, optional
-        Figure name for saving (including path)
+    Args:
+        t_latent (`numpy.ndarray`):
+            Mean latent time, (N,)
+        X_embed (`numpy.ndarray`):
+            2D coordinates for visualization, (N,2)
+        cmap (str, optional):
+            Colormap name. Defaults to 'plasma'.
+        legend_label (str, optional):
+            Text added next to the color bar. Defaults to 'Latent Time'.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
     """
     fig, ax = plt.subplots(figsize=(12, 6))
     _plot_heatmap(ax, t_latent, X_embed, legend_label, ['early', 'late'], cmap=cmap, axis_off=True)
@@ -890,21 +796,19 @@ def plot_time_var(std_t,
                   save=None):
     """Plots cell time coefficient of variation as a heatmap.
 
-    Arguments
-    ---------
-
-    std_t : `numpy array`
-        Standard deviation of latent time, (N,)
-    X_embed : `numpy array`
-        2D coordinates for visualization, (N,2)
-    t : `numpy array`, optional
-        Mean latent time, (N,)
-    hist_eq : bool, optional
-        Whether to perform histogram equalization
-    cmap : str, optional
-        Colormap name
-    save : str, optional
-        Figure name for saving (including path)
+    Args:
+        std_t (:class:`numpy.ndarray`):
+            Standard deviation of latent time, (N,)
+        X_embed (:class:`numpy.ndarray`):
+            2D coordinates for visualization, (N,2)
+        t (:class:`numpy.ndarray`, optional):
+            Mean latent time. Defaults to None.
+        hist_eq (bool, optional):
+            Whether to perform histogram equalization. Defaults to True.
+        cmap (str, optional):
+            Colormap name. Defaults to 'viridis'.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
     """
     t_norm = np.ones((std_t.shape)) if t is None else np.abs(t) + 1e-10
     diff_entropy = np.log(std_t/t_norm)+0.5*(1+np.log(2*np.pi))
@@ -924,21 +828,19 @@ def plot_state_var(std_z,
                    save=None):
     """Plots cell state variance (in the form of coefficient of variation) as a heatmap.
 
-    Arguments
-    ---------
-
-    std_z : `numpy array`
-        Standard deviation of cell state, assuming diagonal covariance, (N,Cz)
-    X_embed : `numpy array`
-        2D coordinates for visualization, (N,2)
-    z : `numpy array`
-        Mean cell state, (N,Cz)
-    hist_eq : bool, optional
-        Whether to perform histogram equalization
-    cmap : str, optional
-        Colormap name
-    save : str, optional
-        Figure name for saving (including path)
+    Args:
+        std_z (:class:`numpy.ndarray`):
+            Standard deviation of cell state, assuming diagonal covariance, (N, dim z)
+        X_embed (:class:`numpy.ndarray`):
+            2D coordinates for visualization, (N,2)
+        z (:class:`numpy.ndarray`, optional):
+            Mean cell state, (N, dim z). Defaults to None.
+        hist_eq (bool, optional):
+            Whether to perform histogram equalization. Defaults to True.
+        cmap (str, optional):
+            Colormap name. Defaults to 'viridis'.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
     """
     z_norm = np.ones((std_z.shape)) if z is None else np.linalg.norm(z, axis=1).reshape(-1, 1) + 1e-10
     diff_entropy = np.sum(np.log(std_z/z_norm), 1) + 0.5*std_z.shape[1]*(1+np.log(2*np.pi))
@@ -962,6 +864,7 @@ def plot_phase_axis(ax,
                     show_legend=False,
                     label_fontsize=30,
                     color_map=None):
+    """Plot phase in a subplot of a figure."""
     try:
         if labels is None:
             ax.plot(s[::D], u[::D], marker, color='k')
@@ -1032,49 +935,60 @@ def plot_phase_grid(Nr,
                     **kwargs):
     """Plot the phase portrait of a list of genes in an [Nr x Nc] grid.
     Cells are colored according to their dynamical state or cell type.
+    If Nr*Nc < number of genes, the last few genes will be ignored.
+    If Nr*Nc > number of genes, the last few subplots will be blank.
 
-    Arguments
-    ---------
+    Args:
+        Nr (int):
+            Number of rows of the grid plot.
+        Nc (int):
+            Number of columns of the grid plot.
+        gene_list (list[str]):
+            Genes to plot.
+        U (:class:`numpy.ndarray`):
+            Unspliced count matrices. The gene dimension should equal len(gene_list).
+        S (:class:`numpy.ndarray`):
+            Spliced count matrices. The gene dimension should equal len(gene_list).
+        Labels (dict):
+            Keys are method names and values are (N) cell annotations
+            For the regular ODE, this can be induction/repression annotation.
+            Otherwise, it's usually just the cell type annotation.
+        Legends (dict):
+            Keys are method names and values are the legend names to show.
+            If the labels are phase labels, then the legends are usually
+            {'off', induction', 'repression'}.
+            If the labels are cell type annotations, the legends will be the unique
+            cell type names.
+        Uhat (dict, optional):
+            Predicted unspliced counts.
+            Keys are method names and values are arrays of size (N_pred, N_gene).
+            Notice that N_pred is not necessarily the number of cells.
+            This could happen if we want to save computational cost and evaluate
+            the ODE just at a user-defined number of time points. Defaults to {}.
+        Shat (dict, optional):
+            Predicted spliced counts, similar to Uhat. Defaults to {}.
+        Labels_demo (dict, optional):
+            Keys are method names and values are arrays of size (N_pred).
+            This is the annotation for the predictions.. Defaults to {}.
+        W (int, optional):
+            Width of a subplot. Defaults to 6.
+        H (int, optional):
+            Height of a subplot. Defaults to 3.
+        alpha (float, optional):
+            Transparency of the data points. Defaults to 0.2.
+        downsample (int, optional):
+            Down-sampling factor to display the data points.. Defaults to 1.
+        legend_fontsize (int/float, optional):
+            Defaults to None.
+        color_map (str, optional):
+            User-defined colormap for cell labels. Defaults to None.
+        path (str, optional):
+            Path to the saved figure. Defaults to 'figures'.
+        figname (_type_, optional):
+            Name of the saved figure, without format at the end. Defaults to None.
+        format (str, optional):
+            Figure format. Defaults to 'png'.
 
-    Nr, Nc : int
-        Number of rows and columns of the grid plot.
-        If Nr*Nc < number of genes, the last few genes will be ignored.
-        If Nr*Nc > number of genes, the last few subplots will be blank.
-    gene_list : string list
-        Genes to plot
-    U, S : `numpy array`
-        Count matrices, (N,G)
-    Labels : dictionary
-        Keys are method names and values are (N) cell annotations
-        For the regular ODE, this can be induction/repression annotation.
-        Otherwise, it's usually just the cell type annotation.
-    Legends : dictionary
-        Keys are method names and values are the legend names to show.
-        If the labels are phase labels, then the legends are usually
-        ['off', induction', 'repression'].
-        If the labels are cell type annotations, the legends will be the unique
-        cell type names.
-    Uhat, Shat : dictionary, optional
-        Keys are method names and values are arrays of size (N_pred, N_gene).
-        Notice that N_pred is not necessarily the number of cells.
-        This could happen if we want to save computational cost and evaluate
-        the ODE just at a user-defined number of time points.
-    Labels_demo : dictionary, optional
-        Keys are method names and values are arrays of size (N_pred).
-        This is the annotation for the predictions.
-    W,H : float, optional
-        Width and height of each subplot.
-    alpha : float in (0,1], optional
-        Transparency of the data points.
-    downsample : int, optional
-        Down-sampling factor to display the data points.
-    legend_fontsize : float, optional
-    color_map : str, optional
-        User-defined colormap for cell labels
-    path : string, optional
-        Path to the saved figure
-    figname : string, optional
-        Name of the saved figure, without .png at the end
     """
     D = downsample
     methods = list(Uhat.keys())
@@ -1269,6 +1183,7 @@ def plot_phase_grid(Nr,
 
 
 def sample_scatter_plot(x, down_sample, n_bins=20):
+    """Sample cells for a scatter plot."""
     idx_downsample = []
     n_sample = max(1, len(x)//down_sample)
     if n_bins > n_sample:
@@ -1288,23 +1203,6 @@ def sample_scatter_plot(x, down_sample, n_bins=20):
     return np.array(idx_downsample).astype(int)
 
 
-def sample_scatter_plot_disc(x, t, dt, count_thred=50):
-    tmax, tmin = t.max()+1e-3, t.min()
-    indices = []
-    for t_lb in np.arange(tmin, tmax, dt):
-        batch_idx = np.where((t >= t_lb) & (t <= t_lb + dt))[0]
-        if len(batch_idx) > 0:
-            edges = (np.linspace(0, x[batch_idx].max()+1, count_thred+1)
-                     if x[batch_idx].max() > count_thred else
-                     np.array(range(x[batch_idx].max()+2)))
-            for j in range(len(edges)-1):
-                mask = (x[batch_idx] >= edges[j]) & (x[batch_idx] < edges[j+1])
-                if np.any(mask):
-                    indices.append(np.random.choice(batch_idx[mask]))
-
-    return np.array(indices).astype(int)
-
-
 def plot_sig_axis(ax,
                   t,
                   x,
@@ -1316,6 +1214,7 @@ def plot_sig_axis(ax,
                   show_legend=False,
                   color_map=None,
                   title=None):
+    """Plot a modality versus time in a subplot."""
     lines = []
     if labels is None or legends is None:
         lines.append(ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)[0])
@@ -1358,6 +1257,7 @@ def plot_sig_pred_axis(ax,
                        D=1,
                        show_legend=False,
                        title=None):
+    """Plot predicted modality versus time in a subplot."""
     if labels is None or legends is None:
         ax.plot(t[::D], x[::D], marker, linewidth=5, color='k', alpha=a)
     else:
@@ -1397,6 +1297,7 @@ def plot_sig_loess_axis(ax,
                         D=1,
                         show_legend=False,
                         title=None,):
+    """LOESS plot in a subplot."""
     from loess import loess_1d
     for i in range(len(legends)):
         mask = labels == i
@@ -1425,6 +1326,7 @@ def plot_sig_loess_axis(ax,
 
 
 def sample_quiver_plot(t, dt, x=None, n_bins=3):
+    """Sample cells for a velocity quiver plot."""
     tmax, tmin = t.max()+1e-3, np.quantile(t, 0.01)
     Nbin = int(np.clip((tmax-tmin)/dt, 1, len(t)//2))
     indices = []
@@ -1454,6 +1356,7 @@ def plot_vel_axis(ax,
                   sparsity_correction=False,
                   color_map=None,
                   title=None):
+    """Velocity quiver plot on a u/s-t subplot."""
     if labels is None or legends is None:
         dt_sample = (t.max()-t.min())/50
         torder = np.argsort(t)
@@ -1548,68 +1451,86 @@ def plot_sig_grid(Nr,
                   path='figures',
                   figname=None,
                   format='png'):
-    """Plot u/s of a list of genes vs. time in an [Nr x Nc] grid.
+    """Plot u/s of a list of genes vs. time in an [Nr x Nc] grid of subplots.
     Cells are colored according to their dynamical state or cell type.
 
-    Arguments
-    ---------
+    Args:
+        Nr (int):
+            Number of rows of the grid plot.
+        Nc (int):
+            Number of columns of the grid plot.
+        gene_list (array like):
+            Genes to plot. If the length exceeds Nr*Nc, multiple figures will
+            be generated. If length is less than Nr*Nc, some subplots will be
+            blank.
+        T (dict):
+            Keys are methods (string) and values are time arrays.
+            For some methods, the value is an (N,G) array
+            instead of an (N) array because of local fitting.
+        U (:class:`numpy.ndarray`):
+            Unspliced count data.
+            Contain just the genes for plotting.
+        S (:class:`numpy.ndarray`):
+            Spliced count data.
+            Contain just the genes for plotting.
+        Labels (dict):
+            Keys are methods and values are arrays of cell annotation.
+            Usually the values are cell type annotations.
+        Legends (dict):
+            Keys are methods and values are legend names.
+            Usually the legend names are unique values of cell annotation.
+            In our application, these are unique cell types.
+        That (dict, optional):
+            Keys are methods and values are (N_eval) of cell time.
+            Time used in evaluation. N_eval is generally unequal to number of cells
+            in the original data and the time points don't necessarily match the original
+            cell because we often need fewer time points to evaluate a parametric model.
+            For scVelo, the value is an (N_eval,G) array instead of an (N_eval) array
+            because of local fitting. Defaults to {}.
+        Uhat (dict, optional):
+            Dictionary with method names as keys and arrays of predicted u as values.
+            Defaults to {}.
+        Shat (dict, optional):
+            Dictionary with method names as keys and arrays of predicted s as values.
+            Defaults to {}.
+        V (dict, optional):
+            Keys are methods and values are (N,G) arrays of velocity.
+            Defaults to {}.
+        Labels_demo (dict, optional):
+            Keys are methods and values are cell type annotations of the prediction.
+            Defaults to {}.
+        W (int, optional):
+            Subplot width. Defaults to 6.
+        H (int, optional):
+            Subplot height. Defaults to 3.
+        frac (float, optional):
+            Hyper-parameter for the LOESS plot.
+            This is the window length of the local regression.
+            If it's 0, LOESS will not be plotted. Defaults to 0.0.
+        alpha (float, optional):
+            Transparency of the data points.. Defaults to 1.0.
+        down_sample (int, optional):
+            Down-sampling factor to reduce the overlapping of data points. Defaults to 1.
+        legend_fontsize (int, optional):
+            Defaults to None.
+        sparsity_correction (bool, optional):
+            Whether to sample u/s uniformly in the range to avoid
+            sapling most zeros in sparse expression profiles.
+            Defaults to False.
+        plot_loess (bool, optional):
+            Whether to plot a line fit for VeloVAE. Defaults to False.
+        color_map (_type_, optional):
+            User-defined colormap for different cell types. Defaults to None.
+        path (str, optional):
+            Saving path. Defaults to 'figures'.
+        figname (str, optional):
+            Name if the figure.
+            Because there can be multiple figures generated in this function.
+            We will append a number to figname when saving the figures.
+            Figures will not be saved if set to None. Defaults to None.
+        format (str, optional):
+            Figure format, could be png, pdf, svg, eps and ps. Defaults to 'png'.
 
-    Nr, Nc : int
-        Number of rows and columns of the grid plot.
-    gene_list : string list or `numpy array`
-        Genes to plot. If the length exceeds Nr*Nc, multiple figures will
-        be generated. If length is less than Nr*Nc, some subplots will be
-        blank.
-    T : dictionary
-        Keys are methods (string) and values are time arrays.
-        For scVelo, the value is an (N,G) array instead of an (N) array because of local fitting.
-    U, S : `numpy array`
-        Count data
-    Labels :
-        Keys are methods and values are arrays of cell annotation.
-        Usually the values are cell type annotations.
-    Legends : dictionary
-        Keys are methods and values are legend names.
-        Usually the legend names are unique values of cell annotation.
-        In our application, these are unique cell types.
-    That : dictionary, optional
-        Keys are methods and values are (N_eval) of cell time.
-        Time used in evaluation. N_eval is generally unequal to number of cells
-        in the original data and the time points don't necessarily match the original
-        cell because we often need fewer time points to evaluate a parametric model.
-        For scVelo, the value is an (N_eval,G) array instead of an (N_eval) array
-        because of local fitting.
-    Uhat, Shat : dictionary, optional
-        Dictionary with method names as keys and arrays of predicted u/s as values.
-    V : dictionary, optional
-        Keys are methods and values are (N,G) arrays of velocity.
-    Labels_demo : dictionary, optional
-        Keys are methods and values are cell type annotations of the prediction.
-    W,H : float, optional
-        Width and height of each gene subplot.
-    frac : float in [0,1), optional
-        Hyper-parameter for the LOESS plot.
-        This is the window length of the local regression. If it's 0, LOESS will not be plotted.
-    alpha : float in (0,1), optional
-        Transparency of the data points.
-    down_sample : int, optional
-        Down-sampling factor to reduce the overlapping of data points.
-    legend_fontsize : float, optional
-    sparsity_correction : bool, optional
-        Whether to sample u/s uniformly in the range to avoid sapling most zeros in sparse expression profiles.
-    plot_loess : bool, optional
-        Whether to plot a line fit for VeloVAE
-    color_map : str, optional
-        User-defined colormap for different cell types.
-    path : str, optional
-        Saving path
-    figname : str, optional
-        Name if the figure.
-        Because there can be multiple figures generated in this function.
-        We will append a number to figname when saving the figures.
-        Figures will not be saved if set to None.
-    format : str, optional
-        Figure format, could be png, pdf, svg, eps and ps
     """
     methods = list(Uhat.keys())
     M = max(1, len(methods))
@@ -1654,7 +1575,11 @@ def plot_sig_grid(Nr,
                 try:
                     if ('VeloVAE' in methods[0])\
                         or ('FullVB' in methods[0])\
-                            or (methods[0] in ['DeepVelo', 'Discrete PyroVelocity', 'PyroVelocity', 'VeloVI', 'cellDancer']):
+                            or (methods[0] in ['DeepVelo',
+                                               'Discrete PyroVelocity',
+                                               'PyroVelocity',
+                                               'VeloVI',
+                                               'cellDancer']):
                         K = min(10, max(len(that)//5000, 1))
                         
                         if frac > 0 and frac < 1:
@@ -1776,7 +1701,11 @@ def plot_sig_grid(Nr,
                         try:
                             if ('VeloVAE' in method)\
                                 or ('FullVB' in method)\
-                                    or (methods[0] in ['DeepVelo', 'Discrete PyroVelocity', 'PyroVelocity', 'VeloVI', 'cellDancer']):
+                                    or (methods[0] in ['DeepVelo',
+                                                       'Discrete PyroVelocity',
+                                                       'PyroVelocity',
+                                                       'VeloVI',
+                                                       'cellDancer']):
                                 # These methods don't have line prediction
                                 K = min(10, max(len(that)//5000, 1))
                                 if frac > 0 and frac < 1:
@@ -1888,25 +1817,27 @@ def plot_time_grid(T,
                    save="figures/time_grid.png"):
     """Plot the latent time of different methods.
 
-    Arguments
-    ---------
-
-    T : dictionary
-        Keys are method names and values are (N) arrays containing time
-    X_emb : `numpy array`
-        2D embedding for visualization, (N,2)
-    capture_time : `numpy array`, optional
-        Capture time, (N,)
-    std_t : dictionary, optional
-        Keys are method names and values are (N) arrays
-        containing standard deviations of cell time.
-        Not applicable to scVelo.
-    down_sample : int, optional
-        Down-sampling factor to reduce data point overlapping.
-    q : float in (0,1), optional
-        Top quantile for clipping extreme values.
-    save : str, optional
-        Figure name for saving (including path)
+    Args:
+        T (dict):
+            Keys are method names and values are (N) arrays containing time
+        X_emb (:class:`numpy.ndarray`):
+            2D embedding for visualization, (N,2)
+        capture_time (:class:`numpy.ndarray`, optional):
+            Capture time, (N,). Defaults to None.
+        std_t (dict, optional):
+            Keys are method names and values are (N) arrays
+            containing standard deviations of cell time.
+            Not applicable to some methods. Defaults to None.
+        down_sample (int, optional):
+            Down-sampling factor to reduce data point overlapping.. Defaults to 1.
+        q (float, optional):
+            Top quantile for clipping extreme values. Defaults to 0.99.
+        W (int, optional):
+            Subplot width. Defaults to 6.
+        H (int, optional):
+            Subplot height. Defaults to 3.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to "figures/time_grid.png".
     """
     if capture_time is not None:
         methods = ["Capture Time"] + list(T.keys())
@@ -2008,9 +1939,8 @@ def plot_time_grid(T,
 
 
 def _adj_mtx_to_map(w):
-    """
-    w[i,j] = 1 if j is the parent of i
-    """
+    """Convert adjacency matrix to a mapping (adjacency list)."""
+    # w[i,j] = 1 if j is the parent of i
     G = {}
     for i in range(w.shape[1]):
         G[i] = []
@@ -2021,6 +1951,7 @@ def _adj_mtx_to_map(w):
 
 
 def get_depth(graph):
+    """Get the depths of all nodes in a tree-like graph."""
     depth = np.zeros((len(graph.keys())))
     roots = []
     for u in graph:
@@ -2040,6 +1971,7 @@ def get_depth(graph):
 
 
 def _plot_branch(ax, t, x, graph, label_dic_rev, plot_depth=True, color_map=None):
+    """Plot some attributes of all nodes in a tree-like graph. """
     colors = get_colors(len(t), color_map)
     if plot_depth:
         depth = get_depth(graph)
@@ -2072,29 +2004,36 @@ def plot_rate_grid(adata,
                    format="png"):
     """Plot cell-type-specific rate parameters inferred from branching ODE.
 
-    Arguments
-    ---------
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        key (str):
+            Key used to extract the corresponding rate parameters.
+            For example, f"{key}_alpha" will be used to extract the transcription rate from .varm
+        gene_list (array like):
+            List of genes to plot
+        Nr (int):
+            Number of rows of the subplot grid.
+        Nc (int):
+            Number of columns of the subplot grid.
+        W (int, optional):
+            Subplot width. Defaults to 6.
+        H (int, optional):
+            Subplot width. Defaults to 3.
+        legend_ncol (int, optional):
+            Number of columns in the legend. Defaults to 8.
+        plot_depth (bool, optional):
+            Whether to plot the depth in transition graph as a surrogate of time.
+            Set to true by default for better visualization. Defaults to True.
+        color_map (str, optional):
+            Defaults to None.
+        path (str, optional):
+            Path to the folder for saving the figure. Defaults to "figures".
+        figname (str, optional):
+            Name of the saved figure. Defaults to "genes".
+        format (str, optional):
+            Figure format, could be png, pdf, svg, eps and ps. Defaults to 'png'. Defaults to "png".
 
-    adata : :class:`anndata.AnnData`
-    key : str
-        Key used to extract the corresponding rate parameters.
-        For example, f"{key}_alpha" will be used to extract the transcription rate from .varm
-    gene_list : `numpy array` or string list
-        List of genes to plot
-    Nr, Nc : int
-        Number of rows and columns of the grid
-    W, H : float, optional
-        Width and height of each subplot
-    legend_ncol : int, optional
-        Number of columns in the legend
-    plot_depth : bool, optional
-        Whether to plot the depth in transition graph as a surrogate of time.
-        Set to true by default for better visualization.
-    color_map : str, optional
-    path : str, optional
-        Path to the folder for saving the figure
-    figname : str, optional
-        Name of the saved figure
     """
     Nfig = len(gene_list) // (Nr*Nc)
     if Nfig * Nr * Nc < len(gene_list):
@@ -2211,18 +2150,6 @@ def plot_rate_grid(adata,
     return
 
 
-def plot_velocity(X_embed, vx, vy, scale=1.0, save=None):
-    umap1, umap2 = X_embed[:, 0], X_embed[:, 1]
-    fig, ax = plt.subplots(figsize=(12, 8))
-    v = np.sqrt(vx**2+vy**2)
-    vmax, vmin = np.quantile(v, 0.95), np.quantile(v, 0.05)
-    v = np.clip(v, vmin, vmax)
-    ax.plot(umap1, umap2, '.', alpha=0.5)
-    ax.quiver(umap1, umap2, vx, vy, v, angles='xy', scale=scale)
-
-    save_fig(fig, save)
-
-
 def plot_velocity_stream(X_embed,
                          t,
                          vx,
@@ -2238,7 +2165,7 @@ def plot_velocity_stream(X_embed,
                          figsize=(8, 6),
                          save='figures/velstream.png'):
     """
-    .. deprecated:: 1.0
+    .. deprecated:: 0.1.0
     """
     # Compute velocity on a grid
     knn_model = pynndescent.NNDescent(X_embed, n_neighbors=2*k)
@@ -2317,7 +2244,7 @@ def plot_cell_trajectory(X_embed,
                          color_map=None,
                          save=None):
     """Plot the velocity stream based on time. This is not stable yet and we suggest not using it for now.
-    .. deprecated:: 1.0
+    .. deprecated:: 0.1.0
     """
     # Compute the time on a grid
     knn_model = pynndescent.NNDescent(X_embed, n_neighbors=k+20)
@@ -2413,7 +2340,7 @@ def plot_velocity_3d(X_embed,
     """3D velocity quiver plot.
     Arrows follow the direction of time to nearby points.
     This is not stable yet and we suggest not using it for now.
-    .. deprecated:: 1.0
+    .. deprecated:: 0.1.0
     """
     fig = plt.figure(figsize=(30, 15))
     ax = fig.add_subplot(projection='3d')
@@ -2542,36 +2469,39 @@ def plot_trajectory_3d(X_embed,
     """3D quiver plot. x-y plane is a 2D embedding such as UMAP.
     z axis is the cell time. Arrows follow the direction of time to nearby points.
 
-    Arguments
-    ---------
+    Args:
+        X_embed (:class:`numpy.ndarray`):
+            2D embedding for visualization
+        t (:class:`numpy.ndarray`):
+            Cell time.
+        cell_labels (:class:`numpy.ndarray`):
+            Cell type annotations.
+        plot_arrow (bool, optional):
+            Whether to add a quiver plot upon the background 3D scatter plot.
+            Defaults to False.
+        n_grid (int, optional):
+            Grid size of the x-y plane. Defaults to 50.
+        n_time (int, optional):
+            Grid size of the z (time) axis. Defaults to 20.
+        k (int, optional):
+            Number of neighbors when computing velocity of each grid point. Defaults to 30.
+        k_grid (int, optional):
+            Number of neighbors when averaging across the 3D grid. Defaults to 8.
+        scale (float, optional):
+            Parameter to control boundary detection. Defaults to 1.5.
+        angle (tuple, optional):
+            Angle of the 3D plot. Defaults to (15, 45).
+        figsize (tuple, optional):
+            Defaults to (12, 9).
+        eps_t (float, optional):
+            Parameter to control the relative time order of cells. Defaults to None.
+        color_map (str, optional):
+            Defaults to None.
+        embed (str, optional):
+            Name of the embedding.. Defaults to 'umap'.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
 
-    X_embed : `numpy array`
-        2D embedding for visualization
-    t : `numpy array`
-        Cell time
-    cell_labels : `numpy array`
-        Cell type annotation
-    plot_arrow : bool, optional
-    n_grid : int, optional
-        Grid size of the x-y plane
-    n_time : int, optional
-        Grid size of the z (time) axis
-    k : int, optional
-        Number of neighbors when computing velocity of each grid point
-    k_grid : int, optional
-        Number of neighbors when averaging across the 3D grid
-    scale : float, optional
-        Parameter to control boundary detection
-    angle : tuple, optional
-        Angle of the 3D plot
-    figsize : tuple, optional
-    eps_t : float, optional
-        Parameter to control the relative time order of cells
-    color_map : str, optional
-    emed : str, optional
-        Name of the embedding.
-    save : str, optional
-        Figure name for saving (including path)
     """
     t_clip = np.clip(t, np.quantile(t, 0.01), np.quantile(t, 0.99))
     range_z = np.max(X_embed.max(0) - X_embed.min(0))
@@ -2687,88 +2617,27 @@ def plot_trajectory_3d(X_embed,
         ax.axis('off')
     save_fig(fig, save, (lgd,))
 
-    return
-
-
-def plot_umap_transition(graph,
-                         X_embed,
-                         cell_labels,
-                         label_dic_rev,
-                         color_map=None,
-                         save=None):
-    """ Plot a 2D embedding and connect the cluster centers with a directed edge based on a cell-type transition graph.
-
-    Arguments
-    ---------
-
-    graph : dictionary
-        Transition graph in the form of an adjacency list
-    X_embed : `numpy array`
-        2D embedding for visualization
-    cell_labels :
-    label_dic_rev : dictionary
-        Keys are integer encoding of cell types and values are the cell type names in the string form
-    color_map : str, optional
-    save : str, optional
-        Figure name for saving (including path)
-    .. deprecated:: 1.0
-    """
-    fig, ax = plt.subplots(figsize=(8, 6))
-    Xmean = {}
-    range_embed = X_embed.max(0) - X_embed.min(0)
-    for i in graph:
-        mask = cell_labels == i
-        xbar, ybar = np.mean(X_embed[mask, 0]), np.mean(X_embed[mask, 1])
-        Xmean[i] = (xbar, ybar)
-
-    colors = get_colors(len(graph.keys()), color_map)
-    for i in graph.keys():
-        mask = cell_labels == i
-        ax.scatter(X_embed[mask, 0],
-                   X_embed[mask, 1],
-                   s=5,
-                   color=colors[i % len(colors)],
-                   alpha=0.25,
-                   edgecolors='none')
-
-    for i in graph.keys():
-        mask = cell_labels == i
-        L = len(label_dic_rev[i])
-        ax.text(Xmean[i][0] - L*0.01*range_embed[0], Xmean[i][1] - 0.02*range_embed[1], label_dic_rev[i], fontsize=14)
-
-        for j in graph[i]:
-            ax.arrow(Xmean[i][0],
-                     Xmean[i][1],
-                     Xmean[j][0]-Xmean[i][0],
-                     Xmean[j][1]-Xmean[i][1],
-                     width=0.15,
-                     head_width=0.6,
-                     length_includes_head=True,
-                     color='k')
-    ax.set_xlabel('Umap Dim 1')
-    ax.set_ylabel('Umap Dim 2')
-
-    save_fig(fig, save)
-    return
-
 
 def plot_transition_graph(adata,
                           key="brode",
                           figsize=(4, 8),
                           color_map=None,
                           save=None):
-    """Plot a directed graph with cell types as nodes and progenitor-descendant relation as edges.
+    """Plot a directed graph with cell types as nodes
+    and progenitor-descendant relation as edges.
 
-    Arguments
-    ---------
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        key (str, optional):
+            Key used to extract the transition probability from .uns. Defaults to "brode".
+        figsize (tuple, optional):
+            Defaults to (4, 8).
+        color_map (str, optional):
+            Defaults to None.
+        save (str, optional):
+            Figure name for saving (including path). Defaults to None.
 
-    adata : :class:`anndata.AnnData`
-    key : str, optional
-        Key used to extract the transition probability from .uns
-    figsize : tuple, optional
-    color_map : str, optional
-    save : str, optional
-        Figure name for saving (including path)
     """
     fig, ax = plt.subplots(figsize=figsize)
     adj_mtx = adata.uns[f"{key}_w"]
@@ -2821,6 +2690,25 @@ def plot_transition_graph(adata,
 
 
 def plot_rate_hist(adata, model, key, tprior='tprior', figsize=(18, 4), save="figures/hist.png"):
+    """Convert rate parameters to real interpretable units and plot the histogram
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        model (str):
+            Model name.
+        key (str):
+            Key for retreiving model predictions/inferred parameters and other data.
+        tprior (str, optional):
+            Key for capture time.
+            This is used to convert rates to transcript/minute.
+            If not provided or doesn't exist in adata, we assume the experiment lasts
+            one day. Defaults to 'tprior'.
+        figsize (tuple, optional):
+            Defaults to (18, 4).
+        save (str, optional):
+            Figure name for saving (including path). Defaults to "figures/hist.png".
+    """
     if 'Discrete' in model:
         U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
     else:
@@ -2866,38 +2754,3 @@ def plot_rate_hist(adata, model, key, tprior='tprior', figsize=(18, 4), save="fi
     ax[0].set_ylabel("Number of Genes", fontsize=20)
     plt.tight_layout()
     save_fig(fig, save)
-
-
-def plot_latent_embedding(X,
-                          n_cluster,
-                          labels,
-                          label_dic_rev,
-                          color_map=None,
-                          save=None):
-    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1)
-    Y = reducer.fit_transform(X)
-    fig, ax = plt.subplots()
-    colors = get_colors(n_cluster, color_map)
-
-    for i in range(n_cluster):
-        ax.plot(Y[labels == i, 0], Y[labels == i, 1], '.', c=colors[i % len(colors)], label=label_dic_rev[i])
-
-    ax.set_xlabel('Umap 1')
-    ax.set_ylabel('Umap 2')
-
-    lgd = ax.legend(fontsize=10, markerscale=3.0,  bbox_to_anchor=(-0.15, 1.0), loc='upper right')
-
-    save_fig(fig, save, (lgd,))
-    return
-
-
-def plot_ts(ts, save=None):
-    fig, ax = plt.subplots()
-    ax.plot(ts, np.ones(ts.shape), 'k+')
-    ub = np.quantile(ts, 0.99)
-    print(np.sum(ts > ub))
-    ax.hist(ts, bins=np.linspace(0, ub, 100), range=(ts.min(), ub))
-    ax.set_title("Distribution of Switching Time")
-
-    save_fig(fig, save)
-    return

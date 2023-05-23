@@ -4,17 +4,18 @@ import os
 from ..plotting import get_colors
 import re
 
+
 class PerfLogger:
     """Class for saving the performance metrics
     """
     def __init__(self, save_path='perf', checkpoints=None):
-        """
-        Arguments
-        ---------
-        save_path : str
-            Path for saving the data frames to .csv files
-        checkpoints : str
-            Existing results to load (.csv)
+        """Constructor
+
+        Args:
+            save_path (str, optional):
+                Path for saving the data frames to .csv files. Defaults to 'perf'.
+            checkpoints (list[str], optional):
+                Existing results to load (.csv). Defaults to None.
         """
         self.save_path = save_path
         os.makedirs(save_path, exist_ok=True)
@@ -54,21 +55,17 @@ class PerfLogger:
     def insert(self, data_name, res, res_type):
         """Insert the performance evaluation results from velovae.post_analysis
 
-        Arguments
-        ---------
-        data_name : str
-            Name of the dataset
-        res : `pandas.DataFrame`
-            Contains performance metrics for the entire dataset.
-            Rows are the performance metrics
-            columns are model names
-        res_type : `pandas.DataFrame`
-            Contains the velocity and time metrics for each pair of
-            cell type transition. Rows are different performance metrics
-            while columns are indexed by method and cell type transitions.
-        Returns
-        -------
-        Inserts res and res_type to self.df and self.df_type
+        Args:
+            data_name (str):
+                Name of the dataset
+            res (:class:`pandas.DataFrame`):
+                Contains performance metrics for the entire dataset.
+                Rows are the performance metrics.
+                columns are model names.
+            res_type (:class:`pandas.DataFrame`):
+                Contains the velocity and time metrics for each pair of
+                cell type transition. Rows are different performance metrics
+                while columns are indexed by method and cell type transitions.
         """
         self.n_dataset += 1
         # Collapse the dataframe to 1D series with multi-index
@@ -97,6 +94,14 @@ class PerfLogger:
 
     def plot(self, figure_path=None, bbox_to_anchor=(1.25, 1.0)):
         """Generate bar plots showing all performance metrics
+
+        Args:
+            figure_path (str, optional):
+                Path to the folder for saving figures.
+                If set to None, figures will not be saved.
+                Defaults to None.
+            bbox_to_anchor (tuple, optional):
+                Location of the legend. Defaults to (1.25, 1.0).
         """
         datasets = np.unique(self.df_type.columns.get_level_values(0))
         for metric in self.metrics:
@@ -133,6 +138,15 @@ class PerfLogger:
         return
 
     def save(self, file_name=None):
+        """Save data frames to .csv files.
+
+        Args:
+            file_name (str, optional):
+                Name of the csv file for saving. Does not need the path
+                as the path is specified when an object is created.
+                If set to None, will pick 'perf' as the default name.
+                Defaults to None.
+        """
         if file_name is None:
             file_name = "perf"
         self.df.to_csv(f"{self.save_path}/{file_name}.csv")

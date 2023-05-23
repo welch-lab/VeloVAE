@@ -12,26 +12,28 @@ def rna_velocity_vanillavae(adata,
     """Compute the velocity based on:
        du/dt = alpha - beta * u, ds/dt = beta * u - gamma * s
 
-    Arguments
-    ---------
-    adata : :class:`anndata.AnnData`
-    key : str
-        key used for extracting ODE parameters
-    use_raw : bool, optional
-        whether to use the (noisy) input count to compute the velocity
-    use_scv_genes : bool, optional
-        whether to compute velocity only for genes scVelo fits
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        key (str):
+            key used for extracting ODE parameters
+        use_raw (bool, optional):
+            whether to use the (noisy) input count to compute the velocity. Defaults to False.
+        use_scv_genes (bool, optional):
+            whether to compute velocity only for genes scVelo fits. Defaults to False.
+        k (int, optional):
+            Parameter of the softplus function added around switch time. Defaults to 10.
+        return_copy (bool, optional):
+            Whether to return a copy of velocity.
+            Results will be saved to adata by default. Defaults to False.
 
-    Returns (only if `return_copy`=True)
-    -------
-    Vu : `numpy array`
-        velocity of u
-    V : `numpy array`
-        velocity of s
-    U : `numpy array`
-        predicted u values
-    S : `numpy array`
-        predicted s values
+    Returns:
+        tuple containing:
+
+            - Vu (:class:`numpy.ndarray`): Velocity of u
+            - V (:class:`numpy.ndarray`): Velocity of s
+            - U (:class:`numpy.ndarray`): Predicted u values
+            - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()
@@ -85,32 +87,32 @@ def rna_velocity_vae(adata,
     """Compute the velocity based on:
        du/dt = rho * alpha - beta * u, ds/dt = beta * u - gamma * s
 
-    Arguments
-    ---------
-    adata : :class:`anndata.AnnData`
-    key : str
-        key used for extracting ODE parameters
-    use_raw : bool, optional
-        whether to use the (noisy) input count to compute the velocity
-    use_scv_genes : bool, optional
-        whether to compute velocity only for genes scVelo fits
-    sigma : float, optional
-        Parameter used in Gaussian filtering of velocity values.
-    apprx : bool, optional
-        Whether to use linear approximation to compute velocity
-    full_vb : bool, optional
-        Whether the model is full VB
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        key (str):
+            key used for extracting ODE parameters.
+        use_raw (bool, optional):
+            whether to use the (noisy) input count to compute the velocity. Defaults to False.
+        use_scv_genes (bool, optional):
+            whether to compute velocity only for genes scVelo fits. Defaults to False.
+        sigma (float, optional):
+            Parameter used in Gaussian filtering of velocity values. Defaults to None.
+        approx (bool, optional):
+            Whether to use linear approximation to compute velocity.. Defaults to False.
+        full_vb (bool, optional):
+            Whether the model is full VB. Defaults to False.
+        return_copy (bool, optional):
+            Whether to return a copy of velocity.
+            Results will be saved to adata by default. Defaults to False.
 
-    Returns (only if `return_copy`=True)
-    -------
-    Vu : `numpy array`
-        velocity of u
-    V : `numpy array`
-        velocity of s
-    U : `numpy array`
-        predicted u values
-    S : `numpy array`
-        predicted s values
+    Returns:
+        tuple containing:
+
+            - Vu (:class:`numpy.ndarray`): Velocity of u
+            - V (:class:`numpy.ndarray`): Velocity of s
+            - U (:class:`numpy.ndarray`): Predicted u values
+            - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy()) if full_vb\
         else adata.var[f"{key}_alpha"].to_numpy()
@@ -161,30 +163,38 @@ def rna_velocity_vae(adata,
         return Vu, V, U, S
 
 
-def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
-    """Compute the velocity based on: ds/dt = beta * u - gamma * s where
-    u and s are predicted by branching ODE
+def rna_velocity_brode(adata,
+                       key,
+                       use_raw=False,
+                       use_scv_genes=False,
+                       k=10.0,
+                       return_copy=False):
+    """Compute the velocity based on:
+        ds/dt = beta * u - gamma * s
+        where u and s are predicted by branching ODE
 
-    Arguments
-    ---------
-    adata : :class:`anndata.AnnData`
-    key : str
-        key used for extracting ODE parameters
-    use_raw : bool, optional
-        whether to use the (noisy) input count to compute the velocity
-    use_scv_genes : bool, optional
-        whether to compute velocity only for genes scVelo fits
-    k : float, optional
-        Parameter used in soft clipping of time duration
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        key (str):
+            key used for extracting ODE parameters.
+        use_raw (bool, optional):
+            Whether to use the (noisy) input count to compute the velocity. Defaults to False.
+        use_scv_genes (bool, optional):
+            Whether to compute velocity only for genes scVelo fits. Defaults to False.
+        k (float, optional):
+            Parameter used in soft clipping of time duration. Defaults to 10.0.
+        return_copy (bool, optional):
+            Whether to return a copy of velocity.
+            Results will be saved to adata by default. Defaults to False.
 
-    Returns
-    -------
-    V : `numpy array`
-        velocity
-    U : `numpy array`
-        predicted u values
-    S : `numpy array`
-        predicted s values
+    Returns:
+        tuple containing:
+
+            - Vu (:class:`numpy.ndarray`): Velocity of u
+            - V (:class:`numpy.ndarray`): Velocity of s
+            - U (:class:`numpy.ndarray`): Predicted u values
+            - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = adata.varm[f"{key}_alpha"].T
     beta = adata.varm[f"{key}_beta"].T
@@ -231,7 +241,8 @@ def rna_velocity_brode(adata, key, use_raw=False, use_scv_genes=False, k=10.0):
         gene_mask = np.isnan(adata.var['fit_scaling'].to_numpy())
         V[:, gene_mask] = np.nan
         Vu[:, gene_mask] = np.nan
-    return Vu, V, U, S
+    if return_copy:
+        return Vu, V, U, S
 
 
 def rna_velocity_cyclevae(adata,
@@ -242,27 +253,31 @@ def rna_velocity_cyclevae(adata,
                           return_copy=False):
     """Compute the velocity based on:
        du/dt = alpha - beta * u, ds/dt = beta * u - gamma * s
+       This is for the CyclVAE as the time needs to be obtained
+       from the latent phase.
 
-    Arguments
-    ---------
-    adata : :class:`anndata.AnnData`
-    key : str
-        key used for extracting ODE parameters
-    use_raw : bool, optional
-        whether to use the (noisy) input count to compute the velocity
-    use_scv_genes : bool, optional
-        whether to compute velocity only for genes scVelo fits
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        key (str):
+            key used for extracting ODE parameters
+        use_raw (bool, optional):
+            whether to use the (noisy) input count to compute the velocity. Defaults to False.
+        use_scv_genes (bool, optional):
+            whether to compute velocity only for genes scVelo fits. Defaults to False.
+        k (int, optional):
+            Parameter of the softplus function added around switch time. Defaults to 10.
+        return_copy (bool, optional):
+            Whether to return a copy of velocity.
+            Results will be saved to adata by default. Defaults to False.
 
-    Returns (only if `return_copy`=True)
-    -------
-    Vu : `numpy array`
-        velocity of u
-    V : `numpy array`
-        velocity of s
-    U : `numpy array`
-        predicted u values
-    S : `numpy array`
-        predicted s values
+    Returns:
+        tuple containing:
+
+            - Vu (:class:`numpy.ndarray`): Velocity of u
+            - V (:class:`numpy.ndarray`): Velocity of s
+            - U (:class:`numpy.ndarray`): Predicted u values
+            - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
     beta = adata.var[f"{key}_beta"].to_numpy()
@@ -311,11 +326,3 @@ def rna_velocity_cyclevae(adata,
         V[:, gene_mask] = np.nan
     if return_copy:
         return Vu, V, U, S
-
-
-def smooth_vel(v, t, W=5):
-    order_t = np.argsort(t)
-    h = np.ones((W))*(1/W)
-    v_ret = np.zeros((len(v)))
-    v_ret[order_t] = np.convolve(v[order_t], h, mode='same')
-    return v_ret

@@ -16,7 +16,9 @@ def moments(
     use_rep=None,
     copy=False,
 ):
-    """Computes moments for velocity estimation.
+    """
+    :noindex:
+    Computes moments for velocity estimation.
 
     First-/second-order moments are computed for each cell across its nearest neighbors,
     where the neighbor graph is obtained from euclidean distances in PCA space.
@@ -107,7 +109,9 @@ def discrete_moments(
     use_rep=None,
     copy=False,
 ):
-    """Computes moments for velocity estimation.
+    """
+    :noindex:
+    Computes moments for velocity estimation.
 
     This is the similar to the original moments function except that we will 
     aggregate the count over KNN to account for sparsity in unspliced count and
@@ -189,7 +193,9 @@ def discrete_moments(
 
 
 def second_order_moments(adata, adjusted=False):
-    """Computes second order moments for stochastic velocity estimation.
+    """
+    :noindex:
+    Computes second order moments for stochastic velocity estimation.
 
     Arguments
     ---------
@@ -219,7 +225,9 @@ def second_order_moments(adata, adjusted=False):
 
 
 def second_order_moments_u(adata):
-    """Computes second order moments for stochastic velocity estimation.
+    """
+    :noindex:
+    Computes second order moments for stochastic velocity estimation.
 
     Arguments
     ---------
@@ -256,7 +264,9 @@ def magic_impute(adata, knn=5, t=2, verbose=0, **kwargs):
 def get_moments(
     adata, layer=None, second_order=None, centered=True, mode="connectivities"
 ):
-    """Computes moments for a specified layer.
+    """
+    :noindex:
+    Computes moments for a specified layer.
 
     First and second order moments.
     If centered, that corresponds to means and variances across nearest neighbors.
