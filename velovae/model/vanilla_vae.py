@@ -228,6 +228,8 @@ class decoder(nn.Module):
 
 
 class VanillaVAE():
+    """Basic VAE Model
+    """
     def __init__(self,
                  adata,
                  tmax,
@@ -377,7 +379,7 @@ class VanillaVAE():
         return np.sqrt(12)*std*eps + (mu - np.sqrt(3)*std)
 
     def forward(self, data_in):
-        """Forward funciton
+        """Forward function
 
         Args:
             data_in (:class:`torch.Tensor`):
@@ -385,12 +387,16 @@ class VanillaVAE():
                 Unspliced and spliced counts are concatenated at the gene dimension (dim=1).
 
         Returns:
-            tuple containing:
+            tuple:
 
                 - :class:`torch.Tensor`: time posterior mean
+
                 - :class:`torch.Tensor`: time posterior standard deviation
+
                 - :class:`torch.Tensor`: sampled time values
+
                 - :class:`torch.Tensor`: predicted unspliced counts
+
                 - :class:`torch.Tensor`: predicted spliced counts
         """
         data_in_scale = torch.cat((data_in[:, :data_in.shape[1]//2]/torch.exp(self.decoder.scaling),
@@ -402,7 +408,7 @@ class VanillaVAE():
         return mu_t, std_t, t_global, uhat, shat
 
     def eval_model(self, data_in):
-        """Evaluate the model in validation/test
+        """Evaluate the model on a validation/test
 
         Args:
             data_in (:class:`torch.Tensor`):
@@ -410,12 +416,15 @@ class VanillaVAE():
                 Unspliced and spliced counts are concatenated at the gene dimension (dim=1).
 
         Returns:
-            tuple containing:
+            tuple:
 
-                - :class:`torch.Tensor`: time posterior mean
-                - :class:`torch.Tensor`: time posterior standard deviation
-                - :class:`torch.Tensor`: predicted unspliced counts
-                - :class:`torch.Tensor`: predicted spliced counts
+                - :class:`torch.Tensor`: Time posterior mean
+
+                - :class:`torch.Tensor`: Time posterior standard deviation
+
+                - :class:`torch.Tensor`: Predicted unspliced counts
+
+                - :class:`torch.Tensor`: Predicted spliced counts
         """
         data_in_scale = torch.cat((data_in[:, :data_in.shape[1]//2]/torch.exp(self.decoder.scaling),
                                    data_in[:, data_in.shape[1]//2:]), 1)
@@ -691,8 +700,7 @@ class VanillaVAE():
         return
 
     def pred_all(self, data, mode='test', output=["uhat", "shat", "t"], gene_idx=None):
-        """
-        Generate different types of predictions from the model for all cells.
+        """Generate different types of predictions from the model for all cells.
 
         Args:
             data (:class:`torch.Tensor`):
@@ -717,10 +725,10 @@ class VanillaVAE():
                 If given, the outputs only preserve the selected genes. Defaults to None.
 
         Returns:
-            tuple containing:
+            tuple:
 
-                - list: contains the corresponding data specified
-                in the `output` argument.
+                - list: contains the corresponding data specified in the `output` argument.
+
                 - float: VAE loss
         """
         N, G = data.shape[0], data.shape[1]//2
@@ -805,7 +813,7 @@ class VanillaVAE():
               plot=False,
               path='figures',
               **kwargs):
-        """Evaluate the model upon training/test dataset.
+        """Evaluate the model on a training/test dataset.
 
         Args:
             dataset (:class:`torch.utils.data.Dataset`):
@@ -878,7 +886,7 @@ class VanillaVAE():
         torch.save(self.decoder.state_dict(), f"{file_path}/{dec_name}.pt")
 
     def save_anndata(self, adata, key, file_path, file_name=None):
-        """Updates an input AnnData object with inferred latent variable
+        """Updates an input AnnData object with inferred latent variable\
             and estimations from the model and write it to disk.
 
         Args:

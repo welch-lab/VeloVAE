@@ -65,7 +65,7 @@ def get_velocity_metric(adata,
             Number of parallel jobs. Defaults to None.
 
     Returns:
-        tuple containing:
+        tuple
 
             - dict: In-Cluster Coherence per cell type transition
             - float: Mean In-Cluster Coherence
@@ -386,15 +386,16 @@ def post_analysis(adata,
         format (str):
             Figure format. Default to 'png'.
 
+
     Returns:
-        tuple containing:
-        
+        tuple
+
             - :class:`pandas.DataFrame`: Contains the dataset-wise performance metrics of all methods.
             - :class:`pandas.DataFrame`: Contains the performance metrics of each pair of ancestor and desendant cell types.
 
         Saves the figures to 'figure_path'.
 
-        Notice that stats_df and stats_df_type will be None if 'compute_metrics' is set to False.
+        Notice that the two output dataframes will be None if 'compute_metrics' is set to False.
     """
     # set the random seed
     random_state = 42 if not 'random_state' in kwargs else kwargs['random_state']

@@ -48,8 +48,8 @@ class encoder(nn.Module):
             Cin (int): Input feature dimension. We assume inputs are batches of 1-d tensors.
             dim_z (int): Latent dimension of the cell state.
             dim_cond (int, optional): Dimension of condition features, used for a conditional VAE. Defaults to 0.
-            N1 (int, optional): _description_. Defaults to 500.
-            N2 (int, optional): _description_. Defaults to 250.
+            N1 (int, optional): Width of the first hidden layer. Defaults to 500.
+            N2 (int, optional): Width of the second hidden layer. Defaults to 250.
         """
         super(encoder, self).__init__()
         self.fc1 = nn.Linear(Cin, N1)
@@ -92,11 +92,14 @@ class encoder(nn.Module):
             condition (torch.Tensor, optional): Condition features. Defaults to None.
 
         Returns:
-            tuple containing:
+            tuple:
 
                 - :class:`torch.Tensor`: Mean of time variational posterior.
+
                 - :class:`torch.Tensor`: Standard deviation of time variational posterior.
+
                 - :class:`torch.Tensor`: Mean of cell state variational posterior.
+
                 - :class:`torch.Tensor`: Standard deviation of cell state variational posterior.
         """
         h = self.net(data_in)
@@ -377,7 +380,7 @@ class decoder(nn.Module):
                 Whether to randomly sample parameters from their posterior distributions. Defaults to True.
 
         Returns:
-            :class:`torch.Tensor`: sampled or fixed rate parameters
+            :class:`torch.Tensor`: Sampled or fixed rate parameters
         """
         ####################################################
         # Sample rate parameters for full vb or
@@ -745,25 +748,38 @@ class VAE(VanillaVAE):
                 Condition features. Defaults to None.
 
         Returns:
-            tuple containing:
+            tuple:
 
-                - :class:`torch.Tensor`: time mean, (N,1)
-                - :class:`torch.Tensor`: time standard deviation, (N,1)
-                - :class:`torch.Tensor`: cell state mean, (N, Cz)
-                - :class:`torch.Tensor`: cell state standard deviation, (N, Cz)
-                - :class:`torch.Tensor`: sampled cell time, (N,1)
-                - :class:`torch.Tensor`: sampled cell sate, (N,Cz)
-                - :class:`torch.Tensor`: predicted mean u values, (N,G)
-                - :class:`torch.Tensor`: predicted mean s values, (N,G)
-                - :class:`torch.Tensor`: predicted mean u values of the future state, (N,G).\
+                - :class:`torch.Tensor`: Time mean, (N,1)
+
+                - :class:`torch.Tensor`: Time standard deviation, (N,1)
+
+                - :class:`torch.Tensor`: Cell state mean, (N, Cz)
+
+                - :class:`torch.Tensor`: Cell state standard deviation, (N, Cz)
+
+                - :class:`torch.Tensor`: Sampled cell time, (N,1)
+
+                - :class:`torch.Tensor`: Sampled cell sate, (N,Cz)
+
+                - :class:`torch.Tensor`: Predicted mean u values, (N,G)
+
+                - :class:`torch.Tensor`: Predicted mean s values, (N,G)
+
+                - :class:`torch.Tensor`: Predicted mean u values of the future state, (N,G).\
                     Valid only when `vel_continuity_loss` is set to True
-                - :class:`torch.Tensor`: predicted mean s values of the future state, (N,G)\
+
+                - :class:`torch.Tensor`: Predicted mean s values of the future state, (N,G)\
                     Valid only when `vel_continuity_loss` is set to True
-                - :class:`torch.Tensor`: unspliced velocity
-                - :class:`torch.Tensor`: spliced velocity
-                - :class:`torch.Tensor`: unspliced velocity at the future state\
+
+                - :class:`torch.Tensor`: Unspliced velocity
+
+                - :class:`torch.Tensor`: Spliced velocity
+
+                - :class:`torch.Tensor`: Unspliced velocity at the future state\
                     Valid only when `vel_continuity_loss` is set to True
-                - :class:`torch.Tensor`: spliced velocity at the future state\
+
+                - :class:`torch.Tensor`: Spliced velocity at the future state\
                     Valid only when `vel_continuity_loss` is set to True
         """
         data_in_scale = data_in
@@ -1771,7 +1787,7 @@ class VAE(VanillaVAE):
               plot=False,
               path='figures',
               **kwargs):
-        """Evaluate the model upon training/test dataset.
+        """Evaluate the model on a training/test dataset.
 
         Args:
             dataset (:class:`torch.utils.data.Dataset`):

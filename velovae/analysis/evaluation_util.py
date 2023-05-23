@@ -934,8 +934,11 @@ def summary_scores(all_scores):
             {group name: score list of individual cells}.
 
     Returns:
-        dict{str,float}: Group-wise aggregation scores.
-        float: score aggregated on all samples
+        tuple:
+
+            - dict{str,float}: Group-wise aggregation scores.
+
+            - float: score aggregated on all samples
     """
     sep_scores = {k: np.mean(s) for k, s in all_scores.items() if s}
     overal_agg = np.mean([s for k, s in sep_scores.items() if s])
@@ -999,8 +1002,11 @@ def cross_boundary_correctness(
             Boolean array to filter out non-velocity genes. Defaults to None.
 
     Returns:
-        dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
-        float: averaged score over all cells
+        tuple:
+
+            - dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
+
+            - float: averaged score over all cells
     """
     scores = {}
     all_scores = {}
@@ -1100,8 +1106,11 @@ def gen_cross_boundary_correctness(
             Seed for random walk sampling. Defaults to 2022.
 
     Returns:
-        dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
-        :class:`numpy.ndarray`: Averaged score over all cells for all step numbers
+        tuple:
+
+            - dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
+
+            - :class:`numpy.ndarray`: Average score over all cells for all step numbers
     """
     # Use k-hop neighbors
     scores = {}
@@ -1234,12 +1243,16 @@ def gen_cross_boundary_correctness_test(
             Seed for random walk sampling. Defaults to 2022.
 
     Returns:
-        dict: Proportional of cells with correct velocity flow (velocity accuracy)
-        indexed by cluster_edges
+        tuple:
 
-        `numpy.ndarray`: Averaged velocity accuracy over all cells for all step numbers
-        dict: Mann-Whitney U test statistics indexed by cluster_edges
-        `numpy.ndarray`: Averaged Mann-Whitney U test statistics over all cells for all step numbers
+            - dict: Proportional of cells with correct velocity flow (velocity accuracy)\
+                indexed by cluster_edges
+
+            - :class:`numpy.ndarray`: Average velocity accuracy over all cells for all step numbers
+
+            - dict: Mann-Whitney U test statistics indexed by cluster_edges
+
+            - :class:`numpy.ndarray`: Average Mann-Whitney U test statistics over all cells for all step numbers
     """
     # Use k-hop neighbors
     test_stats, accuracy = {}, {}
@@ -1385,10 +1398,15 @@ def calibrated_cross_boundary_correctness(
             Key to time standard deviation. Defaults to None.
 
     Returns:
-        dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
-        float: averaged score over all cells.
-        dict: time score := proportion of cells with correct time order in a cell type transition
-        float: averaged time score
+        tuple:
+
+            - dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
+
+            - float: averaged score over all cells.
+
+            - dict: time score := proportion of cells with correct time order in a cell type transition
+
+            - float: averaged time score
     """
     scores = {}
     all_scores = {}
@@ -1492,7 +1510,7 @@ def _edge2adj(cell_types, cluster_edges):
 
 
 def time_score(adata, tkey, cluster_key, cluster_edges):
-    """Compute Time Accuracy Score.
+    """Time Accuracy Score.
     Defined as the average proportion of descendant cells that
     appear after their progenitor cells.
 
@@ -1507,8 +1525,11 @@ def time_score(adata, tkey, cluster_key, cluster_edges):
             Pairs of clusters has transition direction A->B.
 
     Returns:
-        dict: Time Accuracy Score for each transitio pair.
-        float: Mean Time Accuracy Score.
+        tuple:
+
+            - dict: Time Accuracy Score for each transitio pair.
+
+            - float: Mean Time Accuracy Score.
     """
     # Compute time inference accuracy based on
     # progenitor-descendant pairs
@@ -1530,26 +1551,29 @@ def time_score(adata, tkey, cluster_key, cluster_edges):
     return tscore_out, np.mean([sc for sc in tscore.values()])
 
 
-
 def inner_cluster_coh(adata, k_cluster, k_velocity, gene_mask=None, return_raw=False):
-    # In-cluster Coherence Score.
-    #
-    # Args:
-    #    adata (Anndata):
-    #        Anndata object.
-    #    k_cluster (str):
-    #        key to the cluster column in adata.obs DataFrame.
-    #    k_velocity (str):
-    #        key to the velocity matrix in adata.obsm.
-    #    return_raw (bool):
-    #        return aggregated or raw scores.
-    #
-    # Returns:
-    #    dict:
-    #        all_scores indexed by cluster_edges mean scores indexed by cluster_edges
-    #    float:
-    #        averaged score over all cells.
-    #
+    """In-Cluster Coherence.
+    Measures the average consistency of RNA velocity in each distinct cell type.
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            AnnData object.
+        k_cluster (str):
+            key to the cluster column in adata.obs DataFrame.
+        k_velocity (str):
+            key to the velocity matrix in adata.obsm.
+        gene_mask (:class:`numpy.ndarray`, optional):
+            Boolean array to filter out genes. Defaults to None.
+        return_raw (bool, optional):
+            return aggregated or raw scores.. Defaults to False.
+
+    Returns:
+        tuple:
+
+            - dict: all_scores indexed by cluster_edges mean scores indexed by cluster_edges
+
+            - float: Average score over all cells.
+    """
     clusters = np.unique(adata.obs[k_cluster])
     scores = {}
     all_scores = {}
@@ -1581,17 +1605,19 @@ def _pearson_corr(v, v_neighbor):
 
 
 def velocity_consistency(adata, vkey, gene_mask=None):
-    # Velocity Consistency as reported in scVelo paper
-    #
-    # Args:
-    #    adata (Anndata):
-    #        Anndata object.
-    #    vkey (str):
-    #        key to the velocity matrix in adata.obsm.
-    #
-    # Returns:
-    #    float:
-    #        averaged score over all cells.
+    """Velocity Consistency as reported in scVelo paper
+
+    Args:
+        adata (:class:`anndata.AnnData`):
+            Anndata object.
+        vkey (str):
+            key to the velocity matrix in adata.obsm.
+        gene_mask (:class:`numpy.ndarray`, optional):
+            Boolean array to filter out genes. Defaults to None.
+
+    Returns:
+        float: Average score over all cells.
+    """
     nbs = adata.uns['neighbors']['indices']
 
     velocities = adata.layers[vkey]

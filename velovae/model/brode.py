@@ -196,26 +196,26 @@ class BrODE():
             embed_key (str):
                 Key in adata.obsm storing the latent cell state
             param_key (str, optional):
-                Used to extract sigma_u, sigma_s and scaling from adata.var. Default to None.
+                Used to extract sigma_u, sigma_s and scaling from adata.var. Defaults to None.
             device (:class:`torch.device`, optional):
-                {'cpu' or 'gpu'}.  Default to 'cpu'.
+                {'cpu' or 'gpu'}.  Defaults to 'cpu'.
             checkpoint (str, optional):
                 Path to a file containing a pretrained model.
                 If given, initialization will be skipped and arguments relating to initialization will be ignored.
-                Default to None.
+                Defaults to None.
             graph_param (dict, optional):
                 Hyper-parameters for the transition graph computation.
                 Keys should contain:
                 (1) partition_k: num_neighbors in graph partition (a KNN graph is computed by scanpy)
                 (2) partition_res: resolution of Louvain clustering in graph partition
                 (3) n_par: number of parents to keep in graph pruning
-                (4) dt: tuple (r1,r2), proportion of time range to consider as the parent time window
-                    Let t_range be the time range. Then for any cell with time t, only cells in the
-                    time window (t-r2*t_range, t-r1*t_range)
-                (5) k: KNN in parent counting.
-                    This is different from partition_k. When we pick the time window, KNN
-                    is computed to choose the most likely parents from the cells in the window.
-                Default to {}.
+                (4) dt: tuple (r1,r2), proportion of time range to consider as the parent time window\
+                    Let t_range be the time range. Then for any cell with time t, only cells in the\
+                        time window (t-r2*t_range, t-r1*t_range)
+                (5) k: KNN in parent counting.\
+                    This is different from partition_k. When we pick the time window, KNN\
+                        is computed to choose the most likely parents from the cells in the window.
+                Defaults to {}.
         """
         t_start = time.time()
         self.timer = 0
@@ -292,27 +292,33 @@ class BrODE():
                 Cell type encoded in integers, (N,1)
 
         Returns:
-            :class:`torch.Tensor`:
-                Predicted u and s values, (N, G)
+            tuple:
+
+                - :class:`torch.Tensor`: Predicted u values, (N, G)
+
+                - :class:`torch.Tensor`: Predicted s values, (N, G)
         """
         uhat, shat = self.decoder.forward(t, y, neg_slope=self.config['neg_slope'])
 
         return uhat, shat
 
     def eval_model(self, t, y, gidx=None):
-        """Evaluate the model in validation/test.
+        """Evaluate the model on a validation/test.
 
         Args:
             t (:class:`torch.tensor`):
                 Cell time, (N,1)
             y (:class:`torch.tensor`):
                 Cell type encoded in integers, (N,1)
-            gidx (:class:`numpy array`, optional): 
+            gidx (:class:`numpy array`, optional):
                 A subset of genes to compute
 
         Returns:
-            :class:`torch.Tensor`:
-                Predicted u and s values, (N, G)
+            tuple:
+
+                - :class:`torch.Tensor`: Predicted u values, (N, G)
+
+                - :class:`torch.Tensor`: Predicted s values, (N, G)
         """
         uhat, shat = self.decoder.pred_su(t, y, gidx)
 
@@ -599,9 +605,10 @@ class BrODE():
                 If set to None, only the log likelihood will be computed. Defaults to None.
 
         Returns:
-            tuple containing:
+            tuple:
 
                 - :class:`torch.Tensor`: Predicted unspliced and spliced counts.
+
                 - float: ODE training/validation loss.
         """
         N, G = data.shape

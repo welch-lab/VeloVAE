@@ -2,7 +2,7 @@ from velovae.model import *
 from velovae.analysis import *
 from .plotting import (set_dpi,
                        get_colors,
-                       #Debugging plots
+                       # Debugging plots
                        plot_sig,
                        plot_phase,
                        plot_cluster,
