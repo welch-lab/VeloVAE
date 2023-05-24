@@ -1541,12 +1541,12 @@ class VAE(VanillaVAE):
         print(f"Final: Train ELBO = {elbo_train:.3f},\tTest ELBO = {elbo_test:.3f}")
         return
 
-    def _pred_all(self,
-                  data,
-                  cell_labels,
-                  mode='test',
-                  output=["uhat", "shat", "t", "z"],
-                  gene_idx=None):
+    def pred_all(self,
+                 data,
+                 cell_labels,
+                 mode='test',
+                 output=["uhat", "shat", "t", "z"],
+                 gene_idx=None):
         N, G = data.shape[0], data.shape[1]//2
         if gene_idx is None:
             gene_idx = np.array(range(G))
