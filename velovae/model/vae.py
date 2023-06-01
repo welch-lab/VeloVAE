@@ -1524,7 +1524,7 @@ class VAE(VanillaVAE):
                                gene_plot,
                                plot,
                                figure_path)
-        self.loss_train.append(elbo_train)
+        self.loss_train.append(-elbo_train)
         self.loss_test.append(elbo_test)
         # Plot final results
         if plot:
