@@ -565,8 +565,8 @@ def get_nclusters(C, noise=1.0, n_cluster_thred=3):
 def sample_dir_mix(w, yw, std_prior):
     # Sample from a mixture of dirichlet distributions
     mu_0, mu_1 = np.mean(w[yw == 0]), np.mean(w[yw == 1])
-    alpha_w_0 = find_dirichlet_param(mu_0, std_prior)
-    alpha_w_1 = find_dirichlet_param(mu_1, std_prior)
+    alpha_w_0 = np.clip(find_dirichlet_param(mu_0, std_prior), 1e-6, None)
+    alpha_w_1 = np.clip(find_dirichlet_param(mu_1, std_prior), 1e-6, None)
     np.random.seed(42)
     q1 = dirichlet.rvs(alpha_w_0, size=len(w))[:, 0]
     np.random.seed(42)
