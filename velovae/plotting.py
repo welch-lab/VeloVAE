@@ -881,7 +881,8 @@ def plot_phase_axis(ax,
                             alpha=a)
         else:
             colors = get_colors(len(legends), color_map)
-            for type_int in range(len(legends)):  # type_int: label index, labels are cell types
+            cell_types_int = np.unique(labels)
+            for i, type_int in enumerate(cell_types_int):  # type_int: label index, labels are cell types
                 mask = labels == type_int
                 if np.any(mask):
                     if show_legend:
@@ -1219,9 +1220,11 @@ def plot_sig_axis(ax,
     if labels is None or legends is None:
         lines.append(ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)[0])
     else:
-        colors = get_colors(len(legends), color_map)
-        for i in range(len(legends)):
-            mask = labels == i
+        colors = (color_map if isinstance(color_map, np.ndarray) or isinstance(color_map, list)
+                  else get_colors(len(legends), color_map))
+        cell_types_int = np.unique(labels)
+        for i, type_int in enumerate(cell_types_int):
+            mask = labels == type_int
             if np.any(mask):
                 idx_sample = sample_scatter_plot(x[mask], D)
                 if show_legend:
@@ -1355,6 +1358,8 @@ def plot_vel_axis(ax,
                   show_legend=False,
                   sparsity_correction=False,
                   color_map=None,
+                  headwidth=5.0,
+                  headlength=8.0,
                   title=None):
     """Velocity quiver plot on a u/s-t subplot."""
     if labels is None or legends is None:
@@ -1375,13 +1380,15 @@ def plot_vel_axis(ax,
                       angles='xy',
                       scale=None,
                       scale_units='inches',
-                      headwidth=5.0,
-                      headlength=8.0,
+                      headwidth=headwidth,
+                      headlength=headlength,
                       color='k')
     else:
-        colors = get_colors(len(legends), color_map)
-        for i in range(len(legends)):
-            mask = labels == i
+        colors = (color_map if isinstance(color_map, np.ndarray) or isinstance(color_map, list)
+                  else get_colors(len(legends), color_map))
+        cell_types_int = np.unique(labels)
+        for i,  type_int in enumerate(cell_types_int):
+            mask = labels == type_int
             t_type = t[mask]
             dt_sample = (t_type.max()-t_type.min())/30
             if np.any(mask):
@@ -1407,8 +1414,8 @@ def plot_vel_axis(ax,
                               angles='xy',
                               scale=None,
                               scale_units='inches',
-                              headwidth=5.0,
-                              headlength=8.0,
+                              headwidth=headwidth,
+                              headlength=headlength,
                               color=colors[i % len(colors)])
                 else:
                     ax.quiver(t_type[torder][indices],
@@ -1418,11 +1425,11 @@ def plot_vel_axis(ax,
                               angles='xy',
                               scale=None,
                               scale_units='inches',
-                              headwidth=5.0,
-                              headlength=8.0,
+                              headwidth=headwidth,
+                              headlength=headlength,
                               color=colors[i % len(colors)])
     ymin, ymax = ax.get_ylim()
-    ax.set_yticks([0, ymax])
+    ax.set_yticks([max(0, ymin * 0.9), ymax * 1.1])
     return ax
 
 
