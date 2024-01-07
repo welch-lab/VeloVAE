@@ -26,6 +26,14 @@ def set_dpi(dpi):
     DPI = dpi
 
 
+def _set_figsize(X_embed, real_aspect_ratio=False, width=7.5):
+    figsize = (width, width*0.75)
+    if real_aspect_ratio:
+        aspect_ratio = (X_embed[:, 0].max() - X_embed[:, 0].min()) / (X_embed[:, 1].max() - X_embed[:, 1].min())
+        figsize = (width, width*aspect_ratio)
+    return figsize
+
+
 def get_colors(n, color_map=None):
     """Get colors for plotting cell clusters.
 
@@ -221,7 +229,7 @@ def plot_sig(t,
     lgd = fig.legend(handles,
                      labels,
                      fontsize=15,
-                     markerscale=5,
+                     markerscale=2,
                      ncol=4,
                      bbox_to_anchor=(0.0, 1.0, 1.0, 0.25),
                      loc='center')
@@ -289,7 +297,7 @@ def plot_phase(u, s,
     lgd = fig.legend(handles,
                      labels,
                      fontsize=15,
-                     markerscale=5,
+                     markerscale=2,
                      ncol=4,
                      bbox_to_anchor=(0.0, 1.0, 1.0, 0.25),
                      loc='center')
@@ -863,14 +871,15 @@ def plot_phase_axis(ax,
                     title=None,
                     show_legend=False,
                     label_fontsize=30,
-                    color_map=None):
+                    palette=None):
     """Plot phase in a subplot of a figure."""
-    try:
+    try:   
         if labels is None:
             ax.plot(s[::D], u[::D], marker, color='k')
         elif legends is None:
             types = np.unique(labels)
-            colors = get_colors(len(types), color_map)
+            colors = (palette if isinstance(palette, np.ndarray) or isinstance(palette, list)
+                      else get_colors(len(types), palette))
             for type_int in types:
                 mask = labels == type_int
                 if np.any(mask):
@@ -880,7 +889,8 @@ def plot_phase_axis(ax,
                             color=colors[type_int % len(colors)],
                             alpha=a)
         else:
-            colors = get_colors(len(legends), color_map)
+            colors = (palette if isinstance(palette, np.ndarray) or isinstance(palette, list)
+                      else get_colors(len(legends), palette))
             cell_types_int = np.unique(labels)
             for i, type_int in enumerate(cell_types_int):  # type_int: label index, labels are cell types
                 mask = labels == type_int
@@ -929,7 +939,7 @@ def plot_phase_grid(Nr,
                     alpha=0.2,
                     downsample=1,
                     legend_fontsize=None,
-                    color_map=None,
+                    palette=None,
                     path='figures',
                     figname=None,
                     format='png',
@@ -981,8 +991,8 @@ def plot_phase_grid(Nr,
             Down-sampling factor to display the data points.. Defaults to 1.
         legend_fontsize (int/float, optional):
             Defaults to None.
-        color_map (str, optional):
-            User-defined colormap for cell labels. Defaults to None.
+        palette (str, optional):
+            User-defined palette for cell labels. Defaults to None.
         path (str, optional):
             Path to the saved figure. Defaults to 'figures'.
         figname (_type_, optional):
@@ -1020,7 +1030,7 @@ def plot_phase_grid(Nr,
                                        Legends[methods[0]],
                                        title,
                                        show_legend=True,
-                                       color_map=color_map)
+                                       palette=palette)
             try:
                 ax_phase = plot_phase_axis(ax_phase,
                                            Uhat[methods[0]][:, i_fig],
@@ -1032,7 +1042,7 @@ def plot_phase_grid(Nr,
                                            Legends[methods[0]],
                                            title,
                                            show_legend=False,
-                                           color_map=color_map)
+                                           palette=palette)
             except (KeyError, TypeError):
                 print("[** Warning **]: Skip plotting the prediction because of key value error or invalid data type.")
                 pass
@@ -1058,7 +1068,7 @@ def plot_phase_grid(Nr,
                                                       Legends[method],
                                                       title,
                                                       show_legend=True,
-                                                      color_map=color_map)
+                                                      palette=palette)
                     try:
                         ax_phase[M*j+k] = plot_phase_axis(ax_phase[M*j+k],
                                                           Uhat[method][:, i_fig*Nc+j],
@@ -1070,7 +1080,7 @@ def plot_phase_grid(Nr,
                                                           Legends[method],
                                                           title,
                                                           show_legend=False,
-                                                          color_map=color_map)
+                                                          palette=palette)
                     except (KeyError, TypeError):
                         print("[** Warning **]: "
                               "Skip plotting the prediction because of key value error or invalid data type.")
@@ -1096,7 +1106,7 @@ def plot_phase_grid(Nr,
                                               Legends[methods[0]],
                                               title,
                                               show_legend=True,
-                                              color_map=color_map)
+                                              palette=palette)
                 try:
                     ax_phase[i] = plot_phase_axis(ax_phase[i],
                                                   Uhat[methods[0]][:, i_fig*Nr+i],
@@ -1108,7 +1118,7 @@ def plot_phase_grid(Nr,
                                                   Legends[methods[0]],
                                                   title,
                                                   show_legend=False,
-                                                  color_map=color_map)
+                                                  palette=palette)
                 except (KeyError, TypeError):
                     print("[** Warning **]: "
                           "Skip plotting the prediction because of key value error or invalid data type.")
@@ -1139,7 +1149,7 @@ def plot_phase_grid(Nr,
                                                                  Legends[method],
                                                                  title,
                                                                  show_legend=True,
-                                                                 color_map=color_map)
+                                                                 palette=palette)
                         try:
                             ax_phase[i, M * j + k] = plot_phase_axis(ax_phase[i, M * j + k],
                                                                      Uhat[method][:, idx],
@@ -1151,7 +1161,7 @@ def plot_phase_grid(Nr,
                                                                      Legends[method],
                                                                      title,
                                                                      show_legend=False,
-                                                                     color_map=color_map)
+                                                                     palette=palette)
                         except (KeyError, TypeError):
                             print("[** Warning **]:"
                                   "Skip plotting the prediction because of key value error or invalid data type.")
@@ -1172,7 +1182,7 @@ def plot_phase_grid(Nr,
         lgd = fig_phase.legend(handles,
                                labels,
                                fontsize=legend_fontsize,
-                               markerscale=5.0,
+                               markerscale=2.0,
                                bbox_to_anchor=(-0.03/Nc, l_indent),
                                loc='upper right')
 
@@ -1213,15 +1223,15 @@ def plot_sig_axis(ax,
                   a=1.0,
                   D=1,
                   show_legend=False,
-                  color_map=None,
+                  palette=None,
                   title=None):
     """Plot a modality versus time in a subplot."""
     lines = []
     if labels is None or legends is None:
         lines.append(ax.plot(t[::D], x[::D], marker, markersize=5, color='k', alpha=a)[0])
     else:
-        colors = (color_map if isinstance(color_map, np.ndarray) or isinstance(color_map, list)
-                  else get_colors(len(legends), color_map))
+        colors = (palette if isinstance(palette, np.ndarray) or isinstance(palette, list)
+                  else get_colors(len(legends), palette))
         cell_types_int = np.unique(labels)
         for i, type_int in enumerate(cell_types_int):
             mask = labels == type_int
@@ -1357,7 +1367,7 @@ def plot_vel_axis(ax,
                   a=1.0,
                   show_legend=False,
                   sparsity_correction=False,
-                  color_map=None,
+                  palette=None,
                   headwidth=5.0,
                   headlength=8.0,
                   title=None):
@@ -1384,8 +1394,8 @@ def plot_vel_axis(ax,
                       headlength=headlength,
                       color='k')
     else:
-        colors = (color_map if isinstance(color_map, np.ndarray) or isinstance(color_map, list)
-                  else get_colors(len(legends), color_map))
+        colors = (palette if isinstance(palette, np.ndarray) or isinstance(palette, list)
+                  else get_colors(len(legends), palette))
         cell_types_int = np.unique(labels)
         for i,  type_int in enumerate(cell_types_int):
             mask = labels == type_int
@@ -1454,7 +1464,7 @@ def plot_sig_grid(Nr,
                   legend_fontsize=None,
                   sparsity_correction=False,
                   plot_loess=False,
-                  color_map=None,
+                  palette=None,
                   path='figures',
                   figname=None,
                   format='png'):
@@ -1526,7 +1536,7 @@ def plot_sig_grid(Nr,
             Defaults to False.
         plot_loess (bool, optional):
             Whether to plot a line fit for VeloVAE. Defaults to False.
-        color_map (_type_, optional):
+        palette (list, optional):
             User-defined colormap for different cell types. Defaults to None.
         path (str, optional):
             Saving path. Defaults to 'figures'.
@@ -1567,7 +1577,7 @@ def plot_sig_grid(Nr,
                               alpha,
                               down_sample,
                               True,
-                              color_map=color_map,
+                              palette=palette,
                               title=title)
                 plot_sig_axis(ax_sig[3*i+1],
                               t,
@@ -1577,7 +1587,7 @@ def plot_sig_grid(Nr,
                               '.',
                               alpha,
                               down_sample,
-                              color_map=color_map)
+                              palette=palette)
 
                 try:
                     if ('VeloVAE' in methods[0])\
@@ -1614,7 +1624,7 @@ def plot_sig_grid(Nr,
                                       Labels[methods[0]],
                                       Legends[methods[0]],
                                       sparsity_correction=sparsity_correction,
-                                      color_map=color_map)
+                                      palette=palette)
                     else:
                         plot_sig_pred_axis(ax_sig[3*i],
                                            that,
@@ -1639,7 +1649,7 @@ def plot_sig_grid(Nr,
                                       Labels[methods[0]],
                                       Legends[methods[0]],
                                       sparsity_correction=sparsity_correction,
-                                      color_map=color_map)
+                                      palette=palette)
                 except (KeyError, TypeError):
                     print("[** Warning **]: "
                           "Skip plotting the prediction because of key value error or invalid data type.")
@@ -1691,7 +1701,7 @@ def plot_sig_grid(Nr,
                                       alpha,
                                       down_sample,
                                       True,
-                                      color_map=color_map,
+                                      palette=palette,
                                       title=title)
                         plot_sig_axis(ax_sig[3*i+1, M*j+k],
                                       t,
@@ -1701,7 +1711,7 @@ def plot_sig_grid(Nr,
                                       '.',
                                       alpha,
                                       down_sample,
-                                      color_map=color_map)
+                                      palette=palette)
 
                         if len(Legends[method]) > len(legends):
                             legends = Legends[method]
@@ -1739,7 +1749,7 @@ def plot_sig_grid(Nr,
                                               Labels[method],
                                               Legends[method],
                                               sparsity_correction=sparsity_correction,
-                                              color_map=color_map)
+                                              palette=palette)
                             else:  # plot line prediction
                                 plot_sig_pred_axis(ax_sig[3*i, M*j+k],
                                                    that,
@@ -1764,7 +1774,7 @@ def plot_sig_grid(Nr,
                                               Labels[method],
                                               Legends[method],
                                               sparsity_correction=sparsity_correction,
-                                              color_map=color_map)
+                                              palette=palette)
                         except (KeyError, TypeError):
                             print("[** Warning **]: "
                                   "Skip plotting the prediction because of key value error or invalid data type.")
@@ -1803,7 +1813,7 @@ def plot_sig_grid(Nr,
         lgd = fig_sig.legend(handles,
                              labels,
                              fontsize=legend_fontsize,
-                             markerscale=5.0,
+                             markerscale=2.0,
                              bbox_to_anchor=(-0.03/Nc, l_indent),
                              loc='upper right')
 
@@ -1821,6 +1831,10 @@ def plot_time_grid(T,
                    q=0.99,
                    W=6,
                    H=3,
+                   dot_size=10,
+                   grid_size=None,
+                   real_aspect_ratio=False,
+                   color_map='plasma_r',
                    save="figures/time_grid.png"):
     """Plot the latent time of different methods.
 
@@ -1840,104 +1854,154 @@ def plot_time_grid(T,
         q (float, optional):
             Top quantile for clipping extreme values. Defaults to 0.99.
         W (int, optional):
-            Subplot width. Defaults to 6.
+            Subplot width. Defaults to 6. Ignored when real_aspect_ratio is True.
         H (int, optional):
-            Subplot height. Defaults to 3.
+            Subplot height. Defaults to 3. Ignored when real_aspect_ratio is True.
+        dot_size (int, optional):
+            Size of the dots. Defaults to 10.
+        grid_size (tuple, optional):
+            Grid size. Defaults to None.
+        real_aspect_ratio (bool, optional):
+            Whether to use real aspect ratio. Defaults to False.
         save (str, optional):
             Figure name for saving (including path). Defaults to "figures/time_grid.png".
     """
     if capture_time is not None:
-        methods = ["Capture Time"] + list(T.keys())
+        methods =  list(T.keys()) + ["Capture Time"]
     else:
         methods = list(T.keys())
     M = len(methods)
+
+    if grid_size is None:
+        grid_size = (1, M)
+    n_row, n_col = grid_size
+
+    # Calculate figure size
+    panel_figsize = _set_figsize(X_emb, real_aspect_ratio, W)
+    if real_aspect_ratio:
+        figsize = (panel_figsize[0]*n_col, panel_figsize[1]*n_row)
+    else:
+        figsize = (W*n_col, H*n_row)
+
     if std_t is not None:
-        fig_time, ax = plt.subplots(2, M, figsize=(W*M+2, H), facecolor='white')
+        fig_time, ax = plt.subplots(2*n_row, n_col, figsize=figsize, facecolor='white')
         for i, method in enumerate(methods):
+            row = i // n_col
+            col = i - row * n_col
             t = capture_time if method == "Capture Time" else T[method]
             t = np.clip(t, None, np.quantile(t, q))
             t = t - t.min()
-            t = t/t.max()
-            if M > 1:
-                ax[0, i].scatter(X_emb[::down_sample, 0],
-                                 X_emb[::down_sample, 1],
-                                 s=2.0,
-                                 c=t[::down_sample],
-                                 cmap='plasma',
-                                 edgecolors='none')
-                title = "VeloVAE" if method == "FullVB" else method
-                ax[0, i].set_title(title, fontsize=24)
-                ax[0, i].axis('off')
+            t = t/(t.max() + (t.max() == 0))
+            if n_col > 1:
+                ax[2*row, col].scatter(X_emb[::down_sample, 0],
+                                       X_emb[::down_sample, 1],
+                                       s=dot_size,
+                                       c=t[::down_sample],
+                                       cmap=color_map,
+                                       edgecolors='none')
+                if method == "Capture Time":
+                    ax[2*row, col].set_title("Expected Temporal Order", fontsize=24)
+                else:
+                    ax[2*row, col].set_title(method, fontsize=24)
             else:
-                ax[0].scatter(X_emb[::down_sample, 0],
-                              X_emb[::down_sample, 1],
-                              s=2.0,
-                              c=t[::down_sample],
-                              cmap='plasma',
-                              edgecolors='none')
-                title = "VeloVAE" if method == "FullVB" else method
-                ax[0].set_title(title, fontsize=24)
-                ax[0].axis('off')
+                ax[2*row].scatter(X_emb[::down_sample, 0],
+                                  X_emb[::down_sample, 1],
+                                  s=dot_size,
+                                  c=t[::down_sample],
+                                  cmap=color_map,
+                                  edgecolors='none')
+                if method == "Capture Time":
+                    ax[2*row].set_title("Expected Temporal Order", fontsize=24)
+                else:
+                    ax[2*row].set_title(method, fontsize=24)
 
             # Plot the Time Variance in a Colormap
             var_t = std_t[method]**2
 
             if np.any(var_t > 0):
                 if M > 1:
-                    ax[1, i].scatter(X_emb[::down_sample, 0],
-                                     X_emb[::down_sample, 1],
-                                     s=2.0,
-                                     c=var_t[::down_sample],
-                                     cmap='Reds',
-                                     edgecolors='none')
+                    ax[2*row+1, col].scatter(X_emb[::down_sample, 0],
+                                             X_emb[::down_sample, 1],
+                                             s=dot_size,
+                                             c=var_t[::down_sample],
+                                             cmap='Reds',
+                                             edgecolors='none')
                     norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
                     sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
-                    cbar1 = fig_time.colorbar(sm1, ax=ax[1, i])
+                    cbar1 = fig_time.colorbar(sm1, ax=ax[2*row+1, col])
                     cbar1.ax.get_yaxis().labelpad = 15
                     cbar1.ax.set_ylabel('Time Variance', rotation=270, fontsize=12)
-                    ax[1, i].axis('off')
                 else:
-                    ax[1].scatter(X_emb[::down_sample, 0],
-                                  X_emb[::down_sample, 1],
-                                  s=2.0,
-                                  c=var_t[::down_sample],
-                                  cmap='Reds',
-                                  edgecolors='none')
+                    ax[2*row+1].scatter(X_emb[::down_sample, 0],
+                                        X_emb[::down_sample, 1],
+                                        s=dot_size,
+                                        c=var_t[::down_sample],
+                                        cmap='Reds',
+                                        edgecolors='none')
                     norm1 = matplotlib.colors.Normalize(vmin=np.min(var_t), vmax=np.max(var_t))
                     sm1 = matplotlib.cm.ScalarMappable(norm=norm1, cmap='Reds')
-                    cbar1 = fig_time.colorbar(sm1, ax=ax[1])
+                    cbar1 = fig_time.colorbar(sm1, ax=ax[2*row+1])
                     cbar1.ax.get_yaxis().labelpad = 15
                     cbar1.ax.set_ylabel('Time Variance', rotation=270, fontsize=12)
-                    ax[1].axis('off')
     else:
-        fig_time, ax = plt.subplots(1, M, figsize=(8*M, 4), facecolor='white')
+        fig_time, ax = plt.subplots(n_row, n_col, figsize=figsize, facecolor='white')
         for i, method in enumerate(methods):
+            row = i // n_col
+            col = i - row * n_col
             t = capture_time if method == "Capture Time" else T[method]
             t = np.clip(t, None, np.quantile(t, q))
             t = t - t.min()
-            t = t/t.max()
-            if M > 1:
-                ax[i].scatter(X_emb[::down_sample, 0],
-                              X_emb[::down_sample, 1],
-                              s=2.0,
-                              c=t[::down_sample],
-                              cmap='plasma',
-                              edgecolors='none')
-                title = "VeloVAE" if method == "FullVB" else method
-                ax[i].set_title(title, fontsize=24)
-                ax[i].axis('off')
+            t = t/(t.max() + (t.max() == 0))
+            if n_col > 1 and n_row > 1:
+                ax[row, col].scatter(X_emb[::down_sample, 0],
+                                     X_emb[::down_sample, 1],
+                                     s=dot_size,
+                                     c=t[::down_sample],
+                                     cmap=color_map,
+                                     edgecolors='none')
+                if method == "Capture Time":
+                    ax[row, col].set_title("Expected Temporal Order", fontsize=24)
+                else:
+                    ax[row, col].set_title(method, fontsize=24)
+                ax[row, col].axis('off')
+            elif n_col > 1:
+                ax[col].scatter(X_emb[::down_sample, 0],
+                                X_emb[::down_sample, 1],
+                                s=dot_size,
+                                c=t[::down_sample],
+                                cmap=color_map,
+                                edgecolors='none')
+                if method == "Capture Time":
+                    ax[col].set_title("Expected Temporal Order", fontsize=24)
+                else:
+                    ax[col].set_title(method, fontsize=24)
+                ax[col].axis('off')
+            elif n_row > 1:
+                ax[row].scatter(X_emb[::down_sample, 0],
+                                X_emb[::down_sample, 1],
+                                s=dot_size,
+                                c=t[::down_sample],
+                                cmap=color_map,
+                                edgecolors='none')
+                if method == "Capture Time":
+                    ax[row].set_title("Expected Temporal Order", fontsize=24)
+                else:
+                    ax[row].set_title(method, fontsize=24)
+                ax[row].axis('off')
             else:
                 ax.scatter(X_emb[::down_sample, 0],
                            X_emb[::down_sample, 1],
-                           s=2.0,
+                           s=dot_size,
                            c=t[::down_sample],
-                           cmap='plasma',
+                           cmap=color_map,
                            edgecolors='none')
-                title = "VeloVAE" if method == "FullVB" else method
-                ax.set_title(title, fontsize=24)
+                if method == "Capture Time":
+                    ax.set_title("Expected Temporal Order", fontsize=24)
+                else:
+                    ax.set_title(method, fontsize=24)
                 ax.axis('off')
     norm0 = matplotlib.colors.Normalize(vmin=0, vmax=1)
-    sm0 = matplotlib.cm.ScalarMappable(norm=norm0, cmap='plasma')
+    sm0 = matplotlib.cm.ScalarMappable(norm=norm0, cmap=color_map)
     cbar0 = fig_time.colorbar(sm0, ax=ax, location="right") if M > 1 else fig_time.colorbar(sm0, ax=ax)
     cbar0.ax.get_yaxis().labelpad = 20
     cbar0.ax.set_ylabel('Cell Time', rotation=270, fontsize=24)
@@ -2325,7 +2389,7 @@ def plot_cell_trajectory(X_embed,
     ax.set_title('Velocity Stream Plot')
     ax.set_xlabel('Umap 1')
     ax.set_ylabel('Umap 2')
-    lgd = ax.legend(fontsize=12, ncol=4, markerscale=3.0, bbox_to_anchor=(0.0, 1.0, 1.0, 0.5), loc='center')
+    lgd = ax.legend(fontsize=12, ncol=4, markerscale=2.0, bbox_to_anchor=(0.0, 1.0, 1.0, 0.5), loc='center')
 
     save_fig(fig, save, (lgd,))
 
@@ -2449,7 +2513,7 @@ def plot_velocity_3d(X_embed,
     ax.set_ylabel('Embedding 2', fontsize=16)
     ax.set_zlabel('Embedding 3', fontsize=16)
 
-    lgd = ax.legend(fontsize=12, ncol=4, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
+    lgd = ax.legend(fontsize=12, ncol=4, markerscale=2.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
     plt.tight_layout()
 
     save_fig(fig, save, (lgd,))
@@ -2618,7 +2682,7 @@ def plot_trajectory_3d(X_embed,
 
     ncol = kwargs['ncol'] if 'ncol' in kwargs else 4
     fontsize = kwargs['legend_fontsize'] if 'legend_fontsize' in kwargs else 12
-    lgd = ax.legend(fontsize=fontsize, ncol=ncol, markerscale=5.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
+    lgd = ax.legend(fontsize=fontsize, ncol=ncol, markerscale=2.0, bbox_to_anchor=(0.0, 1.0, 1.0, -0.05), loc='center')
     fig.tight_layout()
     if 'axis_off' in kwargs:
         ax.axis('off')

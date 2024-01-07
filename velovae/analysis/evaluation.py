@@ -6,7 +6,7 @@ import pandas as pd
 from os import makedirs
 from .evaluation_util import *
 from .evaluation_util import time_score
-from velovae.plotting import get_colors, plot_cluster, plot_phase_grid, plot_sig_grid, plot_time_grid
+from velovae.plotting import set_dpi, get_colors, plot_cluster, plot_phase_grid, plot_sig_grid, plot_time_grid
 from multiprocessing import cpu_count
 from scipy.stats import spearmanr
 
@@ -311,8 +311,13 @@ def post_analysis(adata,
                   nplot=500,
                   frac=0.0,
                   embed="umap",
+                  time_colormap='plasma',
+                  dot_size=50,
                   grid_size=(1, 1),
                   sparsity_correction=True,
+                  stream_figsize=None,
+                  palette=None,
+                  dpi=120,
                   figure_path=None,
                   save=None,
                   **kwargs):
@@ -365,6 +370,10 @@ def post_analysis(adata,
             2D embedding used for visualization of time and cell type.
             The true key for the embedding is f"X_{embed}" in .obsm.
             Defaults to "umap".
+        time_colormap (str, optional):
+            Colormap for plotting time. Defaults to 'plasma'.
+        dot_size (int, optional):
+            Size of the dots in the scatter plot. Defaults to 50.
         grid_size (tuple[int], optional):
             Grid size for plotting the genes.
             n_row * n_col >= len(genes). Defaults to (1, 1).
@@ -372,6 +381,12 @@ def post_analysis(adata,
             Whether to sample cells non-uniformly across time and count values so
             that regions with sparser data point distributions will not be missed
             in gene plots due to sampling. Default to True.
+        stream_figsize (tuple[int], optional):
+            Figure size for stream plots. Defaults to None.
+        palette (list[str], optional):
+            Color palette for plotting cell types. Defaults to None.
+        dpi (int, optional):
+            Figure dpi. Defaults to 80.
         figure_path (str, optional):
             Path to save the figures.. Defaults to None.
         save (str, optional):
@@ -400,6 +415,8 @@ def post_analysis(adata,
     # set the random seed
     random_state = 42 if not 'random_state' in kwargs else kwargs['random_state']
     np.random.seed(random_state)
+    # dpi
+    set_dpi(dpi)
 
     if figure_path is not None:
         makedirs(figure_path, exist_ok=True)
@@ -563,18 +580,33 @@ def post_analysis(adata,
                 T[method_] = adata.obs["latent_time"].to_numpy()
             else:
                 T[method_] = adata.obs[f"{keys[i]}_time"].to_numpy()
+        k = len(methods)+(capture_time is not None)
+        if k > 5:
+            n_col = max(int(np.sqrt(k*2)), 1)
+            n_row = k // n_col
+            n_row += (n_row*n_col < k)
+        else:
+            n_row = 1
+            n_col = k
         plot_time_grid(T,
                        X_embed,
                        capture_time,
                        None,
+                       dot_size=dot_size,
                        down_sample=min(10, max(1, adata.n_obs//5000)),
+                       grid_size=(n_row, n_col),
+                       color_map=time_colormap,
                        save=(None if figure_path is None else
-                             f"{figure_path}/{test_id}_time.png"))
+                             f"{figure_path}/{test_id}_time.{save_format}"))
 
     if len(genes) == 0:
         return
 
     format = kwargs["format"] if "format" in kwargs else "png"
+
+    if palette is None:
+        palette = get_colors(len(cell_types_raw))
+
     if "phase" in plot_type or "all" in plot_type:
         Labels_phase = {}
         Legends_phase = {}
@@ -636,6 +668,7 @@ def post_analysis(adata,
                       frac=frac,
                       down_sample=min(20, max(1, adata.n_obs//5000)),
                       sparsity_correction=sparsity_correction,
+                      palette=palette,
                       path=figure_path,
                       figname=test_id,
                       format=format)
@@ -644,7 +677,12 @@ def post_analysis(adata,
         try:
             from scvelo.tl import velocity_graph
             from scvelo.pl import velocity_embedding_stream
-            colors = get_colors(len(cell_types_raw))
+            if 'stream_legend_loc' in kwargs:
+                stream_legend_loc = kwargs['stream_legend_loc']
+            else:
+                stream_legend_loc = 'on data' if len(palette) <= 10 else 'right margin'
+            legend_fontsize = (kwargs['legend_fontsize'] if 'legend_fontsize' in kwargs else
+                               np.clip(15 - np.clip(len(palette)-10, 0, None), 8, None))
             for i, vkey in enumerate(vkeys):
                 if methods[i] in ['scVelo', 'UniTVelo', 'DeepVelo']:
                     gene_subset = adata.var_names[adata.var['velocity_genes'].to_numpy()]
@@ -655,10 +693,12 @@ def post_analysis(adata,
                                           basis=embed,
                                           vkey=vkey,
                                           title="",
-                                          palette=colors,
-                                          legend_fontsize=np.clip(15 - np.clip(len(colors)-10, 0, None), 8, None),
-                                          legend_loc='on data' if len(colors) <= 10 else 'right margin',
-                                          dpi=300,
+                                          figsize=stream_figsize,
+                                          palette=palette,
+                                          size=dot_size,
+                                          legend_loc=stream_legend_loc,
+                                          legend_fontsize=legend_fontsize,
+                                          dpi=dpi,
                                           show=True,
                                           save=(None if figure_path is None else
                                                 f'{figure_path}/{test_id}_{keys[i]}_stream.png'))
