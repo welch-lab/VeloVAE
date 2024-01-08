@@ -306,7 +306,14 @@ def plot_phase(u, s,
     save_fig(fig, save, (lgd,))
 
 
-def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels=True, save=None):
+def plot_cluster(X_embed,
+                 cell_labels,
+                 color_map=None,
+                 embed='umap',
+                 show_labels=True,
+                 fontsize=None,
+                 palette=None,
+                 save=None):
     """Plot the predicted cell types from the encoder
 
     Args:
@@ -320,6 +327,10 @@ def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels
             Embedding name. Used for labeling axes. Defaults to 'umap'.
         show_labels (bool, optional):
             Whether to add cell cluster names to the plot. Defaults to True.
+        fontsize (int, optional):
+            Font size for cell cluster names. Defaults to None.
+        palette (list[str], optional):
+            List of colors for plotting. Defaults to None.
         save (str, optional):
             Figure name for saving (including path). Defaults to None.
     """
@@ -329,16 +340,20 @@ def plot_cluster(X_embed, cell_labels, color_map=None, embed='umap', show_labels
     y = X_embed[:, 1]
     x_range = x.max()-x.min()
     y_range = y.max()-y.min()
-    colors = get_colors(len(cell_types), color_map)
+    if palette is None:
+        palette = get_colors(len(cell_types), color_map)
 
     n_char_max = np.max([len(x) for x in cell_types])
     for i, typei in enumerate(cell_types):
         mask = cell_labels == typei
         xbar, ybar = np.mean(x[mask]), np.mean(y[mask])
-        ax.plot(x[mask], y[mask], '.', color=colors[i % len(colors)])
+        ax.plot(x[mask], y[mask], '.', color=palette[i % len(palette)])
         n_char = len(typei)
         if show_labels:
-            txt = ax.text(xbar - x_range*4e-3*n_char, ybar - y_range*4e-3, typei, fontsize=200//n_char_max, color='k')
+            if fontsize is None:
+                fontsize = min(200//n_char_max, 400//len(cell_types))
+                fontsize = max(fontsize, 8)
+            txt = ax.text(xbar - x_range*4e-3*n_char, ybar - y_range*4e-3, typei, fontsize=fontsize, color='k')
             txt.set_bbox(dict(facecolor='white', alpha=0.5, edgecolor='black'))
 
     ax.set_xlabel(f'{embed} 1')

@@ -562,10 +562,13 @@ def post_analysis(adata,
         pd.set_option("display.precision", 3)
 
     print("---   Plotting  Results   ---")
+    save_format = kwargs["save_format"] if "save_format" in kwargs else "png"
+
     if 'cluster' in plot_type or "all" in plot_type:
         plot_cluster(adata.obsm[f"X_{embed}"],
                      adata.obs[cluster_key].to_numpy(),
                      embed=embed,
+                     palette=palette,
                      save=(None if figure_path is None else 
                            f"{figure_path}/{test_id}_umap.png"))
 
@@ -602,8 +605,6 @@ def post_analysis(adata,
     if len(genes) == 0:
         return
 
-    format = kwargs["format"] if "format" in kwargs else "png"
-
     if palette is None:
         palette = get_colors(len(cell_types_raw))
 
@@ -629,7 +630,7 @@ def post_analysis(adata,
                         Labels_phase_demo,
                         path=figure_path,
                         figname=test_id,
-                        format=format)
+                        format=save_format)
 
     if 'gene' in plot_type or 'all' in plot_type:
         T = {}
@@ -671,7 +672,7 @@ def post_analysis(adata,
                       palette=palette,
                       path=figure_path,
                       figname=test_id,
-                      format=format)
+                      format=save_format)
 
     if 'stream' in plot_type or 'all' in plot_type:
         try:
