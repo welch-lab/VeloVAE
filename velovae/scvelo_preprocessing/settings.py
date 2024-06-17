@@ -84,7 +84,7 @@ from matplotlib import rcParams, cm, colors, cbook
 from cycler import cycler
 import warnings
 
-warnings.filterwarnings("ignore", category=cbook.mplDeprecation)
+# warnings.filterwarnings("ignore", category=cbook.mplDeprecation)
 
 
 # default matplotlib 2.0 palette slightly modified.
