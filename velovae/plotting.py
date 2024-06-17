@@ -1659,7 +1659,7 @@ def plot_sig_grid(Nr,
                                            1)
                         plot_vel_axis(ax_sig[3*i+2],
                                       t,
-                                      S[:, idx],
+                                      Shat[methods[0]][:, idx],
                                       V[methods[0]][:, idx],
                                       Labels[methods[0]],
                                       Legends[methods[0]],
