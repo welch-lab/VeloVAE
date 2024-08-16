@@ -1116,6 +1116,24 @@ def gen_cross_boundary_correctness(
 
             - :class:`numpy.ndarray`: Average score over all cells for all step numbers
     """
+      # Use k-hop neighbors
+    scores = {}
+    x_emb_name = x_emb
+    if x_emb in adata.obsm:
+        x_emb = adata.obsm[x_emb]
+        if x_emb_name == "X_umap":
+            v_emb = adata.obsm['{}_umap'.format(k_velocity)]
+        else:
+            v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(k_velocity)][0]]
+    else:
+        x_emb = adata.layers[x_emb]
+        v_emb = adata.layers[k_velocity]
+        if gene_mask is None:
+            gene_mask = ~np.isnan(v_emb[0])
+        x_emb = x_emb[:, gene_mask]
+        v_emb = v_emb[:, gene_mask]
+    
+    
     # Get the connectivity matrix
     connectivities = adata.obsp[adata.uns['neighbors']['connectivities_key']]
     
@@ -1247,6 +1265,23 @@ def gen_cross_boundary_correctness_test(
 
             - :class:`numpy.ndarray`: Average Mann-Whitney U test statistics over all cells for all step numbers
     """
+    # Use k-hop neighbors
+    test_stats, accuracy = {}, {}
+    x_emb_name = x_emb
+    if x_emb in adata.obsm:
+        x_emb = adata.obsm[x_emb]
+        if x_emb_name == "X_umap":
+            v_emb = adata.obsm['{}_umap'.format(k_velocity)]
+        else:
+            v_emb = adata.obsm[[key for key in adata.obsm if key.startswith(k_velocity)][0]]
+    else:
+        x_emb = adata.layers[x_emb]
+        v_emb = adata.layers[k_velocity]
+        if gene_mask is None:
+            gene_mask = ~np.isnan(v_emb[0])
+        x_emb = x_emb[:, gene_mask]
+        v_emb = v_emb[:, gene_mask]
+
     # Get the connectivity matrix
     connectivities = adata.obsp[adata.uns['neighbors']['connectivities_key']]
     
