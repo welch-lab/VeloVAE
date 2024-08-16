@@ -8,6 +8,7 @@ from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
 import torch
 import torch.nn.functional as F
+from scipy.sparse import csr_matrix
 
 
 def get_mse(U, S, Uhat, Shat, axis=None):
@@ -983,7 +984,6 @@ def cross_boundary_correctness(
         gene_mask=None
         ):
     """Cross-Boundary Direction Correctness Score (A->B)
-
     Args:
         adata (:class:`anndata.AnnData`):
             Anndata object.
@@ -1000,12 +1000,9 @@ def cross_boundary_correctness(
             Defaults to "X_umap".
         gene_mask (:class:`numpy.ndarray`, optional):
             Boolean array to filter out non-velocity genes. Defaults to None.
-
     Returns:
         tuple:
-
             - dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
-
             - float: averaged score over all cells
     """
     scores = {}
@@ -1025,16 +1022,25 @@ def cross_boundary_correctness(
         x_emb = x_emb[:, gene_mask]
         v_emb = v_emb[:, gene_mask]
 
+    # Get the connectivity matrix
+    connectivities = adata.obsp[adata.uns['neighbors']['connectivities_key']]
+    
+    # Convert to CSR format if it's not already
+    if not isinstance(connectivities, csr_matrix):
+        connectivities = connectivities.tocsr()
+
+    def get_neighbors(idx):
+        return connectivities[idx].indices
+
     for u, v in cluster_edges:
         sel = adata.obs[k_cluster] == u
-        nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
-
-        boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
+        sel_indices = np.where(sel)[0]
         x_points = x_emb[sel]
         x_velocities = v_emb[sel]
-
         type_score = []
-        for x_pos, x_vel, nodes in zip(x_points, x_velocities, boundary_nodes):
+        for idx, x_pos, x_vel in zip(sel_indices, x_points, x_velocities):
+            nbs = get_neighbors(idx)
+            nodes = keep_type(adata, nbs, v, k_cluster)
             if len(nodes) == 0:
                 continue
             position_dif = x_emb[nodes] - x_pos
@@ -1045,10 +1051,8 @@ def cross_boundary_correctness(
         else:
             scores[f'{u} -> {v}'] = np.nanmean(type_score)
             all_scores[f'{u} -> {v}'] = type_score
-
     if return_raw:
         return all_scores
-
     return scores, np.mean([sc for sc in scores.values()])
 
 
@@ -1112,7 +1116,7 @@ def gen_cross_boundary_correctness(
 
             - :class:`numpy.ndarray`: Average score over all cells for all step numbers
     """
-    # Use k-hop neighbors
+      # Use k-hop neighbors
     scores = {}
     x_emb_name = x_emb
     if x_emb in adata.obsm:
@@ -1128,29 +1132,38 @@ def gen_cross_boundary_correctness(
             gene_mask = ~np.isnan(v_emb[0])
         x_emb = x_emb[:, gene_mask]
         v_emb = v_emb[:, gene_mask]
+    
+    
+    # Get the connectivity matrix
+    connectivities = adata.obsp[adata.uns['neighbors']['connectivities_key']]
+    
+    # Convert to CSR format if it's not already
+    if not isinstance(connectivities, csr_matrix):
+        connectivities = connectivities.tocsr()
+
+    def get_neighbors(idx):
+        return connectivities[idx].indices
+
     t = adata.obs[tkey].to_numpy()
     np.random.seed(random_state)
     for u, v in cluster_edges:
         sel = adata.obs[k_cluster] == u
-        nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
-        # random_pool = np.where(~((adata.obs[k_cluster].to_numpy() == u)\
-        #                          | (adata.obs[k_cluster].to_numpy() == v)))[0]
-
-        boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
+        sel_indices = np.where(sel)[0]
         x_points = x_emb[sel]
         x_velocities = v_emb[sel]
         t_points = t[sel]
 
         type_score = [[] for i in range(k_hop)]
         type_score_null = [[] for i in range(k_hop)]
-        for x_pos, x_vel, nodes, t_i, all_nodes in zip(x_points, x_velocities, boundary_nodes, t_points, nbs):
+        for idx, x_pos, x_vel, t_i in zip(sel_indices, x_points, x_velocities, t_points):
+            all_nodes = get_neighbors(idx)
+            nodes = keep_type(adata, all_nodes, v, k_cluster)
             if len(nodes) == 0:
                 continue
             position_dif = x_emb[nodes] - x_pos
             dt = t[nodes] - t_i
             dir_scores = _cos_sim_sample(x_vel, position_dif, dt)
 
-            # nodes_null = np.random.choice(random_pool, min(len(random_pool), n_prune), replace=False)
             nodes_null = all_nodes if len(all_nodes) < n_prune else np.random.choice(all_nodes, n_prune)
             position_dif_null = x_emb[nodes_null] - x_pos
             dt_null = t[nodes_null] - t_i
@@ -1161,9 +1174,8 @@ def gen_cross_boundary_correctness(
             type_score_null[0].append(np.nanmean(dir_scores_null))
             # deal with k-hop neighbors when k > 1
             for k in range(k_hop-1):
-                nodes = adata.uns['neighbors']['indices'][nodes].flatten()  # [num (k-1)-hop neighbors * 30]
+                nodes = np.unique(np.concatenate([get_neighbors(n) for n in nodes]))
                 nodes = keep_type(adata, nodes, v, k_cluster)
-                nodes = np.unique(nodes)
 
                 position_dif = x_emb[nodes] - x_pos
                 dt = t[nodes] - t_i
@@ -1174,13 +1186,11 @@ def gen_cross_boundary_correctness(
                     nodes = nodes[idx_sort[-n_prune:]]
                     dir_scores = dir_scores[idx_sort[-n_prune:]]
                 type_score[k+1].append(np.nanmean(dir_scores))
-            # Compute the same k-hop metric for neigbhors not in the descent v
+            # Compute the same k-hop metric for neighbors not in the descent v
             if dir_test and len(nodes_null) > 0:
                 for k in range(k_hop-1):
-                    # [num (k-1)-hop neighbors * 30]
-                    nodes_null = adata.uns['neighbors']['indices'][nodes_null].flatten()
-                    nodes_null = np.unique(nodes_null)
-                    nodes_null = nodes_null if len(all_nodes) < n_prune else np.random.choice(nodes_null, n_prune)
+                    nodes_null = np.unique(np.concatenate([get_neighbors(n) for n in nodes_null]))
+                    nodes_null = nodes_null if len(nodes_null) < n_prune else np.random.choice(nodes_null, n_prune)
                     position_dif_null = x_emb[nodes_null] - x_pos
                     dt_null = t[nodes_null] - t_i
                     dir_scores_null = _cos_sim_sample(x_vel, position_dif_null, dt_null)
@@ -1195,6 +1205,7 @@ def gen_cross_boundary_correctness(
         scores[f'{u} -> {v}'] = (mean_type_score - mean_type_score_null if dir_test else mean_type_score)
 
     return scores, np.mean(np.stack([sc for sc in scores.values()]), 0)
+
 
 
 def gen_cross_boundary_correctness_test(
@@ -1270,20 +1281,31 @@ def gen_cross_boundary_correctness_test(
             gene_mask = ~np.isnan(v_emb[0])
         x_emb = x_emb[:, gene_mask]
         v_emb = v_emb[:, gene_mask]
+
+    # Get the connectivity matrix
+    connectivities = adata.obsp[adata.uns['neighbors']['connectivities_key']]
+    
+    # Convert to CSR format if it's not already
+    if not isinstance(connectivities, csr_matrix):
+        connectivities = connectivities.tocsr()
+
+    def get_neighbors(idx):
+        return connectivities[idx].indices
+
     t = adata.obs[tkey].to_numpy()
     np.random.seed(random_state)
     for u, v in cluster_edges:
         sel = adata.obs[k_cluster] == u
-        nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
-
-        boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
+        sel_indices = np.where(sel)[0]
         x_points = x_emb[sel]
         x_velocities = v_emb[sel]
         t_points = t[sel]
 
         type_stats = [[] for i in range(k_hop)]
         type_pval = [[] for i in range(k_hop)]
-        for x_pos, x_vel, nodes, t_i, all_nodes in zip(x_points, x_velocities, boundary_nodes, t_points, nbs):
+        for idx, x_pos, x_vel, t_i in zip(sel_indices, x_points, x_velocities, t_points):
+            all_nodes = get_neighbors(idx)
+            nodes = keep_type(adata, all_nodes, v, k_cluster)
             if len(nodes) < 2:
                 continue
             position_dif = x_emb[nodes] - x_pos
@@ -1300,9 +1322,8 @@ def gen_cross_boundary_correctness_test(
             type_pval[0].append(res[1])
             # deal with k-hop neighbors when k > 1
             for k in range(k_hop-1):
-                nodes = adata.uns['neighbors']['indices'][nodes].flatten()  # [num (k-1)-hop neighbors * 30]
+                nodes = np.unique(np.concatenate([get_neighbors(n) for n in nodes]))
                 nodes = keep_type(adata, nodes, v, k_cluster)
-                nodes = np.unique(nodes)
                 if len(nodes) < 2:
                     continue
 
@@ -1310,11 +1331,9 @@ def gen_cross_boundary_correctness_test(
                 dt = t[nodes] - t_i
                 dir_scores = _cos_sim_sample(x_vel, position_dif, dt)
 
-                # Compute the same k-hop metric for neigbhors not in the descent v
-                # nodes_null = np.random.choice(random_pool, min(len(random_pool), n_prune), replace=False)
-                nodes_null = adata.uns['neighbors']['indices'][nodes_null].flatten()  # [num (k-1)-hop neighbors * 30]
-                nodes_null = np.unique(nodes_null)
-                nodes_null = nodes_null if len(all_nodes) < n_prune else np.random.choice(nodes_null, n_prune)
+                # Compute the same k-hop metric for neighbors not in the descent v
+                nodes_null = np.unique(np.concatenate([get_neighbors(n) for n in nodes_null]))
+                nodes_null = nodes_null if len(nodes_null) < n_prune else np.random.choice(nodes_null, n_prune)
                 if len(nodes_null) < 2:
                     continue
                 position_dif_null = x_emb[nodes_null] - x_pos
@@ -1341,6 +1360,7 @@ def gen_cross_boundary_correctness_test(
         accuracy[f'{u} -> {v}'] = [np.nanmean(np.array(type_pval[k]) < 0.05) for k in range(k_hop)]
     return (accuracy, np.nanmean(np.stack([p for p in accuracy.values()]), 0),
             test_stats, np.nanmean(np.stack([sc for sc in test_stats.values()]), 0))
+
 
 
 def _combine_scores(scores, cell_types):
@@ -1433,18 +1453,27 @@ def calibrated_cross_boundary_correctness(
     t = adata.obs[k_time].to_numpy()
     std_t = None if k_std_t is None else adata.obs[k_std_t].to_numpy()
 
+    # Get the connectivity matrix
+    connectivities = adata.obsp[adata.uns['neighbors']['connectivities_key']]
+    
+    # Convert to CSR format if it's not already
+    if not isinstance(connectivities, csr_matrix):
+        connectivities = connectivities.tocsr()
+
+    def get_neighbors(idx):
+        return connectivities[idx].indices
+
     for u, v in cluster_edges:
         n1, n2 = 0, 0
         sel = adata.obs[k_cluster] == u
-        nbs = adata.uns['neighbors']['indices'][sel]  # [n * 30]
-        boundary_nodes = map(lambda nodes: keep_type(adata, nodes, v, k_cluster), nbs)
-
+        sel_indices = np.where(sel)[0]
         x_points = x_emb[sel]
         x_velocities = v_emb[sel]
 
         type_score = []
-        sel_indices = np.array(range(adata.n_obs))[sel]
-        for x_pos, x_vel, nodes, idx in zip(x_points, x_velocities, boundary_nodes, sel_indices):
+        for idx, x_pos, x_vel in zip(sel_indices, x_points, x_velocities):
+            nbs = get_neighbors(idx)
+            nodes = keep_type(adata, nbs, v, k_cluster)
             if len(nodes) == 0:
                 continue
             if std_t is None:
@@ -1474,6 +1503,7 @@ def calibrated_cross_boundary_correctness(
         return all_scores
     scores_combined = _combine_scores(scores, cell_types) if eval_all else scores
     return scores, np.mean([sc for sc in scores_combined.values()]), p_fw, np.mean([p for p in p_fw.values()])
+
 
 
 def _encode_type(cell_types_raw):
@@ -1554,43 +1584,54 @@ def time_score(adata, tkey, cluster_key, cluster_edges):
 def inner_cluster_coh(adata, k_cluster, k_velocity, gene_mask=None, return_raw=False):
     """In-Cluster Coherence.
     Measures the average consistency of RNA velocity in each distinct cell type.
-
     Args:
         adata (:class:`anndata.AnnData`):
             AnnData object.
         k_cluster (str):
             key to the cluster column in adata.obs DataFrame.
         k_velocity (str):
-            key to the velocity matrix in adata.obsm.
+            key to the velocity matrix in adata.layers.
         gene_mask (:class:`numpy.ndarray`, optional):
             Boolean array to filter out genes. Defaults to None.
         return_raw (bool, optional):
             return aggregated or raw scores.. Defaults to False.
-
     Returns:
         tuple:
-
             - dict: all_scores indexed by cluster_edges mean scores indexed by cluster_edges
-
             - float: Average score over all cells.
     """
     clusters = np.unique(adata.obs[k_cluster])
     scores = {}
     all_scores = {}
 
+    # Get the connectivity matrix
+    connectivities = adata.obsp[adata.uns['neighbors']['connectivities_key']]
+    
+    # Convert to CSR format if it's not already
+    if not isinstance(connectivities, csr_matrix):
+        connectivities = connectivities.tocsr()
+
+    def get_neighbors(idx):
+        return connectivities[idx].indices
+
     for cat in clusters:
         sel = adata.obs[k_cluster] == cat
-        nbs = adata.uns['neighbors']['indices'][sel]
-        same_cat_nodes = map(lambda nodes: keep_type(adata, nodes, cat, k_cluster), nbs)
-
+        sel_indices = np.where(sel)[0]
+        
         velocities = adata.layers[k_velocity]
         nan_mask = ~np.isnan(velocities[0]) if gene_mask is None else gene_mask
         velocities = velocities[:, nan_mask]
-
+        
         cat_vels = velocities[sel]
-        cat_score = [cosine_similarity(cat_vels[[ith]], velocities[nodes]).mean()
-                     for ith, nodes in enumerate(same_cat_nodes)
-                     if len(nodes) > 0]
+        
+        cat_score = []
+        for ith, idx in enumerate(sel_indices):
+            nbs = get_neighbors(idx)
+            same_cat_nodes = keep_type(adata, nbs, cat, k_cluster)
+            if len(same_cat_nodes) > 0:
+                score = cosine_similarity(cat_vels[[ith]], velocities[same_cat_nodes]).mean()
+                cat_score.append(score)
+        
         all_scores[cat] = cat_score
         scores[cat] = np.mean(cat_score)
 
@@ -1598,6 +1639,7 @@ def inner_cluster_coh(adata, k_cluster, k_velocity, gene_mask=None, return_raw=F
         return all_scores
 
     return scores, np.mean([sc for sc in scores.values()])
+
 
 
 def _pearson_corr(v, v_neighbor):
@@ -1618,16 +1660,27 @@ def velocity_consistency(adata, vkey, gene_mask=None):
     Returns:
         float: Average score over all cells.
     """
-    nbs = adata.uns['neighbors']['indices']
-
+    # Get the connectivity matrix
+    connectivities = adata.obsp[adata.uns['neighbors']['connectivities_key']]
+    
+    # Convert to CSR format if it's not already
+    if not isinstance(connectivities, csr_matrix):
+        connectivities = connectivities.tocsr()
+    
     velocities = adata.layers[vkey]
     nan_mask = ~np.isnan(velocities[0]) if gene_mask is None else gene_mask
     velocities = velocities[:, nan_mask]
-
-    consistency_score = [_pearson_corr(velocities[ith], velocities[nbs[ith]]).mean()
+    
+    def _get_neighbors(i):
+        neighbors = connectivities[i].indices
+        return neighbors
+    
+    consistency_score = [_pearson_corr(velocities[ith], velocities[_get_neighbors(ith)]).mean()
                          for ith in range(adata.n_obs)]
+    
     adata.obs[f'{vkey}_consistency'] = consistency_score
     return np.mean(consistency_score)
+
 
 ##########################################################################
 # End of Reference
