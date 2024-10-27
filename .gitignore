@@ -6,3 +6,11 @@ checkpoints/
 __pycache__/
 .ipynb_checkpoints
 docs/build/
+notebooks/
+go/
+dist/
+tests/
+Rscript/
+.Rhistory
+
+
