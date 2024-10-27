@@ -14,6 +14,7 @@ parser.add_argument('-r', '--root_cell', type=str, default=None)
 parser.add_argument('-m', '--mode', type=str, default='unified')
 parser.add_argument('--r2_adjust', action='store_true')
 parser.add_argument('--assign_pos_u', action='store_true')
+parser.add_argument('--cluster_key', type=str, default='leiden')
 args = parser.parse_args()
 
 def run_utv(adata):
@@ -27,8 +28,10 @@ def run_utv(adata):
     velo_config.ASSIGN_POS_U = args.assign_pos_u
     velo_config.GPU = 0
     
-    label = 'clusters'
+    label = args.cluster_key
     #label = 'leiden'
+    if 'highly_variable' not in adata.var:
+        adata.var['highly_variable'] = True
     adata = utv.run_model(adata, label, config_file=velo_config)
     run_time = time.time() - t_start
 

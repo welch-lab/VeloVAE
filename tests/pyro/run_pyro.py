@@ -22,6 +22,7 @@ parser.add_argument('--num_epochs', type=int, default=4000)
 parser.add_argument('--batch_size', type=int, default=-1)
 parser.add_argument('--train_size', type=float, default=0.7)
 parser.add_argument('--input_type', type=str, default='raw')
+parser.add_argument('--cell_state', type=str, default='clusters')
 parser.add_argument('--embed', type=str, default='umap')
 args = parser.parse_args()
 
@@ -46,35 +47,37 @@ def save_fitting(adata, pos_train, train_idx, pos_test=None, test_idx=None):
             
 
 def run_pyro(adata):
-    adata.layers['raw_spliced']   = adata.layers['spliced']
-    adata.layers['raw_unspliced'] = adata.layers['unspliced']
+    if 'raw_spliced' not in adata.layers:
+        adata.layers['raw_spliced']   = adata.layers['spliced']
+        adata.layers['raw_unspliced'] = adata.layers['unspliced']
     adata.obs['u_lib_size_raw'] = adata.layers['raw_unspliced'].toarray().sum(-1)
     adata.obs['s_lib_size_raw'] = adata.layers['raw_spliced'].toarray().sum(-1)
     likelihood = 'Poisson' if args.input_type=='raw' else 'Normal'
     
     batch_size=args.batch_size
-    if(batch_size==-1 and adata.n_obs>4000):
-        batch_size=256
+    if batch_size == -1 and adata.n_obs > 4000:
+        batch_size = 256
     
     t_start = time.time()
-    if(args.train_size<1.0):
+    if args.train_size < 1.0:
         pos_train, pos_test, train_idx, test_idx = train_model(adata,
-                                                             max_epochs=args.num_epochs, 
-                                                             svi_train=True, 
-                                                             log_every=100,
-                                                             patient_init=45,
-                                                             batch_size=batch_size, 
-                                                             use_gpu=0, 
-                                                             likelihood=likelihood,
-                                                             input_type=args.input_type,
-                                                             cell_state='clusters',
-                                                             include_prior=True,
-                                                             offset=False,
-                                                             library_size=True,
-                                                             patient_improve=1e-3,
-                                                             seed=2022,
-                                                             guide_type='auto_t0_constraint',
-                                                             train_size=args.train_size)
+                                                               max_epochs=args.num_epochs, 
+                                                               svi_train=True,
+                                                               log_every=100,
+                                                               patient_init=45,
+                                                               batch_size=batch_size, 
+                                                               use_gpu=0, 
+                                                               #likelihood=likelihood,
+                                                               #input_type=args.input_type,
+                                                               cell_state=args.cell_state,
+                                                               include_prior=True,
+                                                               offset=False,
+                                                               library_size=True,
+                                                               patient_improve=1e-3,
+                                                               seed=2022,
+                                                               model_type='auto',
+                                                               guide_type='auto_t0_constraint',
+                                                               train_size=args.train_size)
         run_time = time.time()-t_start
         #Combine the results
         pos = {}
@@ -205,10 +208,10 @@ def run_pyro(adata):
         adata.obs['pv_time'] = adata_model_pos[1]['cell_time'][:,:,0].mean(0)
         fig, ax = plt.subplots()
         embed_mean = plot_mean_vector_field(adata_model_pos[1], adata, spliced='Ms', ax=ax, basis=args.embed, n_jobs=10)
-        scv.pl.velocity_embedding_stream(adata, basis=args.embed, title='', vkey='velocity_pyro', save=f'{args.out_folder}/vel_stream_ms.png')
+        scv.pl.velocity_embedding_stream(adata, basis=args.embed, title='', color=args.cell_state, vkey='velocity_pyro', save=f'{args.out_folder}/vel_stream_ms.png')
         fig, ax = plt.subplots()
         embed_mean = plot_mean_vector_field(adata_model_pos[1], adata, ax=ax, basis=args.embed, n_jobs=10)
-        scv.pl.velocity_embedding_stream(adata, basis=args.embed, title='', vkey='velocity_pyro', save=f'{args.out_folder}/vel_stream.png')
+        scv.pl.velocity_embedding_stream(adata, basis=args.embed, title='', color=args.cell_states, vkey='velocity_pyro', save=f'{args.out_folder}/vel_stream.png')
         
         adata.obsm[f"pv_velocity_{args.embed}"] = embed_mean
         del adata.obsm[f"velocity_pyro_{args.embed}"]

@@ -65,7 +65,7 @@ def run_velovi(adata):
     vae = VELOVI(adata)
     scvi.settings.seed=2022
     
-    vae.train(max_epochs=args.num_epochs, use_gpu='cuda:0', train_size=args.train_size)
+    vae.train(max_epochs=args.num_epochs, accelerator='cuda', train_size=args.train_size)
     run_time = time.time() - t_start
     add_velovi_outputs_to_adata(adata, vae)
     
