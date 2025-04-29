@@ -10,11 +10,16 @@ The package depends on several main-stream packages in computational biology and
 A sample jupyter notebook is available [here](notebooks/velovae_example.ipynb). Notice that the dataset in the example is from [scVelo](https://scvelo.readthedocs.io/), so you would need to install scVelo.
 
 The package can be installed via PyPI:
-```
+```bash
 pip install velovae
 ```
 
-You can also download the repo and import the package locally by adding the path of the package to the system path:
+You can also download the repo and install it locally.
+```bash
+pip install .
+```
+
+If package installation keeps failing, you can import the package locally by adding the path of the package to the system path:
 ```python
 import sys
 sys.path.append(< path to the package >)
