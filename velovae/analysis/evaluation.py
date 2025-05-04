@@ -2,6 +2,7 @@
 Performs performance evaluation for various RNA velocity models and generates figures.
 """
 from typing import Dict, Iterable, List, Optional, Tuple
+import logging
 from anndata import AnnData
 import numpy as np
 import pandas as pd
@@ -93,18 +94,26 @@ def get_velocity_metric(
             print("Please install scVelo to compute velocity embedding.\n"
                   "Skipping metrics 'Cross-Boundary Direction Correctness' and 'In-Cluster Coherence'.")
         iccoh, mean_iccoh = inner_cluster_coh(adata, cluster_key, vkey, gene_mask)
-        cbdir_embed, mean_cbdir_embed = cross_boundary_correctness(adata,
-                                                                   cluster_key,
-                                                                   vkey,
-                                                                   cluster_edges,
-                                                                   x_emb=f"X_{embed}")
-        cbdir, mean_cbdir = cross_boundary_correctness(adata,
-                                                       cluster_key,
-                                                       vkey,
-                                                       cluster_edges,
-                                                       x_emb="Ms",
-                                                       gene_mask=gene_mask)
-        tscore, mean_tscore = time_score(adata, f'{key}_time', cluster_key, cluster_edges)
+        cbdir_embed, mean_cbdir_embed = cross_boundary_correctness(
+            adata,
+            cluster_key,
+            vkey,
+            cluster_edges,
+            x_emb=f"X_{embed}"
+        )
+        cbdir, mean_cbdir = cross_boundary_correctness(
+            adata,
+            cluster_key,
+            vkey,
+            cluster_edges,
+            x_emb="Ms",
+            gene_mask=gene_mask
+        )
+        if key == 'fit':
+            logging.warning("Key 'fit' detected. Results seem from scVelo.")
+            tscore, mean_tscore = time_score(adata, 'latent_time', cluster_key, cluster_edges)
+        else:
+            tscore, mean_tscore = time_score(adata, f'{key}_time', cluster_key, cluster_edges)
     else:
         mean_cbdir_embed = np.nan
         mean_cbdir = np.nan
