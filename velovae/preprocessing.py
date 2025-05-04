@@ -1,10 +1,14 @@
+from typing import Dict, List, Optional, Tuple
+from anndata import AnnData
 import scanpy
 import numpy as np
 from .scvelo_preprocessing import *
 from tqdm import tqdm
 
 
-def count_peak_expression(adata, cluster_key="clusters"):
+def count_peak_expression(
+    adata: AnnData, cluster_key="clusters"
+) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
     """Figure out genes with the highest expression in each cell type.
 
     Args:
@@ -54,7 +58,9 @@ def count_peak_expression(adata, cluster_key="clusters"):
     return out_peak_count, out_peak_expr, out_peak_gene
 
 
-def balanced_gene_selection(adata, n_gene, cluster_key):
+def balanced_gene_selection(
+    adata: AnnData, n_gene: int, cluster_key: str
+):
     """select the same number of genes for each cell type.
 
     Args:
@@ -97,7 +103,24 @@ def balanced_gene_selection(adata, n_gene, cluster_key):
     return
 
 
-def filt_gene_sparsity(adata, thred_u=0.99, thred_s=0.99):
+def filt_gene_sparsity(
+    adata: AnnData, thred_u: float = 0.99, thred_s: float = 0.99
+):
+    """
+    Filter genes based on sparsity thresholds in unspliced and spliced layers.
+
+    Iterates over all genes and calculates the proportion of zero counts (sparsity)
+    in both the "unspliced" and "spliced" layers of the AnnData object.
+    Genes with sparsity below the respective thresholds in both layers are retained.
+
+    Args:
+        adata (AnnData): Annotated data matrix with 'unspliced' and 'spliced' layers.
+        thred_u (float, optional): Sparsity threshold for the unspliced layer. Defaults to 0.99.
+        thred_s (float, optional): Sparsity threshold for the spliced layer. Defaults to 0.99.
+
+    Returns:
+        None: The function modifies the input AnnData object in-place, subsetting variables.
+    """
     N, G = adata.n_obs, adata.n_vars
     sparsity_u = np.zeros((G))
     sparsity_s = np.zeros((G))
@@ -109,7 +132,7 @@ def filt_gene_sparsity(adata, thred_u=0.99, thred_s=0.99):
     adata._inplace_subset_var(gene_subset)
 
 
-def rank_gene_selection(adata, cluster_key, **kwargs):
+def rank_gene_selection(adata: AnnData, cluster_key: str, **kwargs):
     """Select genes using wilcoxon test.
 
     Args:
@@ -124,23 +147,27 @@ def rank_gene_selection(adata, cluster_key, **kwargs):
         cell_types = kwargs["cell_types"]
     use_raw = kwargs["use_raw"] if "use_raw" in kwargs else False
     layer = kwargs["layer"] if "layer" in kwargs else None
-    scanpy.tl.rank_genes_groups(adata,
-                                groupby=cluster_key,
-                                use_raw=use_raw,
-                                layer=layer,
-                                method='wilcoxon',
-                                pts=True)
+    scanpy.tl.rank_genes_groups(
+        adata,
+        groupby=cluster_key,
+        use_raw=use_raw,
+        layer=layer,
+        method='wilcoxon',
+        pts=True
+    )
     min_in_group_fraction = kwargs["min_in_group_fraction"] if "min_in_group_fraction" in kwargs else 0.1
     min_fold_change = kwargs["min_fold_change"] if "min_fold_change" in kwargs else 1.5
     max_out_group_fraction = kwargs["max_out_group_fraction"] if "max_out_group_fraction" in kwargs else 0.5
     compare_abs = kwargs["compare_abs"] if "compare_abs" in kwargs else False
-    scanpy.tl.filter_rank_genes_groups(adata,
-                                       groupby=cluster_key,
-                                       use_raw=False,
-                                       min_in_group_fraction=min_in_group_fraction,
-                                       min_fold_change=min_fold_change,
-                                       max_out_group_fraction=max_out_group_fraction,
-                                       compare_abs=compare_abs)
+    scanpy.tl.filter_rank_genes_groups(
+        adata,
+        groupby=cluster_key,
+        use_raw=False,
+        min_in_group_fraction=min_in_group_fraction,
+        min_fold_change=min_fold_change,
+        max_out_group_fraction=max_out_group_fraction,
+        compare_abs=compare_abs
+    )
     gene_subset = np.zeros((adata.n_vars), dtype=bool)
     # Build a gene index mapping
     gene_dic = {}
@@ -162,92 +189,92 @@ def rank_gene_selection(adata, cluster_key, **kwargs):
     del adata.uns['rank_genes_groups_filtered']['pts_rest']
 
 
-def preprocess(adata,
-               n_gene=1000,
-               cluster_key="clusters",
-               tkey=None,
-               selection_method="scv",
-               min_count_per_cell=0,
-               min_genes_expressed=None,
-               min_shared_counts=10,
-               min_shared_cells=10,
-               min_counts_s=None,
-               min_cells_s=None,
-               max_counts_s=None,
-               max_cells_s=None,
-               min_counts_u=None,
-               min_cells_u=None,
-               max_counts_u=None,
-               max_cells_u=None,
-               npc=30,
-               n_neighbors=30,
-               genes_retain=None,
-               perform_clustering=False,
-               resolution=1.0,
-               compute_umap=False,
-               umap_min_dist=0.5,
-               keep_raw=True,
-               **kwargs):
-    """Run the entire preprocessing pipeline using scanpy
+def preprocess(
+    adata: AnnData,
+    n_gene: int = 1000,
+    cluster_key: str = "clusters",
+    tkey: Optional[str] = None,
+    selection_method: str = "scv",
+    min_count_per_cell: int = 0,
+    min_genes_expressed: Optional[int] = None,
+    min_shared_counts: int = 10,
+    min_shared_cells: int = 10,
+    min_counts_s: Optional[int] = None,
+    min_cells_s: Optional[int] = None,
+    max_counts_s: Optional[int] = None,
+    max_cells_s: Optional[int] = None,
+    min_counts_u: Optional[int] = None,
+    min_cells_u: Optional[int] = None,
+    max_counts_u: Optional[int] = None,
+    max_cells_u: Optional[int] = None,
+    npc: int = 30,
+    n_neighbors: int = 30,
+    genes_retain: Optional[int] = None,
+    perform_clustering: bool = False,
+    resolution: float = 1.0,
+    compute_umap: bool = False,
+    umap_min_dist: float = 0.5,
+    keep_raw: bool = True,
+    **kwargs
+):
+    """Run the entire preprocessing pipeline using scanpy.
 
     Args:
-        adata (:class:`anndata.AnnData`):
+        adata (AnnData):
             AnnData object.
         n_gene (int, optional):
             Number of genes to keep. Defaults to 1000.
         cluster_key (str, optional):
-            Key for cell type annotations. Defaults to "clusters".
+            Key in adata.obs containing cell type annotations. Defaults to "clusters".
         tkey (str, optional):
             Key in adata.obs containing the capture time. Defaults to None.
         selection_method (str, optional):
-            {'scv','balanced','wilcoxon'}.
-            If set to 'balanced', the function will call balanced_gene_selection.
-            If set to 'wilcoxon', the function will call rank_gene_selection.
-            Otherwise, it uses scanpy to pick highly variable genes.
+            {'scv', 'balanced', 'wilcoxon'}.
+            If set to 'balanced', balanced_gene_selection is called.
+            If set to 'wilcoxon', rank_gene_selection is called.
+            Otherwise, highly variable genes are picked using Scanpy.
             Defaults to "scv".
         min_count_per_cell (int, optional):
             Minimum total count per cell. Defaults to 0.
         min_genes_expressed (int, optional):
-            Defaults to None.
+            Minimum number of genes expressed per cell. Defaults to None.
         min_shared_counts (int, optional):
-            Defaults to 10.
+            Minimum shared counts threshold when selecting genes. Defaults to 10.
         min_shared_cells (int, optional):
-            Defaults to 10.
+            Minimum number of shared cells when selecting genes. Defaults to 10.
         min_counts_s (int, optional):
-            Defaults to None.
+            Minimum spliced counts per gene. Defaults to None.
         min_cells_s (int, optional):
-            Defaults to None.
+            Minimum cells with spliced counts per gene. Defaults to None.
         max_counts_s (int, optional):
-            Defaults to None.
+            Maximum spliced counts per gene. Defaults to None.
         max_cells_s (int, optional):
-            Defaults to None.
+            Maximum cells with spliced counts per gene. Defaults to None.
         min_counts_u (int, optional):
-            Defaults to None.
+            Minimum unspliced counts per gene. Defaults to None.
         min_cells_u (int, optional):
-            Defaults to None.
+            Minimum cells with unspliced counts per gene. Defaults to None.
         max_counts_u (int, optional):
-            Defaults to None.
+            Maximum unspliced counts per gene. Defaults to None.
         max_cells_u (int, optional):
-            Defaults to None.
+            Maximum cells with unspliced counts per gene. Defaults to None.
         npc (int, optional):
-            Number of PCA dimensions. Defaults to 30.
+            Number of principal components for PCA. Defaults to 30.
         n_neighbors (int, optional):
-            Number of neighbors in KNN. Defaults to 30.
-        genes_retain (array like, optional):
-            Preprocessing will pick these exact genes
-            regardless of their counts and gene selection method.
+            Number of neighbors for the KNN graph. Defaults to 30.
+        genes_retain (array-like, optional):
+            Specific genes to retain regardless of counts and gene selection method.
             Defaults to None.
         perform_clustering (bool, optional):
-            Whether to perform leiden clustering. Defaults to False.
+            Whether to perform Leiden clustering. Defaults to False.
         resolution (float, optional):
-            Leiden clustering hyperparameter. Defaults to 1.0.
+            Resolution parameter for Leiden clustering. Defaults to 1.0.
         compute_umap (bool, optional):
-            Whether to compute 2D UMAP. Defaults to False.
+            Whether to compute 2D UMAP embedding. Defaults to False.
         umap_min_dist (float, optional):
-            UMAP hyperparameter. Defaults to 0.5.
+            Minimum distance parameter for UMAP. Defaults to 0.5.
         keep_raw (bool, optional):
-            Whether to keep the original raw counts (without normalization).
-            Defaults to True.
+            Whether to keep the original raw counts (un-normalized). Defaults to True.
     """
     # Preprocessing
     # 1. Cell, Gene filtering and data normalization
@@ -270,46 +297,54 @@ def preprocess(adata,
         flavor = kwargs["flavor"] if "flavor" in kwargs else "seurat"
         if selection_method == "balanced":
             print("Balanced gene selection.")
-            filter_genes(adata,
-                         min_counts=min_counts_s,
-                         min_cells=min_cells_s,
-                         max_counts=max_counts_s,
-                         max_cells=max_cells_s,
-                         min_counts_u=min_counts_u,
-                         min_cells_u=min_cells_u,
-                         max_counts_u=max_counts_u,
-                         max_cells_u=max_cells_u,
-                         retain_genes=genes_retain)
+            filter_genes(
+                adata,
+                min_counts=min_counts_s,
+                min_cells=min_cells_s,
+                max_counts=max_counts_s,
+                max_cells=max_cells_s,
+                min_counts_u=min_counts_u,
+                min_cells_u=min_cells_u,
+                max_counts_u=max_counts_u,
+                max_cells_u=max_cells_u,
+                retain_genes=genes_retain
+            )
             balanced_gene_selection(adata, n_gene, cluster_key)
             normalize_per_cell(adata)
         elif selection_method == "wilcoxon":
             print("Marker gene selection using Wilcoxon test.")
-            filter_genes(adata,
-                         min_counts=min_counts_s,
-                         min_cells=min_cells_s,
-                         max_counts=max_counts_s,
-                         max_cells=max_cells_s,
-                         min_counts_u=min_counts_u,
-                         min_cells_u=min_cells_u,
-                         max_counts_u=max_counts_u,
-                         max_cells_u=max_cells_u,
-                         retain_genes=genes_retain)
+            filter_genes(
+                adata,
+                min_counts=min_counts_s,
+                min_cells=min_cells_s,
+                max_counts=max_counts_s,
+                max_cells=max_cells_s,
+                min_counts_u=min_counts_u,
+                min_cells_u=min_cells_u,
+                max_counts_u=max_counts_u,
+                max_cells_u=max_cells_u,
+                retain_genes=genes_retain
+            )
             normalize_per_cell(adata)
             log1p(adata)
             if adata.n_vars > n_gene:
-                filter_genes_dispersion(adata,
-                                        n_top_genes=n_gene,
-                                        retain_genes=genes_retain,
-                                        flavor=flavor)
+                filter_genes_dispersion(
+                    adata,
+                    n_top_genes=n_gene,
+                    retain_genes=genes_retain,
+                    flavor=flavor
+                )
             rank_gene_selection(adata, cluster_key, **kwargs)
         else:
-            filter_and_normalize(adata,
-                                 min_shared_counts=min_shared_counts,
-                                 min_shared_cells=min_shared_cells,
-                                 min_counts_u=min_counts_u,
-                                 n_top_genes=n_gene,
-                                 retain_genes=genes_retain,
-                                 flavor=flavor)
+            filter_and_normalize(
+                adata,
+                min_shared_counts=min_shared_counts,
+                min_shared_cells=min_shared_cells,
+                min_counts_u=min_counts_u,
+                n_top_genes=n_gene,
+                retain_genes=genes_retain,
+                flavor=flavor
+            )
     elif genes_retain is not None:
         gene_subset = np.zeros(adata.n_vars, dtype=bool)
         for i in range(len(genes_retain)):
@@ -324,16 +359,18 @@ def preprocess(adata,
     # second round of gene filter in case genes in genes_retain don't fulfill
     # minimal count requirement
     if genes_retain is not None:
-        filter_genes(adata,
-                     min_counts=min_counts_s,
-                     min_cells=min_cells_s,
-                     max_counts=max_counts_s,
-                     max_cells=max_cells_s,
-                     min_counts_u=min_counts_u,
-                     min_cells_u=min_cells_u,
-                     max_counts_u=max_counts_u,
-                     max_cells_u=max_cells_u,
-                     retain_genes=genes_retain)
+        filter_genes(
+            adata,
+            min_counts=min_counts_s,
+            min_cells=min_cells_s,
+            max_counts=max_counts_s,
+            max_cells=max_cells_s,
+            min_counts_u=min_counts_u,
+            min_cells_u=min_cells_u,
+            max_counts_u=max_counts_u,
+            max_cells_u=max_cells_u,
+            retain_genes=genes_retain
+        )
 
     # 2. KNN Averaging
     # remove_duplicate_cells(adata)

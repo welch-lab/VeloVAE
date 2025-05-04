@@ -1,6 +1,8 @@
 """Vanilla VAE Module
 This module implements the basic variational mixture of ODEs model with constant rate parameters.
 """
+from typing import Dict, Iterable, List, Literal, Optional, Tuple
+from anndata import AnnData
 import numpy as np
 import torch
 import torch.nn as nn
@@ -23,7 +25,13 @@ from .velocity import rna_velocity_vanillavae
 ############################################################
 # KL Divergence
 ############################################################
-def kl_uniform(mu_t, std_t, t_start, t_end, **kwargs):
+def kl_uniform(
+    mu_t: torch.Tensor,
+    std_t: torch.Tensor,
+    t_start: float,
+    t_end: float,
+    **kwargs
+) -> torch.Tensor:
     """
     KL Divergence for the 1D near-uniform model
     KL(q||p) where
@@ -47,7 +55,13 @@ def kl_uniform(mu_t, std_t, t_start, t_end, **kwargs):
     return torch.mean(term1 + term2 - torch.log(C*dt))
 
 
-def kl_gaussian(mu1, std1, mu2, std2, **kwargs):
+def kl_gaussian(
+    mu1: torch.Tensor,
+    std1: torch.Tensor,
+    mu2: torch.Tensor,
+    std2: torch.Tensor,
+    **kwargs
+) -> torch.Tensor:
     # Compute the KL divergence between two Gaussian distributions with diagonal covariance
     term_1 = torch.log(std2/std1)
     if torch.any(torch.isnan(term_1)) or torch.any(torch.isinf(term_1)):
@@ -63,12 +77,24 @@ def kl_gaussian(mu1, std1, mu2, std2, **kwargs):
 class encoder(nn.Module):
     """Encoder of the vanilla VAE
     """
-    def __init__(self,
-                 Cin,
-                 N1=500,
-                 N2=250,
-                 device=torch.device('cpu'),
-                 checkpoint=None):
+    def __init__(
+        self,
+        Cin: int,
+        N1: int = 500,
+        N2: int = 250,
+        device: torch.cuda.device = torch.device('cpu'),
+        checkpoint: Optional[str] = None
+    ):
+        """
+        Initialize the VanillaVAE encoder.
+
+        Args:
+            Cin (int): Input dimension.
+            N1 (int, optional): Number of units in the first hidden layer. Defaults to 500.
+            N2 (int, optional): Number of units in the second hidden layer. Defaults to 250.
+            device (torch.cuda.device, optional): Device to run the model on. Defaults to CPU.
+            checkpoint (Optional[str], optional): Path to a checkpoint file to load model weights from. Defaults to None.
+        """
         super(encoder, self).__init__()
         self.fc1 = nn.Linear(Cin, N1).to(device)
         self.bn1 = nn.BatchNorm1d(num_features=N1).to(device)
@@ -100,7 +126,23 @@ class encoder(nn.Module):
             nn.init.xavier_uniform_(m.weight)
             nn.init.constant_(m.bias, 0.0)
 
-    def forward(self, data_in, pos_mean=True):
+    def forward(
+        self, data_in: torch.Tensor, pos_mean: bool = True
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass through the encoder.
+
+        Args:
+            data_in (torch.Tensor): Input tensor of shape (batch_size, input_dim).
+            pos_mean (bool, optional): 
+                If True, applies a softplus to the mean to ensure positivity.
+                Defaults to True.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+                - mu_zx (torch.Tensor): Mean of the latent variable distribution.
+                - std_zx (torch.Tensor): Standard deviation of the latent variable distribution.
+        """
         z = self.net(data_in)
         mu_zx, std_zx = self.fc_mu(z), self.spt2(self.fc_std(z))
         if pos_mean:
@@ -111,15 +153,44 @@ class encoder(nn.Module):
 class decoder(nn.Module):
     """Decoder of the vanilla VAE
     """
-    def __init__(self,
-                 adata,
-                 tmax,
-                 train_idx,
-                 p=98,
-                 filter_gene=False,
-                 device=torch.device('cpu'),
-                 init_method="steady",
-                 init_key=None):
+    def __init__(
+        self,
+        adata: AnnData,
+        tmax: float,
+        train_idx: np.ndarray,
+        p: float = 98,
+        filter_gene: bool = False,
+        device: torch.cuda.device = torch.device('cpu'),
+        init_method: Literal["steady", "tprior"] = "steady",
+        init_key: Optional[str] = None
+    ):
+        """
+        Initializes the vanilla VAE decoder.
+
+        Args:
+            adata (AnnData):
+                Annotated data object containing gene expression and other metadata.
+            tmax (float):
+                Upper bound for temporal or pseudotime values.
+            train_idx (np.ndarray):
+                Indices specifying training samples in the dataset.
+            p (float, optional):
+                A percentile threshold used for initialization of a steady-state model. 
+                Defaults to 98.
+            filter_gene (bool, optional):
+                Whether to filter certain genes based on thresholding. Defaults to False.
+            device (torch.cuda.device, optional):
+                The device on which to run computations (e.g., CPU or GPU). 
+                Defaults to CPU.
+            init_method (Literal["steady", "tprior"], optional):
+                Method to initialize model parameters. 
+                "steady" assumes a steady-state model;
+                "tprior" uses real capture time as a prior to initialize ODE parameters.
+                Defaults to "steady".
+            init_key (str, optional):
+                An optional key to identify initialization parameters in the data. 
+                Defaults to None.
+        """
         super(decoder, self).__init__()
         U, S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
         X = np.concatenate((U, S), 1)
@@ -192,18 +263,33 @@ class decoder(nn.Module):
         self.register_buffer('sigma_u', torch.tensor(np.log(sigma_u), device=device).float())
         self.register_buffer('sigma_s', torch.tensor(np.log(sigma_s), device=device).float())
 
-    def forward(self, t, neg_slope=0.0):
-        Uhat, Shat = ode(t,
-                         torch.exp(self.alpha),
-                         torch.exp(self.beta),
-                         torch.exp(self.gamma),
-                         torch.exp(self.ton),
-                         torch.exp(self.toff),
-                         neg_slope=neg_slope)
+    def forward(
+        self, t: torch.tensor, neg_slope: float = 0.0
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        Uhat, Shat = ode(
+            t,
+            torch.exp(self.alpha),
+            torch.exp(self.beta),
+            torch.exp(self.gamma),
+            torch.exp(self.ton),
+            torch.exp(self.toff),
+            neg_slope=neg_slope
+        )
         Uhat = Uhat * torch.exp(self.scaling)
         return F.relu(Uhat), F.relu(Shat)
 
-    def pred_su(self, t, gidx=None):
+    def pred_su(
+        self, t: torch.Tensor, gidx: Optional[np.ndarray] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Prediction function used in evaluation.
+
+        Args:
+            t (torch.Tensor): inferred latent time
+            gidx (Optional[np.ndarray], optional): gene indicies. Defaults to None.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: predicted unspliced and spliced counts
+        """
         scaling = torch.exp(self.scaling)
         if gidx is not None:
             Uhat, Shat = ode(t,
@@ -223,45 +309,47 @@ class decoder(nn.Module):
                          neg_slope=0.0)
         return F.relu(Uhat*scaling), F.relu(Shat)
 
-    def get_ode_param_list(self):
+    def get_ode_param_list(self) -> List[np.ndarray]:
+        """ Get list of ODE parameters for all genes. """
         return [self.alpha, self.beta, self.gamma, self.ton, self.toff]
 
 
 class VanillaVAE():
     """Basic VAE Model
     """
-    def __init__(self,
-                 adata,
-                 tmax,
-                 device='cpu',
-                 hidden_size=(500, 250),
-                 filter_gene=False,
-                 init_method="steady",
-                 init_key=None,
-                 tprior=None,
-                 checkpoints=None):
-        """VeloVAE with constant rates
+    def __init__(
+        self,
+        adata: AnnData,
+        tmax: float,
+        device: torch.cuda.device = 'cpu',
+        hidden_size: Tuple[int, int] = (500, 250),
+        filter_gene: bool = False,
+        init_method: Literal["steady", "tprior"] = "steady",
+        init_key: Optional[str] = None,
+        tprior: Optional[str] = None,
+        checkpoints: Optional[List[str]] = None
+    ):
+        """VeloVAE with constant rates.
 
         Args:
-            adata (:class:`anndata.AnnData`):
+            adata (anndata.AnnData):
                 Input AnnData object.
             tmax (float):
-                Time Range.
-            device (str, optional):
-                {'cpu','gpu'}. Defaults to 'cpu'.
-            hidden_size (tuple, optional):
-                Width of the first and second hidden layers of the encoder. Defaults to (500, 250).
+                Maximum time value (time range).
+            device (torch.device, optional):
+                Device to run the model on. Defaults to torch.device('cpu').
+            hidden_size (Tuple[int, int], optional):
+                Widths of the first and second hidden layers of the encoder. Defaults to (500, 250).
             filter_gene (bool, optional):
                 Whether to filter out non-velocity genes based on scVelo-style initialization. Defaults to False.
-            init_method (str, optional):
-                {'steady', 'tprior'}, initialization method. Defaults to "steady".
-            init_key (_type_, optional):
-                column in the AnnData object containing the capture time. Defaults to None.
-            tprior (_type_, optional):
-                key in adata.obs that stores the capture time.
-                Used for informative time prior. Defaults to None.
-            checkpoints (_type_, optional):
-                Contains the path to saved encoder and decoder models (.pt files). Defaults to None.
+            init_method (Literal["steady", "tprior"], optional):
+                Initialization method, either 'steady' or 'tprior'. Defaults to 'steady'.
+            init_key (Optional[str], optional):
+                Column in the AnnData object containing the capture time. Defaults to None.
+            tprior (Optional[str], optional):
+                Key in adata.obs that stores the capture time, used for informative time prior. Defaults to None.
+            checkpoints (Optional[List[str]], optional):
+                Paths to saved encoder and decoder model files (.pt files). Defaults to None.
         """
         t_start = time.time()
         self.timer = 0
@@ -302,13 +390,15 @@ class VanillaVAE():
         self._split_train_test(adata.n_obs)
 
         # Create a decoder
-        self.decoder = decoder(adata,
-                               tmax,
-                               self.train_idx,
-                               device=self.device,
-                               filter_gene=filter_gene,
-                               init_method=init_method,
-                               init_key=init_key).float()
+        self.decoder = decoder(
+            adata,
+            tmax,
+            self.train_idx,
+            device=self.device,
+            filter_gene=filter_gene,
+            init_method=init_method,
+            init_key=init_key
+        ).float()
         G = adata.n_vars
         # Create an encoder
         try:
@@ -366,65 +456,60 @@ class VanillaVAE():
         else:
             self.device = torch.device('cpu')
 
-    def _reparameterize(self, mu, std):
+    def _reparameterize(self, mu: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
         """Apply the reparameterization trick for Gaussian random variables."""
         eps = torch.normal(mean=torch.zeros(mu.shape, device=self.device),
                            std=torch.ones(mu.shape, device=self.device))
         return std*eps+mu
 
-    def _reparameterize_uniform(self, mu, std):
+    def _reparameterize_uniform(self, mu: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
         """Apply the reparameterization trick for uniform random variables."""
 
         eps = torch.rand(mu.shape, device=self.device)
         return np.sqrt(12)*std*eps + (mu - np.sqrt(3)*std)
 
-    def forward(self, data_in):
-        """Forward function
+    def forward(self, data_in: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the VAE.
 
         Args:
-            data_in (:class:`torch.Tensor`):
-                Cell-by-gene tensor.
-                Unspliced and spliced counts are concatenated at the gene dimension (dim=1).
+            data_in (torch.Tensor):
+                Input tensor of shape (batch_size, 2 * n_genes), formed by concatenating
+                unspliced and spliced gene-expression counts along the feature dimension.
 
         Returns:
-            tuple:
-
-                - :class:`torch.Tensor`: time posterior mean
-
-                - :class:`torch.Tensor`: time posterior standard deviation
-
-                - :class:`torch.Tensor`: sampled time values
-
-                - :class:`torch.Tensor`: predicted unspliced counts
-
-                - :class:`torch.Tensor`: predicted spliced counts
+            Tuple:
+                - torch.Tensor: z_mean: posterior mean of the latent time (shape: batch_size,)
+                - torch.Tensor: z_std: posterior standard deviation of the latent time (shape: batch_size,)
+                - torch.Tensor: z: sampled latent time values (shape: batch_size,)
+                - torch.Tensor: recon_unspliced: reconstructed unspliced counts (shape: batch_size, n_genes)
+                - torch.Tensor: recon_spliced: reconstructed spliced counts (shape: batch_size, n_genes)
         """
-        data_in_scale = torch.cat((data_in[:, :data_in.shape[1]//2]/torch.exp(self.decoder.scaling),
-                                   data_in[:, data_in.shape[1]//2:]), 1)
+        data_in_scale = torch.cat(
+            (data_in[:, :data_in.shape[1]//2]/torch.exp(self.decoder.scaling),
+             data_in[:, data_in.shape[1]//2:]),
+            1
+        )
         mu_t, std_t = self.encoder.forward(data_in_scale)
         t_global = self._reparameterize(mu_t, std_t)
         # uhat is scaled
         uhat, shat = self.decoder.forward(t_global, neg_slope=self.config["neg_slope"])
         return mu_t, std_t, t_global, uhat, shat
 
-    def eval_model(self, data_in):
-        """Evaluate the model on a validation/test
+    def eval_model(self, data_in: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Evaluate the model on validation/test data.
 
         Args:
-            data_in (:class:`torch.Tensor`):
+            data_in (torch.Tensor):
                 Cell-by-gene tensor.
-                Unspliced and spliced counts are concatenated at the gene dimension (dim=1).
+                Unspliced and spliced counts are concatenated along the gene dimension (dim=1).
 
         Returns:
             tuple:
-
-                - :class:`torch.Tensor`: Time posterior mean
-
-                - :class:`torch.Tensor`: Time posterior standard deviation
-
-                - :class:`torch.Tensor`: Predicted unspliced counts
-
-                - :class:`torch.Tensor`: Predicted spliced counts
+                - torch.Tensor: Time posterior mean.
+                - torch.Tensor: Time posterior standard deviation.
+                - torch.Tensor: Predicted unspliced counts.
+                - torch.Tensor: Predicted spliced counts.
         """
         data_in_scale = torch.cat((data_in[:, :data_in.shape[1]//2]/torch.exp(self.decoder.scaling),
                                    data_in[:, data_in.shape[1]//2:]), 1)
@@ -433,7 +518,7 @@ class VanillaVAE():
         uhat, shat = self.decoder.pred_su(mu_t)  # uhat is scaled
         return mu_t, std_t, uhat, shat
 
-    def set_mode(self, mode):
+    def set_mode(self, mode: Literal["train", "eval"]):
         """Set the model to either training or evaluation mode."""
         if mode == 'train':
             self.encoder.train()
@@ -449,8 +534,39 @@ class VanillaVAE():
     # Training Objective
     ############################################################
 
-    def _vae_risk(self, q_tx, p_t, u, s, uhat, shat, sigma_u, sigma_s, weight=None, b=1.0):
-        # This is the negative ELBO.
+    def _vae_risk(
+        self,
+        q_tx: Tuple[torch.Tensor, torch.Tensor],
+        p_t: Tuple[torch.Tensor, torch.Tensor],
+        u: torch.Tensor,
+        s: torch.Tensor,
+        uhat: torch.Tensor,
+        shat: torch.Tensor,
+        sigma_u: torch.Tensor,
+        sigma_s: torch.Tensor,
+        weight: Optional[float] = None,
+        b: float = 1.0
+    ) -> torch.Tensor:
+        """
+        Compute the VAE risk (loss) for the given latent distributions and reconstructions.
+
+        Args:
+            q_tx (Tuple[torch.Tensor, torch.Tensor]):
+                Tuple containing the mean and standard deviation of the encoder's latent distribution q(t|x).
+            p_t (Tuple[torch.Tensor, torch.Tensor]):
+                Tuple containing the mean and standard deviation of the prior latent distribution p(t).
+            u (torch.Tensor): True values for the first set of latent variables.
+            s (torch.Tensor): True values for the second set of latent variables.
+            uhat (torch.Tensor): Reconstructed (predicted) values corresponding to u.
+            shat (torch.Tensor): Reconstructed (predicted) values corresponding to s.
+            sigma_u (torch.Tensor): Standard deviations for reconstruction errors in u.
+            sigma_s (torch.Tensor): Standard deviations for reconstruction errors in s.
+            weight (Optional[float], optional): Weight factor to scale the KL divergence term. Defaults to None.
+            b (float, optional): Scaling factor for the KL divergence term in the VAE loss. Defaults to 1.0.
+
+        Returns:
+            torch.Tensor: Computed VAE risk (loss) tensor.
+        """
         kldt = self.kl_time(q_tx[0], q_tx[1], p_t[0], p_t[1], tail=self.config["tail"])
         # u and sigma_u has the original scale
         logp = -0.5*((u-uhat)/sigma_u).pow(2) - 0.5*((s-shat)/sigma_s).pow(2) \
@@ -461,7 +577,14 @@ class VanillaVAE():
 
         return (- err_rec + b*(kldt))
 
-    def _train_epoch(self, train_loader, test_set, optimizer, optimizer2=None, K=1):
+    def _train_epoch(
+        self,
+        train_loader: torch.utils.data.DataLoader,
+        test_set: torch.utils.data.Dataset,
+        optimizer: torch.optim.Optimizer,
+        optimizer2: Optional[torch.optim.Optimizer] = None,
+        K: int = 1
+    ) -> bool:
         """
         Training in each epoch with early stopping.
 
@@ -531,7 +654,7 @@ class VanillaVAE():
             self.counter = self.counter + 1
         return stop_training
 
-    def load_config(self, config):
+    def load_config(self, config: Dict):
         """Update hyper-parameters.
 
         Args:
@@ -544,23 +667,28 @@ class VanillaVAE():
                 self.config[key] = config[key]
                 print(f"Warning: unknown hyperparameter: {key}")
 
-    def _split_train_test(self, N):
-        # Randomly select indices as training samples.
+    def _split_train_test(self, N: int):
+        """ Randomly select indices as training and test samples.
 
+        Args:
+            N (int): Total number of samples.
+        """
         rand_perm = np.random.permutation(N)
         n_train = int(N*self.config["train_test_split"])
         self.train_idx = rand_perm[:n_train]
         self.test_idx = rand_perm[n_train:]
         return
 
-    def train(self,
-              adata,
-              config={},
-              plot=False,
-              gene_plot=[],
-              cluster_key="clusters",
-              figure_path="figures",
-              embed="umap"):
+    def train(
+        self,
+        adata: AnnData,
+        config: Dict = {},
+        plot: bool = False,
+        gene_plot: List = [],
+        cluster_key: str = "clusters",
+        figure_path: str = "figures",
+        embed: str = "umap"
+    ):
         """The high-level API for training
 
         Args:
@@ -699,36 +827,37 @@ class VanillaVAE():
         print(f"Final: Train ELBO = {elbo_train:.3f},           Test ELBO = {elbo_test:.3f}")
         return
 
-    def pred_all(self, data, mode='test', output=["uhat", "shat", "t"], gene_idx=None):
+    def pred_all(
+        self,
+        data: np.ndarray,
+        mode: Literal['train', 'test', 'all'] = 'test',
+        output: List[str] = ["uhat", "shat", "t"],
+        gene_idx: Optional[np.ndarray] = None
+    ) -> Tuple[Dict[str, np.ndarray], float]:
         """Generate different types of predictions from the model for all cells.
 
         Args:
-            data (:class:`torch.Tensor`):
-                Input cell-by-gene tensor, with U and S concatenated at the gene dimension (dim=1).
-            cell_labels (:class:`torch.Tensor`):
-                Cell type annotations encoded in integers.
-                This is effective only for conditional VAEs with cell type as the condition.
+            data (np.ndarray):
+                Input cell-by-gene numpy array, with unspliced and spliced counts concatenated along the gene dimension (axis=1).
             mode (str, optional):
-                {'train','test','all}. Whether to predict on the training, validation or entire dataset.
+                {'train', 'test', 'all'}. Whether to predict on the training, validation, or entire dataset.
                 Defaults to 'test'.
-            output (list, optional):
-                Types of output to generate.
-                Elements choosen from {'uhat', 'shat, 't', 'z', 'uhat_fw', 'shat_fw', 'v'}.
+            output (List[str], optional):
+                Types of outputs to generate.
+                Elements chosen from {'uhat', 'shat', 't', 'z', 'uhat_fw', 'shat_fw', 'v'}.
                 'uhat' and 'shat' are predicted unspliced and spliced counts for each cell.
                 't' is the cell time.
                 'z' is the cell state.
                 'uhat_fw' and 'shat_fw' are predictions for the future state given the current cell state.
                 'v' is the velocity for both unspliced and spliced counts.
-                Defaults to ['uhat', 'shat', 't', 'z'].
-            gene_idx (array like, optional):
+                Defaults to ['uhat', 'shat', 't'].
+            gene_idx (Optional[np.ndarray], optional):
                 Indices of genes for subsetting.
                 If given, the outputs only preserve the selected genes. Defaults to None.
 
         Returns:
-            tuple:
-
-                - list: contains the corresponding data specified in the `output` argument.
-
+            Tuple[Dict[str, np.ndarray], float]:
+                - Dict[str, np.ndarray]: contains the corresponding data specified in the `output` argument.
                 - float: VAE loss
         """
         N, G = data.shape[0], data.shape[1]//2
@@ -803,37 +932,39 @@ class VanillaVAE():
             out.append(std_t_out)
         return out, elbo.detach().cpu().item()/N
 
-    def _test(self,
-              dataset,
-              Xembed,
-              testid=0,
-              test_mode=True,
-              gind=None,
-              gene_plot=None,
-              plot=False,
-              path='figures',
-              **kwargs):
+    def _test(
+        self,
+        dataset: torch.utils.data.Dataset,
+        Xembed: np.ndarray,
+        testid: int = 0,
+        test_mode: bool = True,
+        gind: Optional[np.ndarray] = None,
+        gene_plot: Optional[Iterable[str]] = None,
+        plot: bool = False,
+        path: str = 'figures',
+        **kwargs
+    ) -> float:
         """Evaluate the model on a training/test dataset.
 
         Args:
-            dataset (:class:`torch.utils.data.Dataset`):
-                Training or validation dataset
-            Xembed (:class:`numpy array`):
-                Low-dimensional embedding for plotting
+            dataset (torch.utils.data.Dataset):
+                Training or validation dataset.
+            Xembed (numpy.ndarray):
+                Low-dimensional embedding for plotting.
             testid (int, optional):
-                Used to name the figures.. Defaults to 0.
+                Used to name the figures. Defaults to 0.
             test_mode (bool, optional):
                 Whether dataset is training or validation dataset.
-                This is used when retreiving certain class variable,
-                e.g. cell-specific initial condition.. Defaults to True.
-            gind (array like, optional):
+                This is used when retrieving certain class variables,
+                e.g., cell-specific initial condition. Defaults to True.
+            gind (numpy.ndarray, optional):
                 Index of genes in adata.var_names. Used for plotting. Defaults to None.
-            gene_plot (:class:`numpy array`, optional):
+            gene_plot (Iterable[str], optional):
                 Gene names for plotting. Defaults to None.
             plot (bool, optional):
-                Whether to generate plots.. Defaults to False.
+                Whether to generate plots. Defaults to False.
             path (str, optional):
-                Path for saving figures. Defaults to './figures'.
+                Path for saving figures. Defaults to 'figures'.
 
         Returns:
             float: VAE training/validation loss
@@ -852,25 +983,33 @@ class VanillaVAE():
             # Plot Time
             plot_time(t, Xembed, save=f"{path}/time-{testid}-vanilla.png")
             # Plot u/s-t and phase portrait for each gene
-            for i in range(len(gind)):
-                idx = gind[i]
-                plot_phase(data[:, idx], data[:, idx+G],
-                           Uhat[:, i], Shat[:, i],
-                           gene_plot[i],
-                           None,
-                           state[:, idx],
-                           ['Induction', 'Repression', 'Off'],
-                           save=f"{path}/phase-{gene_plot[i]}-{testid}-vanilla.png")
-                plot_sig(t.squeeze(),
-                         data[:, idx], data[:, idx+G],
-                         Uhat[:, i], Shat[:, i],
-                         dataset.labels,
-                         gene_plot[i],
-                         save=f"{path}/sig-{gene_plot[i]}-{testid}-vanilla.png",
-                         sparsify=self.config["sparsify"])
+            for i, idx in enumerate(gind):
+                plot_phase(
+                    data[:, idx], data[:, idx+G],
+                    Uhat[:, i], Shat[:, i],
+                    gene_plot[i],
+                    None,
+                    state[:, idx],
+                    ['Induction', 'Repression', 'Off'],
+                    save=f"{path}/phase-{gene_plot[i]}-{testid}-vanilla.png"
+                )
+                plot_sig(
+                    t.squeeze(),
+                    data[:, idx], data[:, idx+G],
+                    Uhat[:, i], Shat[:, i],
+                    dataset.labels,
+                    gene_plot[i],
+                    save=f"{path}/sig-{gene_plot[i]}-{testid}-vanilla.png",
+                    sparsify=self.config["sparsify"]
+                )
         return elbo
 
-    def save_model(self, file_path, enc_name='encoder_vanilla', dec_name='decoder_vanilla'):
+    def save_model(
+        self,
+        file_path: str,
+        enc_name: str = 'encoder_vanilla',
+        dec_name: str = 'decoder_vanilla'
+    ):
         """Save the encoder parameters to a .pt file.
 
         Args:
@@ -885,7 +1024,13 @@ class VanillaVAE():
         torch.save(self.encoder.state_dict(), f"{file_path}/{enc_name}.pt")
         torch.save(self.decoder.state_dict(), f"{file_path}/{dec_name}.pt")
 
-    def save_anndata(self, adata, key, file_path, file_name=None):
+    def save_anndata(
+        self,
+        adata: AnnData,
+        key: str,
+        file_path: str,
+        file_name: Optional[str] = None
+    ):
         """Updates an input AnnData object with inferred latent variable\
             and estimations from the model and write it to disk.
 

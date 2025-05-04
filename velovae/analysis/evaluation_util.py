@@ -1,44 +1,92 @@
+from typing import Dict, Iterable, List, Literal, Optional, Tuple
+from anndata import AnnData
 import numpy as np
 from scipy.stats import spearmanr, poisson, norm, mannwhitneyu
 from scipy.special import loggamma
+import scanpy as sc
 from sklearn.metrics.pairwise import pairwise_distances
-from ..model.model_util import pred_su_numpy, ode_numpy, ode_br_numpy, scv_pred, scv_pred_single
 import hnswlib
 from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
 import torch
 import torch.nn.functional as F
 from scipy.sparse import csr_matrix
+from ..model.model_util import pred_su_numpy, ode_numpy, ode_br_numpy, scv_pred, scv_pred_single
 
 
-def get_mse(U, S, Uhat, Shat, axis=None):
+def get_mse(
+    U: np.ndarray,
+    S: np.ndarray,
+    Uhat: np.ndarray,
+    Shat: np.ndarray,
+    axis: Optional[int] = None
+) -> float:
+    """
+    Compute the mean squared error between the original and estimated arrays.
+
+    The mean squared error is computed as the average of the squared differences 
+    between the elements of U and Uhat, and between S and Shat. If an axis is specified,
+    the mean is computed along that axis; otherwise, it is computed over the entire array.
+
+    Args:
+        U (np.ndarray): Original array U.
+        S (np.ndarray): Original array S.
+        Uhat (np.ndarray): Estimated array U.
+        Shat (np.ndarray): Estimated array S.
+        axis (Optional[int], optional): Axis along which to compute the mean. Defaults to None.
+
+    Returns:
+        float: The computed mean squared error.
+    """
     if axis is not None:
         return np.nanmean((U-Uhat)**2+(S-Shat)**2, axis=axis)
     return np.nanmean((U-Uhat)**2+(S-Shat)**2)
 
 
-def get_mae(U, S, Uhat, Shat, axis=None):
+def get_mae(
+    U: np.ndarray,
+    S: np.ndarray,
+    Uhat: np.ndarray,
+    Shat: np.ndarray,
+    axis: Optional[int] = None
+) -> float:
+    """ Calculates the MAE in the similar fashion as get_mse. """
     if axis is not None:
         return np.nanmean((U-Uhat)**2+(S-Shat)**2, axis=axis)
     return np.nanmean(np.abs(U-Uhat)+np.abs(S-Shat))
 
 
-def time_corr(t1, t2):
+def time_corr(t1: np.ndarray, t2: np.ndarray) -> float:
+    """ Spearman correlation coefficient """
     return spearmanr(t1, t2)
 
 
-def poisson_log_likelihood(mu, obs):
+def poisson_log_likelihood(mu: np.ndarray, obs: np.ndarray) -> float:
     return -mu+obs*np.log(mu)-loggamma(obs)
 
 
-def cell_state(adata, method, key, gene_indices=None, **kwargs):
+def cell_state(
+    adata: AnnData,
+    method: Literal[
+        'scVelo',
+        'Vanilla VAE',
+        'VeloVAE',
+        'FullVB',
+        'Discrete VeloVAE',
+        'Discrete FullVB',
+        'VeloVI'
+    ],
+    key: str,
+    gene_indices: Optional[np.ndarray] = None,
+    **kwargs
+) -> np.ndarray:
     """
     Assigns cells to one of three states: 'off', 'induction' or 'repression'.
 
     Args:
         adata (:class:`anndata.AnnData`):
             AnnData Object
-        method (str):
+        method (Literal):
             Model name.
             Now supports 'scVelo', 'Vanilla VAE', 'VeloVAE', 'FullVB',
             'Discrete VeloVAE', 'Discrete FullVB' and 'VeloVI'.
@@ -92,7 +140,9 @@ def cell_state(adata, method, key, gene_indices=None, **kwargs):
 # scVelo
 
 
-def get_err_scv(adata, key='fit'):
+def get_err_scv(
+    adata: AnnData, key: str = 'fit'
+) -> Tuple[float, Optional[float], float, Optional[float], float, Optional[float]]:
     """
     Get performance metrics from scVelo results.
     """
@@ -106,7 +156,12 @@ def get_err_scv(adata, key='fit'):
     return mse, None, mae, None, logp, None
 
 
-def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
+def get_pred_scv_demo(
+    adata: AnnData,
+    key: str = 'fit',
+    genes: Optional[Iterable[str]] = None,
+    N: int = 100
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Get prediction from scVelo for plotting.
     """
@@ -126,14 +181,16 @@ def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
         t_2 = np.linspace(toff[idx], max(T[:, idx].max(), toff[i]+T[:, idx].max()*0.01), N)
         t_demo = np.concatenate((t_1, t_2))
         T_demo[:, i] = t_demo
-        uhat, shat = scv_pred_single(t_demo,
-                                     alpha[idx],
-                                     beta[idx],
-                                     gamma[idx],
-                                     toff[idx],
-                                     scaling=scaling[idx],
-                                     uinit=0,
-                                     sinit=0)
+        uhat, shat = scv_pred_single(
+            t_demo,
+            alpha[idx],
+            beta[idx],
+            gamma[idx],
+            toff[idx],
+            scaling=scaling[idx],
+            uinit=0,
+            sinit=0
+        )
         Uhat[:, i] = uhat
         Shat[:, i] = shat
     return T_demo, Uhat, Shat
@@ -142,7 +199,7 @@ def get_pred_scv_demo(adata, key='fit', genes=None, N=100):
 # Vanilla VAE
 
 
-def get_pred_vanilla(adata, key):
+def get_pred_vanilla(adata: AnnData, key: str) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get prediction from vanilla VAE.
     """
@@ -163,7 +220,9 @@ def get_pred_vanilla(adata, key):
     return Uhat, Shat
 
 
-def get_err_vanilla(adata, key, gene_mask=None):
+def get_err_vanilla(
+    adata: AnnData, key: str, gene_mask: Optional[Iterable[str]] = None
+) -> Tuple[float, float, float, float, float, float]:
     """
     Get performance metrics from vanilla VAE results.
     """
@@ -204,7 +263,12 @@ def get_err_vanilla(adata, key, gene_mask=None):
     return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
 
 
-def get_pred_vanilla_demo(adata, key, genes=None, N=100):
+def get_pred_vanilla_demo(
+    adata: AnnData,
+    key: str,
+    genes: Iterable[str] = None,
+    N: int = 100
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Get prediction from scVelo for plotting.
     """
@@ -233,9 +297,28 @@ def get_pred_vanilla_demo(adata, key, genes=None, N=100):
 
 
 # VeloVAE
-def get_pred_velovae(adata, key, scv_key=None, full_vb=False, discrete=False):
+def get_pred_velovae(
+    adata: AnnData,
+    key: str,
+    scv_key: Optional[str] = None,
+    full_vb: bool = False,
+    discrete: bool = False
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Get prediction from VeloVAE.
+    Get velocity predictions from a VeloVAE model stored in an AnnData object.
+
+    Args:
+        adata (AnnData): Annotated data matrix containing the VeloVAE results.
+        key (str): Key in `adata.uns` that stores the VeloVAE model or results.
+        scv_key (Optional[str], optional): Optional key to use for comparison or additional velocity estimation 
+            (e.g., scVelo velocities). Defaults to None.
+        full_vb (bool, optional): If True, use full variational Bayes inference to get velocities, 
+            otherwise use default point estimates. Defaults to False.
+        discrete (bool, optional): If True, return discrete velocity predictions for cell states, 
+            otherwise continuous velocities are returned. Defaults to False.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Predicted unspliced and spliced counts
     """
     if (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers):
         rho = adata.layers[f"{key}_rho"]
@@ -259,9 +342,29 @@ def get_pred_velovae(adata, key, scv_key=None, full_vb=False, discrete=False):
     return Uhat, Shat
 
 
-def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n_sample=25, seed=2022):
+def get_err_velovae(
+    adata: AnnData,
+    key: str,
+    gene_mask: Optional[np.ndarray] = None,
+    full_vb: bool = False,
+    discrete: bool = False,
+    n_sample: int = 25,
+    seed: int = 2022
+) -> Tuple[float, float, float, float, float, float]:
     """
-    Get performance metrics from VeloVAE results.
+    Calculate error metrics to evaluate VeloVAE model performance.
+
+    Args:
+        adata (AnnData): Annotated data matrix containing the observed and inferred values.
+        key (str): Key in `adata` to identify the velocity or outcome to evaluate.
+        gene_mask (Optional[np.ndarray], optional): Subset of genes to consider in error calculation. Defaults to None (all genes used).
+        full_vb (bool, optional): Whether to use full variational Bayesian sampling for error estimation. Defaults to False.
+        discrete (bool, optional): Whether the data is considered discrete for evaluation. Defaults to False.
+        n_sample (int, optional): Number of samples to draw for uncertainty estimation. Defaults to 25.
+        seed (int, optional): Random seed for reproducibility of sampling. Defaults to 2022.
+
+    Returns:
+        Tuple[float, float, float, float, float, float]: Training and testing error metrics.
     """
     Uhat, Shat = get_pred_velovae(adata, key, full_vb, discrete)
     train_idx, test_idx = adata.uns[f"{key}_train_idx"], adata.uns[f"{key}_test_idx"]
@@ -355,9 +458,32 @@ def get_err_velovae(adata, key, gene_mask=None, full_vb=False, discrete=False, n
     return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
 
 
-def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False):
+def get_pred_velovae_demo(
+    adata: AnnData,
+    key: str,
+    genes: Optional[Iterable[str]] = None,
+    full_vb: bool = False,
+    discrete: bool = False
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get prediction from VeloVAE for plotting.
+
+    Args:
+        adata (AnnData): Annotated data matrix containing the observed and inferred values.
+        key (str): Key in `adata` to identify the velocity or outcome to evaluate.
+        gene_mask (Optional[Iterable[str]], optional): Subset of genes to consider in error calculation.
+            Defaults to None (all genes used).
+        full_vb (bool, optional): Whether to use full variational Bayesian sampling for error estimation.
+            Defaults to False.
+        discrete (bool, optional): Whether the data is considered discrete for evaluation.
+            Defaults to False.
+        n_sample (int, optional): Number of samples to draw for uncertainty estimation.
+            Defaults to 25.
+        seed (int, optional): Random seed for reproducibility of sampling.
+            Defaults to 2022.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Predicted unspliced and spliced counts.
     """
     if (f"{key}_uhat" not in adata.layers) or (f"{key}_shat" not in adata.layers):
         alpha = (adata.var[f"{key}_alpha"].to_numpy() if not full_vb else
@@ -377,12 +503,14 @@ def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False)
         else:
             gene_indices = np.array([np.where(adata.var_names == x)[0][0] for x in genes])
             rho = adata.layers[f"{key}_rho"][:, gene_indices]
-            Uhat, Shat = pred_su_numpy((t-t0).reshape(-1, 1),
-                                       u0[:, gene_indices],
-                                       s0[:, gene_indices],
-                                       rho*alpha[gene_indices],
-                                       beta[gene_indices],
-                                       gamma[gene_indices])
+            Uhat, Shat = pred_su_numpy(
+                (t-t0).reshape(-1, 1),
+                u0[:, gene_indices],
+                s0[:, gene_indices],
+                rho*alpha[gene_indices],
+                beta[gene_indices],
+                gamma[gene_indices]
+            )
             Uhat = Uhat*scaling[gene_indices]
     else:
         if genes is None:
@@ -399,7 +527,7 @@ def get_pred_velovae_demo(adata, key, genes=None, full_vb=False, discrete=False)
 
 
 # Branching ODE
-def get_pred_brode(adata, key):
+def get_pred_brode(adata: AnnData, key: str):
     """
     Get prediction from Branching ODE.
     """
@@ -435,9 +563,24 @@ def get_pred_brode(adata, key):
     return Uhat, Shat
 
 
-def get_err_brode(adata, key, gene_mask=None):
+def get_err_brode(
+    adata: AnnData, key: str, gene_mask: Optional[np.ndarray] = None
+) -> Tuple[float, float, float, float, float, float]:
     """
-    Get performance metrics from Branching ODE results.
+    Calculate Brode error metrics for evaluating RNA velocity predictions.
+
+    This function computes various error statistics comparing predicted RNA velocity
+    against observed data within an AnnData object. It supports applying a mask
+    to select specific genes for the evaluation.
+
+    Args:
+        adata (AnnData): Annotated data matrix with RNA velocity results.
+        key (str): The key in adata layers or obsm where predicted velocities or relevant data are stored.
+        gene_mask (Optional[Union[np.ndarray, list, slice]], optional):
+            Boolean array or index array to select a subset of genes for error calculation. Defaults to None.
+
+    Returns:
+        Tuple[float, float, float, float, float, float]: Six float values representing different error metrics.
     """
     U, S = adata.layers["Mu"], adata.layers["Ms"]
     Uhat, Shat = get_pred_brode(adata, key)
@@ -483,9 +626,25 @@ def get_err_brode(adata, key, gene_mask=None):
     return mse_train, mse_test, mae_train, mae_test, logp_train, logp_test
 
 
-def get_pred_brode_demo(adata, key, genes=None, N=None):
+def get_pred_brode_demo(
+    adata: AnnData,
+    key: str,
+    genes: Optional[Iterable[str]] = None,
+    N: Optional[int] = None
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Get prediction from Branching ODE for plotting.
+    Generate predictions from a Branching Ordinary Differential Equation (ODE) model for visualization.
+
+    Args:
+        adata (AnnData): Annotated data object containing gene expression data and model results.
+        key (str): Key in `adata` that specifies which Branching ODE model results to use.
+        genes (Iterable[str], optional): Subset of genes to include in the prediction.
+            If None, all genes will be included.
+        N (int, optional): Number of points to sample along the latent time for prediction.
+            If None, the default number of points will be used.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Predicted unspliced and spliced counts.
     """
     if isinstance(N, int):
         t_trans = adata.uns[f"{key}_t_trans"]
@@ -515,17 +674,19 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
             if rate_transition is not None:
                 rate_transition = rate_transition[gene_indices]
 
-        Uhat_demo, Shat_demo = ode_br_numpy(t_demo.reshape(-1, 1),
-                                            y_demo,
-                                            par,
-                                            alpha=alpha,
-                                            beta=beta,
-                                            gamma=gamma,
-                                            t_trans=t_trans,
-                                            u0_root=u0_root,
-                                            s0_root=s0_root,
-                                            scaling=scaling,
-                                            rate_transition=rate_transition)
+        Uhat_demo, Shat_demo = ode_br_numpy(
+            t_demo.reshape(-1, 1),
+            y_demo,
+            par,
+            alpha=alpha,
+            beta=beta,
+            gamma=gamma,
+            t_trans=t_trans,
+            u0_root=u0_root,
+            s0_root=s0_root,
+            scaling=scaling,
+            rate_transition=rate_transition
+        )
 
         return t_demo, y_demo, Uhat_demo, Shat_demo
     else:
@@ -539,7 +700,7 @@ def get_pred_brode_demo(adata, key, genes=None, N=None):
 # UniTVelo
 
 
-def get_pred_utv(adata, B=5000):
+def get_pred_utv(adata: AnnData, B: int = 5000) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get prediction from UniTVelo.
     """
@@ -564,9 +725,21 @@ def get_pred_utv(adata, B=5000):
     return uhat, shat
 
 
-def get_err_utv(adata, key, gene_mask=None, B=5000):
+def get_err_utv(
+    adata: AnnData, key: str, gene_mask: Optional[np.ndarray] = None, B: int = 5000
+) -> Tuple:
     """
-    Get performance metrics from UniTVelo results.
+    Calculate performance error metrics for UniTVelo velocity inference results.
+
+    Args:
+        adata (AnnData): Annotated data object containing velocity results and associated data.
+        key (str): Key within `adata` where velocity results are stored.
+        gene_mask (Optional[np.ndarray], optional): Boolean mask to select genes for evaluation. 
+            If None, all genes are used. Defaults to None.
+        B (int, optional): Number of bootstrap samples for estimating error metrics. Defaults to 5000.
+
+    Returns:
+        Tuple: A tuple containing error metrics summarizing the UniTVelo velocity inference accuracy.
     """
     Uhat, Shat = get_pred_utv(adata, B)
     U, S = adata.layers['Mu'], adata.layers['Ms']
@@ -595,7 +768,7 @@ def get_err_utv(adata, key, gene_mask=None, B=5000):
     return mse, None, mae, None, logp.sum(1).mean(0), None
 
 
-def get_pred_utv_demo(adata, genes=None, N=100):
+def get_pred_utv_demo(adata: AnnData, genes: Optional[Iterable[str]] = None, N: int = 100):
     """
     Get prediction from UniTVelo for plotting.
     """
@@ -625,14 +798,13 @@ def get_pred_utv_demo(adata, genes=None, N=100):
 ##########################################################################
 # Evaluation utility functions from DeepVelo
 # Reference:
-# Gao, M., Qiao, C. & Huang, Y. UniTVelo: temporally unified RNA velocity
-# reinforces single-cell trajectory inference. Nat Commun 13, 6586 (2022).
-# https://doi.org/10.1038/s41467-022-34188-7
+# Cui, H., Maan, H., Vladoiu, M.C. et al. DeepVelo: deep learning extends 
+# RNA velocity to multi-lineage systems with cell-specific kinetics. 
+# Genome Biol 25, 27 (2024).
 ##########################################################################
 
-def get_neighbor_idx(adata,
-                     topC=30,
-                     topG=20):
+def get_neighbor_idx(adata: AnnData, topC: int = 30, topG: int = 20):
+    """ DeepVelo helper function """
     Sx_sz = adata.layers["Ms"]
     N_cell, N_gene = Sx_sz.shape
 
@@ -665,6 +837,7 @@ def _loss_dv_gene(
     *args,
     **kwargs,
 ):
+    """ DeepVelo helper function """
     # Genewise loss function
     batch_size, genes = current_state.shape
     if n_spliced is not None:
@@ -710,6 +883,7 @@ def _loss_dv(
     *args,
     **kwargs,
 ):
+    """ DeepVelo helper function """
     batch_size, genes = current_state.shape
     if n_spliced is not None:
         genes = n_spliced
@@ -744,7 +918,7 @@ def _loss_dv(
     return loss.detach().cpu().item()
 
 
-def get_err_dv(adata, key, gene_mask=None):
+def get_err_dv(adata: AnnData, key: str, gene_mask: Optional[np.ndarray] = None):
     """
     Get performance metrics from DeepVelo results.
     """
@@ -803,7 +977,7 @@ def get_err_dv(adata, key, gene_mask=None):
 # Pyro-Velocity: Probabilistic RNA Velocity inference from single-cell data.
 # bioRxiv.
 ##########################################################################
-def get_err_pv(adata, key, gene_mask=None, discrete=True):
+def get_err_pv(adata: AnnData, key: str, gene_mask: Optional[np.ndarray] = None, discrete: bool = True):
     """
     Get performance metrics from PyroVelocity results.
     """
@@ -874,7 +1048,7 @@ def get_err_pv(adata, key, gene_mask=None, discrete=True):
 # Gayoso, Adam, et al. "Deep generative modeling of transcriptional dynamics
 # for RNA velocity analysis in single cells." bioRxiv (2022).
 ##########################################################################
-def get_err_velovi(adata, key, gene_mask=None):
+def get_err_velovi(adata: AnnData, key: str, gene_mask: Optional[np.ndarray] = None):
     """
     Get performance metrics from VeloVI results.
     """
@@ -926,34 +1100,32 @@ def get_err_velovi(adata, key, gene_mask=None):
 ##########################################################################
 
 
-def summary_scores(all_scores):
+def summary_scores(all_scores: Dict[str, Iterable]):
     """
     Summarize group scores.
 
     Args:
-        all_scores (dict{str,list}):
-            {group name: score list of individual cells}.
+        all_scores (Dict[str, Iterable]): A dictionary where each key is a group name and the value is an iterable 
+            of scores for individual cells in that group.
 
     Returns:
-        tuple:
-
-            - dict{str,float}: Group-wise aggregation scores.
-
-            - float: score aggregated on all samples
+        tuple: A tuple containing:
+            dict[str, float]: Group-wise aggregated mean scores.
+            float: Overall aggregated mean score across all groups.
     """
     sep_scores = {k: np.mean(s) for k, s in all_scores.items() if s}
     overal_agg = np.mean([s for k, s in sep_scores.items() if s])
     return sep_scores, overal_agg
 
 
-def keep_type(adata, nodes, target, k_cluster):
+def keep_type(adata: AnnData, nodes: Iterable[int], target: str, k_cluster: str):
     """
     Select cells of targeted type
 
     Args:
         adata (anndata.AnnData):
             Anndata object.
-        nodes (list):
+        nodes (Iterable[int]):
             Indexes for cells
         target (str):
             Cluster name.
@@ -968,21 +1140,20 @@ def keep_type(adata, nodes, target, k_cluster):
     return nodes[adata.obs[k_cluster][nodes].values == target]
 
 
-def remove_type(adata, nodes, target, k_cluster):
+def remove_type(adata: AnnData, nodes: np.ndarray, target: str, k_cluster: str):
     # Exclude cells of targeted type
-
     return nodes[adata.obs[k_cluster][nodes].values != target]
 
 
 def cross_boundary_correctness(
-        adata,
-        k_cluster,
-        k_velocity,
-        cluster_edges,
-        return_raw=False,
-        x_emb="X_umap",
-        gene_mask=None
-        ):
+    adata: AnnData,
+    k_cluster: str,
+    k_velocity: str,
+    cluster_edges: List[Tuple[str]],
+    return_raw: bool = False,
+    x_emb: str = "X_umap",
+    gene_mask: Optional[np.ndarray] = None
+) -> Tuple[Dict, float]:
     """Cross-Boundary Direction Correctness Score (A->B)
     Args:
         adata (:class:`anndata.AnnData`):
@@ -1056,7 +1227,7 @@ def cross_boundary_correctness(
     return scores, np.mean([sc for sc in scores.values()])
 
 
-def _cos_sim_sample(v_sample, v_neighbors, dt=None):
+def _cos_sim_sample(v_sample: np.ndarray, v_neighbors: np.ndarray, dt=None):
     res = cosine_similarity(v_neighbors, v_sample.reshape(1, -1)).flatten()
     if dt is not None:
         res = -np.abs(res) * (dt < 0) + res * (dt >= 0)
@@ -1064,57 +1235,42 @@ def _cos_sim_sample(v_sample, v_neighbors, dt=None):
 
 
 def gen_cross_boundary_correctness(
-    adata,
-    k_cluster,
-    k_velocity,
-    cluster_edges,
-    tkey=None,
-    k_hop=5,
-    dir_test=False,
-    x_emb="X_umap",
-    gene_mask=None,
-    n_prune=30,
-    random_state=2022
-):
-    """Generalized Cross-Boundary Direction Correctness Score (A->B)
+    adata: AnnData,
+    k_cluster: str,
+    k_velocity: str,
+    cluster_edges: List[Tuple[str]],
+    tkey: Optional[str] = None,
+    k_hop: int = 5,
+    dir_test: bool = False,
+    x_emb: str = "X_umap",
+    gene_mask: Optional[np.ndarray] = None,
+    n_prune: int = 30,
+    random_state: int = 2022
+) -> Tuple[Dict, np.ndarray]:
+    """
+    Generalized Cross-Boundary Direction Correctness Score (A->B).
 
     Args:
-        adata (:class:`anndata.AnnData`):
-            Anndata object.
-        k_cluster (str):
-            Key to the cluster column in adata.obs.
-        k_velocity (str):
-            Key to the velocity matrix in adata.obsm.
-        cluster_edges (list[tuple[str]]):
-            Pairs of clusters has transition direction A->B
-        tkey (str):
-            Key to the cell time in adata.obs
-        k_hop (int, optional):
-            Number of steps to consider.
-            CBDir will be computed for 1 to k-step neighbors.
-            Defaults to 5.
-        dir_test (bool, optional):
-            Whether to subtract CBDir of random walk from CBDir of desired direction.
+        adata (anndata.AnnData): Anndata object.
+        k_cluster (str): Key to the cluster column in adata.obs.
+        k_velocity (str): Key to the velocity matrix in adata.obsm.
+        cluster_edges (list[tuple[str]]): Pairs of clusters that have transition direction A->B.
+        tkey (str, optional): Key to the cell time in adata.obs. Defaults to None.
+        k_hop (int, optional): Number of steps to consider.
+            CBDir will be computed for 1 to k-step neighbors. Defaults to 5.
+        dir_test (bool, optional): Whether to subtract CBDir of random walk from CBDir of desired direction.
             Defaults to False.
-        x_emb (str, optional):
-            Low dimensional embedding in adata.obsm
-            or original count matrix in adata.layers.
+        x_emb (str, optional): Low dimensional embedding in adata.obsm or original count matrix in adata.layers.
             Defaults to "X_umap".
-        gene_mask (:class:`numpy.ndarray`, optional):
-            Boolean array to filter out non-velocity genes. Defaults to None.
-        n_prune (int, optional):
-            Maximum number of neighbors to keep.
-            This is necessary because number of neighbors grows exponentially.
-            Defaults to 30.
-        random_state (int, optional):
-            Seed for random walk sampling. Defaults to 2022.
+        gene_mask (np.ndarray, optional): Boolean array to filter out non-velocity genes. Defaults to None.
+        n_prune (int, optional): Maximum number of neighbors to keep.
+            This is necessary because the number of neighbors grows exponentially. Defaults to 30.
+        random_state (int, optional): Seed for random walk sampling. Defaults to 2022.
 
     Returns:
-        tuple:
-
-            - dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
-
-            - :class:`numpy.ndarray`: Average score over all cells for all step numbers
+        tuple: A tuple containing:
+            - dict: All scores indexed by cluster_edges or mean scores indexed by cluster_edges.
+            - np.ndarray: Average score over all cells for all step numbers.
     """
       # Use k-hop neighbors
     scores = {}
@@ -1207,7 +1363,6 @@ def gen_cross_boundary_correctness(
     return scores, np.mean(np.stack([sc for sc in scores.values()]), 0)
 
 
-
 def gen_cross_boundary_correctness_test(
     adata,
     k_cluster,
@@ -1219,51 +1374,31 @@ def gen_cross_boundary_correctness_test(
     gene_mask=None,
     n_prune=30,
     random_state=2022
-):
-    """Mann-Whitney U Test of RNA velocity
+) -> Tuple[Dict, float, Dict, float]:
+    """
+    Perform Mann-Whitney U Test of RNA velocity.
 
     Args:
-        adata (:class:`anndata.AnnData`):
-            Anndata object.
-        k_cluster (str):
-            Key to the cluster column in adata.obs.
-        k_velocity (str):
-            Key to the velocity matrix in adata.obsm.
-        cluster_edges (list[tuple[str]]):
-            Pairs of clusters has transition direction A->B
-        tkey (str):
-            Key to the cell time in adata.obs
-        k_hop (int, optional):
-            Number of steps to consider.
-            CBDir will be computed for 1 to k-step neighbors.
-            Defaults to 5.
-        dir_test (bool, optional):
-            Whether to subtract CBDir of random walk from CBDir of desired direction.
-            Defaults to False.
-        x_emb (str, optional):
-            Low dimensional embedding in adata.obsm
-            or original count matrix in adata.layers.
+        adata (anndata.AnnData): Anndata object.
+        k_cluster (str): Key to the cluster column in adata.obs.
+        k_velocity (str): Key to the velocity matrix in adata.obsm.
+        cluster_edges (list[tuple[str]]): Pairs of clusters with transition direction A->B.
+        tkey (str): Key to the cell time in adata.obs.
+        k_hop (int, optional): Number of steps to consider.
+            CBDir will be computed for 1 to k-step neighbors. Defaults to 5.
+        x_emb (str, optional): Low dimensional embedding in adata.obsm or original count matrix in adata.layers.
             Defaults to "X_umap".
-        gene_mask (:class:`numpy.ndarray`, optional):
-            Boolean array to filter out non-velocity genes. Defaults to None.
+        gene_mask (numpy.ndarray, optional): Boolean array to filter out non-velocity genes. Defaults to None.
         n_prune (int, optional):
-            Maximum number of neighbors to keep.
-            This is necessary because number of neighbors grows exponentially.
-            Defaults to 30.
-        random_state (int, optional):
-            Seed for random walk sampling. Defaults to 2022.
+            Maximum number of neighbors to keep; necessary because number of neighbors grows exponentially. Defaults to 30.
+        random_state (int, optional): Seed for random walk sampling. Defaults to 2022.
 
     Returns:
-        tuple:
-
-            - dict: Proportional of cells with correct velocity flow (velocity accuracy)\
-                indexed by cluster_edges
-
-            - :class:`numpy.ndarray`: Average velocity accuracy over all cells for all step numbers
-
-            - dict: Mann-Whitney U test statistics indexed by cluster_edges
-
-            - :class:`numpy.ndarray`: Average Mann-Whitney U test statistics over all cells for all step numbers
+        Tuple containing:
+            dict: Proportion of cells with correct velocity flow (velocity accuracy) indexed by cluster_edges.
+            numpy.ndarray: Average velocity accuracy over all cells for all step numbers.
+            dict: Mann-Whitney U test statistics indexed by cluster_edges.
+            numpy.ndarray: Average Mann-Whitney U test statistics over all cells for all step numbers.
     """
     # Use k-hop neighbors
     test_stats, accuracy = {}, {}
@@ -1362,8 +1497,7 @@ def gen_cross_boundary_correctness_test(
             test_stats, np.nanmean(np.stack([sc for sc in test_stats.values()]), 0))
 
 
-
-def _combine_scores(scores, cell_types):
+def _combine_scores(scores: Dict[str, float], cell_types: Iterable[str]):
     # scores contains flow from any cell type to other cell types
     # This function determines the flow direction for each pair
     # of cell types
@@ -1382,51 +1516,37 @@ def _combine_scores(scores, cell_types):
 
 
 def calibrated_cross_boundary_correctness(
-    adata,
-    k_cluster,
-    k_velocity,
-    k_time,
-    cluster_edges=None,
-    return_raw=False,
-    sum_up=False,
-    x_emb="X_umap",
-    gene_mask=None,
-    k_std_t=None
-):
-    """Calibrated Cross-Boundary Direction Correctness Score (A->B)
+    adata: AnnData,
+    k_cluster: str,
+    k_velocity: str,
+    k_time: str,
+    cluster_edges: Optional[List[Tuple[str]]]=None,
+    return_raw: bool = False,
+    sum_up: bool = False,
+    x_emb: str = "X_umap",
+    gene_mask: Optional[np.ndarray] = None,
+    k_std_t: Optional[str] = None
+) -> Tuple[Dict, float, Dict, float]:
+    """Calibrated Cross-Boundary Direction Correctness Score (A->B).
 
     Args:
-        adata (:class:`anndata.AnnData`):
-            Anndata object.
-        k_cluster (str):
-            key to the cluster column in adata.obs DataFrame.
-        k_velocity (str):
-            key to the velocity matrix in adata.obsm.
-        k_time (_type_):
-            key to the cell time in adata.obs
-        cluster_edges (_type_, optional):
-            Pairs of clusters has transition direction A->B. Defaults to None.
-        return_raw (bool, optional):
-            Return aggregated or raw scores.. Defaults to False.
-        sum_up (bool, optional):
-            Whether sum or take the mean (default). Defaults to False.
-        x_emb (str, optional):
-            key to x embedding for visualization.. Defaults to "X_umap".
-        gene_mask (:class:`numpy.ndarray`, optional):
-            Boolean array to filter out non-velocity genes. Defaults to None.
-        k_std_t (str, optional):
-            Key to time standard deviation. Defaults to None.
+        adata (anndata.AnnData): Anndata object.
+        k_cluster (str): Key to the cluster column in adata.obs DataFrame.
+        k_velocity (str): Key to the velocity matrix in adata.obsm.
+        k_time (str): Key to the cell time in adata.obs.
+        cluster_edges (List[Tuple[str]], optional): Pairs of clusters with transition direction A->B. Defaults to None.
+        return_raw (bool, optional): Return aggregated or raw scores. Defaults to False.
+        sum_up (bool, optional): Whether to sum or take the mean (default). Defaults to False.
+        x_emb (str, optional): Key to x embedding for visualization. Defaults to "X_umap".
+        gene_mask (np.ndarray, optional): Boolean array to filter out non-velocity genes. Defaults to None.
+        k_std_t (str, optional): Key to time standard deviation. Defaults to None.
 
     Returns:
-        tuple:
-
-            - dict: all_scores indexed by cluster_edges or mean scores indexed by cluster_edges
-
-            - float: averaged score over all cells.
-
-            - dict: time score := proportion of cells with correct time order in a cell type transition
-
-            - float: averaged time score
+        tuple: A tuple containing:
+            - dict: All scores indexed by cluster_edges or mean scores indexed by cluster_edges.
+            - float: Averaged score over all cells.
+            - dict: Time score (proportion of cells with correct time order in a cell type transition).
+            - float: Averaged time score.
     """
     scores = {}
     all_scores = {}
@@ -1505,8 +1625,7 @@ def calibrated_cross_boundary_correctness(
     return scores, np.mean([sc for sc in scores_combined.values()]), p_fw, np.mean([p for p in p_fw.values()])
 
 
-
-def _encode_type(cell_types_raw):
+def _encode_type(cell_types_raw: Iterable[str]):
     #######################################################################
     # Use integer to encode the cell types
     # Each cell type has one unique integer label.
@@ -1522,7 +1641,7 @@ def _encode_type(cell_types_raw):
     return label_dic, label_dic_rev
 
 
-def _edge2adj(cell_types, cluster_edges):
+def _edge2adj(cell_types: Iterable[str], cluster_edges: List[Tuple[str]]):
     label_dic, label_dic_rev = _encode_type(cell_types)
     adj_mtx = np.zeros((len(cell_types), len(cell_types)))
     for u, v in cluster_edges:
@@ -1539,26 +1658,22 @@ def _edge2adj(cell_types, cluster_edges):
     return label_dic, label_dic_rev, adj_mtx
 
 
-def time_score(adata, tkey, cluster_key, cluster_edges):
-    """Time Accuracy Score.
-    Defined as the average proportion of descendant cells that
-    appear after their progenitor cells.
+def time_score(
+    adata: AnnData, tkey: str, cluster_key: str, cluster_edges: List[Tuple[str]]
+) -> Tuple[Dict, float]:
+    """
+    Calculates the Time Accuracy Score, defined as the average proportion of descendant cells 
+    that appear after their progenitor cells.
 
     Args:
-        adata (:class:`anndata.AnnData`):
-            AnnData object.
-        tkey (str):
-            Key for the inferred cell time.
-        cluster_key (str):
-            Key for cell type annotations.
-        cluster_edges (_type_, optional):
-            Pairs of clusters has transition direction A->B.
+        adata (AnnData): AnnData object.
+        tkey (str): Key for the inferred cell time.
+        cluster_key (str): Key for cell type annotations.
+        cluster_edges (List[Tuple[str]]): Pairs of clusters representing transition directions A->B.
 
     Returns:
-        tuple:
-
-            - dict: Time Accuracy Score for each transitio pair.
-
+        tuple: A tuple containing:
+            - dict: Time Accuracy Score for each transition pair.
             - float: Mean Time Accuracy Score.
     """
     # Compute time inference accuracy based on
@@ -1581,23 +1696,28 @@ def time_score(adata, tkey, cluster_key, cluster_edges):
     return tscore_out, np.mean([sc for sc in tscore.values()])
 
 
-def inner_cluster_coh(adata, k_cluster, k_velocity, gene_mask=None, return_raw=False):
-    """In-Cluster Coherence.
+def inner_cluster_coh(
+    adata: AnnData,
+    k_cluster: str,
+    k_velocity: str,
+    gene_mask: Optional[np.ndarray] = None,
+    return_raw: bool = False
+) -> Tuple[Dict, float]:
+    """
+    In-Cluster Coherence.
+
     Measures the average consistency of RNA velocity in each distinct cell type.
+
     Args:
-        adata (:class:`anndata.AnnData`):
-            AnnData object.
-        k_cluster (str):
-            key to the cluster column in adata.obs DataFrame.
-        k_velocity (str):
-            key to the velocity matrix in adata.layers.
-        gene_mask (:class:`numpy.ndarray`, optional):
-            Boolean array to filter out genes. Defaults to None.
-        return_raw (bool, optional):
-            return aggregated or raw scores.. Defaults to False.
+        adata (anndata.AnnData): AnnData object.
+        k_cluster (str): Key to the cluster column in adata.obs DataFrame.
+        k_velocity (str): Key to the velocity matrix in adata.layers.
+        gene_mask (Optional[np.ndarray], optional): Boolean array to filter out genes. Defaults to None.
+        return_raw (bool, optional): Return aggregated or raw scores. Defaults to False.
+
     Returns:
-        tuple:
-            - dict: all_scores indexed by cluster_edges mean scores indexed by cluster_edges
+        Tuple[Dict, float]: 
+            - Dict: all_scores indexed by cluster_edges mean scores indexed by cluster_edges.
             - float: Average score over all cells.
     """
     clusters = np.unique(adata.obs[k_cluster])
@@ -1642,11 +1762,13 @@ def inner_cluster_coh(adata, k_cluster, k_velocity, gene_mask=None, return_raw=F
 
 
 
-def _pearson_corr(v, v_neighbor):
+def _pearson_corr(v: np.ndarray, v_neighbor: np.ndarray):
     return np.corrcoef(v, v_neighbor)[0, 1:]
 
 
-def velocity_consistency(adata, vkey, gene_mask=None):
+def velocity_consistency(
+    adata: AnnData, vkey: str, gene_mask: Optional[np.ndarray] = None
+) -> float:
     """Velocity Consistency as reported in scVelo paper
 
     Args:
@@ -1694,6 +1816,7 @@ S_GENES_HUMAN = ['MCM5', 'PCNA', 'TYMS', 'FEN1', 'MCM2', 'MCM4', 'RRM1', 'UNG', 
                  'GMNN', 'WDR76', 'SLBP', 'CCNE2', 'UBR7', 'POLD3', 'MSH2', 'ATAD2', 'RAD51', 'RRM2',
                  'CDC45', 'CDC6', 'EXO1', 'TIPIN', 'DSCC1', 'BLM', 'CASP8AP2', 'USP1', 'CLSPN', 'POLA1',
                  'CHAF1B', 'BRIP1', 'E2F8']
+
 G2M_GENES_HUMAN = ['HMGB2', 'CDK1', 'NUSAP1', 'UBE2C', 'BIRC5', 'TPX2', 'TOP2A', 'NDC80', 'CKS2', 'NUF2',
                    'CKS1B', 'MKI67', 'TMPO', 'CENPF', 'TACC3', 'FAM64A', 'SMC4', 'CCNB2', 'CKAP2L', 'CKAP2',
                    'AURKB', 'BUB1', 'KIF11', 'ANP32E', 'TUBB4B', 'GTSE1', 'KIF20B', 'HJURP', 'CDCA3', 'HN1',
@@ -1716,21 +1839,21 @@ G2M_GENES_MOUSE = ['Hmgb2', 'Cdk1', 'Nusap1', 'Ube2c', 'Birc5', 'Tpx2', 'Top2a',
                    'Cenpe', 'Ctcf', 'Nek2', 'G2e3', 'Gas2l3', 'Cbx5', 'Cenpa']
 
 
-def assign_phase(adata, model='human', embed='umap', save=None):
+def assign_phase(
+    adata: AnnData,
+    model: Literal['human', 'mouse'] = 'human',
+    embed: str = 'umap',
+    save: Optional[str] = None
+):
     """
-    Assign cell cycle phases
+    Assign cell cycle phases.
 
     Args:
-        adata (:class:`anndata.AnnData`):
-            AnnData object
-        model (str, optional):
-            {'human', 'mouse'}. Defaults to 'human'.
-        embed (str, optional):
-            Low-dimensional embedding for visualization. Defaults to 'umap'.
-        save (str, optional):
-            Figure name with path for saving. Defaults to None.
+        adata (AnnData): Annotated data matrix.
+        model (str, optional): Species model to use ('human' or 'mouse'). Defaults to 'human'.
+        embed (str, optional): Low-dimensional embedding for visualization. Defaults to 'umap'.
+        save (str, optional): File path to save the figure. If None, figure is not saved. Defaults to None.
     """
-    import scanpy as sc
     if model == 'human':
         s_genes, g2m_genes = S_GENES_HUMAN, G2M_GENES_HUMAN
     elif model == 'mouse':

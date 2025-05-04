@@ -1,6 +1,8 @@
 """Branching ODE Module
 This module implements the basic variational mixture of ODEs model with constant rate parameters.
 """
+from typing import Dict, Iterable, List, Literal, Optional, Tuple, Union
+from anndata import AnnData
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,18 +21,55 @@ GRAD_MAX = 1e7
 
 
 class decoder(nn.Module):
-    def __init__(self,
-                 adata,
-                 cluster_key,
-                 tkey,
-                 embed_key,
-                 train_idx,
-                 vkey=None,
-                 param_key=None,
-                 device=torch.device('cpu'),
-                 p=98,
-                 checkpoint=None,
-                 **kwargs):
+    def __init__(
+        self,
+        adata: AnnData,
+        cluster_key: str,
+        tkey: str,
+        embed_key: str,
+        train_idx: np.ndarray,
+        vkey: Optional[str] = None,
+        param_key: Optional[str] = None,
+        device: torch.cuda.device = torch.device('cpu'),
+        p: float = 98,
+        checkpoint: Optional[str] = None,
+        **kwargs
+    ):
+        """
+        Constructs a generative model with branching ODE from given data.
+
+        Args:
+            adata (AnnData): Annotated data matrix containing spliced/unspliced layers and metadata.
+            cluster_key (str): Key in adata.obs indicating cell cluster labels.
+            tkey (str): Key in adata.obs denoting time points.
+            embed_key (str): Key in adata.obsm for cell embedding. Used in KNN.
+            train_idx (np.ndarray): Indices of training cells.
+            vkey (Optional[str], optional): Velocity data key in layers. Defaults to None.
+            param_key (Optional[str], optional): Prefix key for precomputed parameters in adata.var. Defaults to None.
+            device (torch.cuda.device, optional): Torch device to run model on. Defaults to CPU.
+            p (float, optional): Percentile for parameter initialization. Defaults to 98.
+            checkpoint (Optional[str], optional): Path to checkpoint for loading model parameters. Defaults to None.
+            **kwargs: Additional keyword arguments:
+                - partition_k (int): Number of neighbors for transition graph construction. Defaults to 5.
+                - partition_res (float): Resolution parameter for transition graph. Defaults to 0.005.
+                - n_par (int): Number of parent candidates for transition graph estimation. Defaults to 2.
+                - dt (tuple): Time intervals for transition computation. Defaults to (0.01, 0.05).
+                - k (int): Number of nearest neighbors for transition computation. Defaults to 5.
+
+        Attributes:
+            cell_types (np.ndarray): Unique cell cluster labels.
+            label_dic (dict): Mapping from original string labels to integer labels.
+            label_dic_rev (dict): Mapping from integer labels back to string labels.
+            cell_labels_int (np.ndarray): Integer encoded cluster labels for training cells.
+            Ntype (int): Number of distinct cell types.
+            tgraph (TransGraph): Transition graph constructed from the data and parameters.
+            w (torch.Tensor): Transition weights tensor.
+            par (torch.Tensor): Parent indices for transitions.
+            alpha, beta, gamma, scaling (nn.Parameter): Dynamical model parameters.
+            sigma_u, sigma_s (nn.Parameter or buffer): Noise parameters for unspliced and spliced RNA counts.
+            t_trans (nn.Parameter): Transition times (log scale), not trainable.
+            u0_root, s0_root (nn.Parameter): Initial conditions for root states (log scale).
+        """
         super(decoder, self).__init__()
 
         U, S = adata.layers['Mu'][train_idx], adata.layers['Ms'][train_idx]
@@ -50,14 +89,16 @@ class decoder(nn.Module):
         # Transition Graph
         partition_k = kwargs['partition_k'] if 'partition_k' in kwargs else 5
         partition_res = kwargs['partition_res'] if 'partition_res' in kwargs else 0.005
-        self.tgraph = TransGraph(adata,
-                                 tkey,
-                                 embed_key,
-                                 cluster_key,
-                                 vkey,
-                                 train_idx,
-                                 k=partition_k,
-                                 res=partition_res)
+        self.tgraph = TransGraph(
+            adata,
+            tkey,
+            embed_key,
+            cluster_key,
+            vkey,
+            train_idx,
+            k=partition_k,
+            res=partition_res
+        )
 
         n_par = kwargs['n_par'] if 'n_par' in kwargs else 2
         dt = kwargs['dt'] if 'dt' in kwargs else (0.01, 0.05)
@@ -106,13 +147,15 @@ class decoder(nn.Module):
                 t_trans[type_] = np.quantile(t[cell_labels_int == type_], 0.05)
             ts = t_trans.reshape(-1, 1) + dts
 
-            alpha, beta, gamma, u0, s0 = reinit_type_params(U/scaling,
-                                                            S,
-                                                            t,
-                                                            ts,
-                                                            cell_labels_int,
-                                                            cell_types_int,
-                                                            cell_types_int)
+            alpha, beta, gamma, u0, s0 = reinit_type_params(
+                U/scaling,
+                S,
+                t,
+                ts,
+                cell_labels_int,
+                cell_types_int,
+                cell_types_int
+            )
 
             self.alpha = nn.Parameter(torch.tensor(np.log(alpha), device=device).float())
             self.beta = nn.Parameter(torch.tensor(np.log(beta), device=device).float())
@@ -126,64 +169,86 @@ class decoder(nn.Module):
 
         self.t_trans.requires_grad = False
 
-    def forward(self, t, y, neg_slope=0.0):
-        return ode_br(t,
-                      y,
-                      self.par,
-                      neg_slope=neg_slope,
-                      alpha=torch.exp(self.alpha),
-                      beta=torch.exp(self.beta),
-                      gamma=torch.exp(self.gamma),
-                      t_trans=torch.exp(self.t_trans),
-                      u0_root=torch.exp(self.u0_root),
-                      s0_root=torch.exp(self.s0_root),
-                      sigma_u=torch.exp(self.sigma_u),
-                      sigma_s=torch.exp(self.sigma_s),
-                      scaling=torch.exp(self.scaling))
+    def forward(self, t: torch.Tensor, y: torch.Tensor, neg_slope: float = 0.0) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Performs a forward pass of the model using the specified parameters and input.
 
-    def pred_su(self, t, y, gidx=None):
+        Args:
+            t (torch.Tensor): The time steps at which to evaluate.
+            y (torch.Tensor): Cell type encoded in integer.
+            neg_slope (float, optional): Negative slope parameter for the ODE. Defaults to 0.0.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]:
+                Predicted unspliced and spliced counts.
+        """
+        return ode_br(
+            t,
+            y,
+            self.par,
+            neg_slope=neg_slope,
+            alpha=torch.exp(self.alpha),
+            beta=torch.exp(self.beta),
+            gamma=torch.exp(self.gamma),
+            t_trans=torch.exp(self.t_trans),
+            u0_root=torch.exp(self.u0_root),
+            s0_root=torch.exp(self.s0_root),
+            sigma_u=torch.exp(self.sigma_u),
+            sigma_s=torch.exp(self.sigma_s),
+            scaling=torch.exp(self.scaling)
+        )
+
+    def pred_su(
+        self, t: torch.Tensor, y: torch.Tensor, gidx: Optional[Iterable] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         if gidx is None:
-            return ode_br(t,
-                          y,
-                          self.par,
-                          neg_slope=0.0,
-                          alpha=torch.exp(self.alpha),
-                          beta=torch.exp(self.beta),
-                          gamma=torch.exp(self.gamma),
-                          t_trans=torch.exp(self.t_trans),
-                          u0_root=torch.exp(self.u0_root),
-                          s0_root=torch.exp(self.s0_root),
-                          sigma_u=torch.exp(self.sigma_u),
-                          sigma_s=torch.exp(self.sigma_s),
-                          scaling=torch.exp(self.scaling))
-        return ode_br(t,
-                      y,
-                      self.par,
-                      neg_slope=0.0,
-                      alpha=torch.exp(self.alpha[:, gidx]),
-                      beta=torch.exp(self.beta[:, gidx]),
-                      gamma=torch.exp(self.gamma[:, gidx]),
-                      t_trans=torch.exp(self.t_trans),
-                      u0_root=torch.exp(self.u0_root[:, gidx]),
-                      s0_root=torch.exp(self.s0_root[:, gidx]),
-                      sigma_u=torch.exp(self.sigma_u[gidx]),
-                      sigma_s=torch.exp(self.sigma_s[gidx]),
-                      scaling=torch.exp(self.scaling[gidx]))
+            return ode_br(
+                t,
+                y,
+                self.par,
+                neg_slope=0.0,
+                alpha=torch.exp(self.alpha),
+                beta=torch.exp(self.beta),
+                gamma=torch.exp(self.gamma),
+                t_trans=torch.exp(self.t_trans),
+                u0_root=torch.exp(self.u0_root),
+                s0_root=torch.exp(self.s0_root),
+                sigma_u=torch.exp(self.sigma_u),
+                sigma_s=torch.exp(self.sigma_s),
+                scaling=torch.exp(self.scaling)
+            )
+        return ode_br(
+            t,
+            y,
+            self.par,
+            neg_slope=0.0,
+            alpha=torch.exp(self.alpha[:, gidx]),
+            beta=torch.exp(self.beta[:, gidx]),
+            gamma=torch.exp(self.gamma[:, gidx]),
+            t_trans=torch.exp(self.t_trans),
+            u0_root=torch.exp(self.u0_root[:, gidx]),
+            s0_root=torch.exp(self.s0_root[:, gidx]),
+            sigma_u=torch.exp(self.sigma_u[gidx]),
+            sigma_s=torch.exp(self.sigma_s[gidx]),
+            scaling=torch.exp(self.scaling[gidx])
+        )
 
 
 class BrODE():
     """High-level ODE model for RNA velocity with branching structure.
     """
-    def __init__(self,
-                 adata,
-                 cluster_key,
-                 tkey,
-                 embed_key,
-                 vkey=None,
-                 param_key=None,
-                 device='cpu',
-                 checkpoint=None,
-                 graph_param={}):
+    def __init__(
+        self,
+        adata: AnnData,
+        cluster_key: str,
+        tkey: str,
+        embed_key: str,
+        vkey: Optional[str] = None,
+        param_key: Optional[str] = None,
+        device: str = 'cpu',
+        checkpoint: Optional[str] = None,
+        graph_param: Dict = {}
+    ):
         """Constructor
 
         Args:
@@ -246,16 +311,18 @@ class BrODE():
         self._set_device(device)
         self._split_train_test(adata.n_obs)
 
-        self.decoder = decoder(adata,
-                               cluster_key,
-                               tkey,
-                               embed_key,
-                               self.train_idx,
-                               vkey,
-                               param_key,
-                               device=self.device,
-                               checkpoint=checkpoint,
-                               **graph_param)
+        self.decoder = decoder(
+            adata,
+            cluster_key,
+            tkey,
+            embed_key,
+            self.train_idx,
+            vkey,
+            param_key,
+            device=self.device,
+            checkpoint=checkpoint,
+            **graph_param
+        )
 
         # class attributes for training
         self.loss_train, self.loss_test = [], []
@@ -264,7 +331,7 @@ class BrODE():
 
         self.timer = time.time() - t_start
 
-    def _set_device(self, device):
+    def _set_device(self, device: str):
         if 'cuda' in device:
             if torch.cuda.is_available():
                 self.device = torch.device(device)
@@ -274,57 +341,53 @@ class BrODE():
         else:
             self.device = torch.device('cpu')
 
-    def _split_train_test(self, N):
+    def _split_train_test(self, N: int):
         rand_perm = np.random.permutation(N)
         n_train = int(N*self.config["train_test_split"])
         self.train_idx = rand_perm[:n_train]
         self.test_idx = rand_perm[n_train:]
 
-        return
-
-    def forward(self, t, y):
+    def forward(self, t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Evaluate the model in training.
 
         Args:
-            t (:class:`torch.tensor`):
+            t (:class:`torch.Tensor`):
                 Cell time, (N,1)
-            y (:class:`torch.tensor`):
+            y (:class:`torch.Tensor`):
                 Cell type encoded in integers, (N,1)
 
         Returns:
             tuple:
-
                 - :class:`torch.Tensor`: Predicted u values, (N, G)
-
                 - :class:`torch.Tensor`: Predicted s values, (N, G)
         """
         uhat, shat = self.decoder.forward(t, y, neg_slope=self.config['neg_slope'])
 
         return uhat, shat
 
-    def eval_model(self, t, y, gidx=None):
+    def eval_model(
+        self, t: torch.Tensor, y: torch.Tensor, gidx: Optional[np.ndarray] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Evaluate the model on a validation/test.
 
         Args:
-            t (:class:`torch.tensor`):
+            t (:class:`torch.Tensor`):
                 Cell time, (N,1)
-            y (:class:`torch.tensor`):
+            y (:class:`torch.Tensor`):
                 Cell type encoded in integers, (N,1)
-            gidx (:class:`numpy array`, optional):
+            gidx (:class:`numpy.ndarray`, optional):
                 A subset of genes to compute
 
         Returns:
-            tuple:
-
+            Tuple[torch.Tensor, torch.Tensor]:
                 - :class:`torch.Tensor`: Predicted u values, (N, G)
-
                 - :class:`torch.Tensor`: Predicted s values, (N, G)
         """
         uhat, shat = self.decoder.pred_su(t, y, gidx)
 
         return uhat, shat
 
-    def set_mode(self, mode):
+    def set_mode(self, mode: Literal["train", "eval"]):
         if mode == 'train':
             self.decoder.train()
         elif mode == 'eval':
@@ -336,13 +399,31 @@ class BrODE():
     # Training Objective
     ############################################################
 
-    def _ode_risk(self,
-                  u,
-                  s,
-                  uhat,
-                  shat,
-                  sigma_u, sigma_s,
-                  weight=None):
+    def _ode_risk(
+        self,
+        u: torch.Tensor,
+        s: torch.Tensor,
+        uhat: torch.Tensor,
+        shat: torch.Tensor,
+        sigma_u: torch.Tensor,
+        sigma_s: torch.Tensor,
+        weight: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """
+        Calculate the training loss for the ODE model using negative log Gaussian likelihood.
+
+        Args:
+            u (torch.Tensor): Observed unspliced counts.
+            s (torch.Tensor): Observed spliced counts.
+            uhat (torch.Tensor): Predicted counts tensor corresponding to u.
+            shat (torch.Tensor): Predicted counts tensor corresponding to s.
+            sigma_u (torch.Tensor): Standard deviation of Gaussian likelihood for u.
+            sigma_s (torch.Tensor): Standard deviation of Gaussian likelihood for s.
+            weight (Optional[torch.Tensor], optional): Sample weights tensor. Defaults to None.
+
+        Returns:
+            torch.Tensor: Mean loss value computed over the batch.
+        """
         # 1. u,s,uhat,shat: raw and predicted counts
         # 2. sigma_u, sigma_s : standard deviation of the Gaussian likelihood (decoder)
         # 3. weight: sample weight
@@ -356,10 +437,12 @@ class BrODE():
 
         return torch.mean(torch.sum(neg_log_gaussian, 1))
 
-    def _train_epoch(self,
-                     train_loader,
-                     test_set,
-                     optimizer):
+    def _train_epoch(
+        self,
+        train_loader: torch.utils.data.DataLoader,
+        test_set: torch.utils.data.Dataset,
+        optimizer: torch.optim.Optimizer
+    ) -> bool:
         """Training in each epoch with early stopping.
 
         Args:
@@ -409,7 +492,7 @@ class BrODE():
             self.counter = self.counter + 1
         return stop_training
 
-    def load_config(self, config):
+    def load_config(self, config: Dict):
         """Update hyper-parameters.
 
         Args:
@@ -439,19 +522,25 @@ class BrODE():
             w_df = pd.DataFrame(w_dic, index=pd.Index(cell_types))
             print(w_df)
 
-    def _update_std_noise(self, train_set):
+    def _update_std_noise(self, train_set: torch.utils.data.Dataset):
         G = train_set.G
-        Uhat, Shat, ll = self.pred_all(train_set.data,
-                                       torch.tensor(train_set.time).float().to(self.device),
-                                       train_set.labels,
-                                       np.array(range(G)))
-        self.decoder.sigma_u = nn.Parameter(torch.tensor(np.log((Uhat-train_set.data[:, :G]).std(0)+1e-16),
-                                            device=self.device))
-        self.decoder.sigma_s = nn.Parameter(torch.tensor(np.log((Shat-train_set.data[:, G:]).std(0)+1e-16),
-                                            device=self.device))
+        Uhat, Shat, ll = self.pred_all(
+            train_set.data,
+            torch.tensor(train_set.time).float().to(self.device),
+            train_set.labels,
+            np.array(range(G))
+        )
+        self.decoder.sigma_u = nn.Parameter(
+            torch.tensor(np.log((Uhat-train_set.data[:, :G]).std(0)+1e-16),
+            device=self.device)
+        )
+        self.decoder.sigma_s = nn.Parameter(
+            torch.tensor(np.log((Shat-train_set.data[:, G:]).std(0)+1e-16),
+            device=self.device)
+        )
         return
 
-    def _set_lr(self, p):
+    def _set_lr(self, p: float):
         """Set the learning rates based data sparsity.
 
         Args:
@@ -459,14 +548,16 @@ class BrODE():
         """
         self.config["learning_rate"] = 10**(-4*p-3)
 
-    def train(self,
-              adata,
-              tkey,
-              cluster_key,
-              config={},
-              plot=False,
-              gene_plot=[],
-              figure_path="figures"):
+    def train(
+        self,
+        adata: AnnData,
+        tkey: str,
+        cluster_key: str,
+        config: Dict = {},
+        plot: bool = False,
+        gene_plot: List[str] = [],
+        figure_path: str = "figures"
+    ):
         """Train the model.
 
         Args:
@@ -592,24 +683,30 @@ class BrODE():
         print(f"*********              Finished. Total Time = {convert_time(self.timer)}             *********")
         return
 
-    def pred_all(self, data, t, cell_labels, gene_idx=None):
-        """Generate different types of predictions from the model for all cells.
+    def pred_all(
+        self,
+        data: torch.Tensor,
+        t: torch.Tensor,
+        cell_labels: torch.Tensor,
+        gene_idx: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, float]:
+        """
+        Generate predictions for unspliced and spliced counts for all cells, with optional gene subsetting,
+        and compute the ODE training/validation loss.
 
         Args:
-            data (:class:`torch.Tensor`):
-                Input cell-by-gene tensor, with U and S concatenated at the gene dimension (dim=1).
-            cell_labels (:class:`torch.Tensor`):
-                Cell type annotations encoded in integers.
-            gene_idx (array like, optional):
-                Indices of genes for subsetting.
-                If set to None, only the log likelihood will be computed. Defaults to None.
+            data (torch.Tensor): Input tensor of shape (N, 2*G), where N is number of cells and G is number of genes.
+                The tensor contains concatenated unspliced (U) and spliced (S) counts along the gene dimension.
+            t (torch.Tensor): Tensor of time points corresponding to each cell.
+            cell_labels (torch.Tensor): Tensor of integer-encoded cell type annotations for each cell.
+            gene_idx (Optional[torch.Tensor]): Indices of genes to subset for prediction.
+                If None, predictions are not returned, only likelihood is computed. Defaults to None.
 
         Returns:
-            tuple:
-
-                - :class:`torch.Tensor`: Predicted unspliced and spliced counts.
-
-                - float: ODE training/validation loss.
+            Tuple[torch.Tensor, torch.Tensor, float]:
+                Uhat: Predicted unspliced counts (N x len(gene_idx)) if gene_idx is specified, else None.
+                Shat: Predicted spliced counts (N x len(gene_idx)) if gene_idx is specified, else None.
+                ll: The computed ODE training/validation log-likelihood loss as a float.
         """
         N, G = data.shape
         G = G//2
@@ -643,32 +740,52 @@ class BrODE():
                 ll = ll - ((N-B*Nb)/N)*loss
         return Uhat, Shat, ll.cpu().item()
 
-    def test(self,
-             dataset,
-             testid=0,
-             gind=None,
-             gene_plot=[],
-             plot=False,
-             path='figures',
-             **kwargs):
+    def test(
+        self,
+        dataset: torch.utils.data.Dataset,
+        testid: int = 0,
+        gind: Optional[Iterable] = None,
+        gene_plot: List = [],
+        plot: bool = False,
+        path: str = 'figures',
+        **kwargs
+    ) -> float:
+        """
+        Evaluate the model on a test dataset and optionally plot gene signals.
 
+        Args:
+            dataset (torch.utils.data.Dataset): The test dataset containing data, time, and labels.
+            testid (int, optional): Identifier for the test run, used in plot filenames. Defaults to 0.
+            gind (Optional[Iterable], optional): Indices of genes to evaluate and plot. Defaults to None.
+            gene_plot (List, optional): List of gene names to plot. Defaults to [].
+            plot (bool, optional): Whether to generate and save plots of gene expression signals. Defaults to False.
+            path (str, optional): Directory path to save plots if plotting is enabled. Defaults to 'figures'.
+            **kwargs: Additional keyword arguments (unused).
+
+        Returns:
+            float: The average log-likelihood of the model on the test dataset.
+        """
         self.set_mode('eval')
-        Uhat, Shat, ll = self.pred_all(dataset.data,
-                                       torch.tensor(dataset.time).float().to(self.device),
-                                       dataset.labels,
-                                       gind)
+        Uhat, Shat, ll = self.pred_all(
+            dataset.data,
+            torch.tensor(dataset.time).float().to(self.device),
+            dataset.labels,
+            gind
+        )
         cell_labels_raw = int2str(dataset.labels, self.decoder.label_dic_rev)
         if plot:
             for i in range(len(gene_plot)):
                 idx = gind[i]
-                plot_sig(dataset.time.squeeze(),
-                         dataset.data[:, idx], dataset.data[:, idx+dataset.G],
-                         Uhat[:, i], Shat[:, i],
-                         cell_labels_raw,
-                         gene_plot[i],
-                         save=f"{path}/sig-{gene_plot[i]}-{testid}.png",
-                         sparsify=self.config["sparsify"],
-                         t_trans=self.decoder.t_trans.detach().cpu().exp().numpy())
+                plot_sig(
+                    dataset.time.squeeze(),
+                    dataset.data[:, idx], dataset.data[:, idx+dataset.G],
+                    Uhat[:, i], Shat[:, i],
+                    cell_labels_raw,
+                    gene_plot[i],
+                    save=f"{path}/sig-{gene_plot[i]}-{testid}.png",
+                    sparsify=self.config["sparsify"],
+                    t_trans=self.decoder.t_trans.detach().cpu().exp().numpy()
+                )
 
         return ll
 
@@ -684,7 +801,13 @@ class BrODE():
         os.makedirs(file_path, exist_ok=True)
         torch.save(self.decoder.state_dict(), f"{file_path}/{name}.pt")
 
-    def save_anndata(self, adata, key, file_path, file_name=None):
+    def save_anndata(
+        self,
+        adata: AnnData,
+        key: str,
+        file_path: str,
+        file_name: Optional[str] = None
+    ):
         """Updates an input AnnData object with inferred latent variable
             and estimations from the model and write it to disk.
 
@@ -720,10 +843,12 @@ class BrODE():
         adata.var[f"{key}_sigma_s"] = np.exp(self.decoder.sigma_s.detach().cpu().numpy())
         adata.uns[f"{key}_w"] = self.decoder.w.detach().cpu().numpy()
 
-        Uhat, Shat, ll = self.pred_all(X,
-                                       torch.tensor(t.reshape(-1, 1)).to(self.device),
-                                       label_int,
-                                       np.array(range(adata.n_vars)))
+        Uhat, Shat, ll = self.pred_all(
+            X,
+            torch.tensor(t.reshape(-1, 1)).to(self.device),
+            label_int,
+            np.array(range(adata.n_vars))
+        )
         adata.layers[f"{key}_uhat"] = Uhat
         adata.layers[f"{key}_shat"] = Shat
 

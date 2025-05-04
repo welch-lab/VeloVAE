@@ -1,6 +1,8 @@
 """Evaluation Module
 Performs performance evaluation for various RNA velocity models and generates figures.
 """
+from typing import Dict, Iterable, List, Optional, Tuple
+from anndata import AnnData
 import numpy as np
 import pandas as pd
 from os import makedirs
@@ -11,12 +13,13 @@ from multiprocessing import cpu_count
 from scipy.stats import spearmanr
 
 
-def get_n_cpu(n_cell):
+def get_n_cpu(n_cell: int) -> int:
+    """ Automatically determine the number of CPU cores to use. """
     # used for scVelo parallel jobs
     return int(min(cpu_count(), max(1, n_cell/2000)))
 
 
-def get_velocity_metric_placeholder(cluster_edges):
+def get_velocity_metric_placeholder(cluster_edges: List[Tuple[str, str]]) -> Tuple:
     # Convert tuples to a single string
     cluster_edges_ = []
     for pair in cluster_edges:
@@ -32,14 +35,16 @@ def get_velocity_metric_placeholder(cluster_edges):
             np.nan)
 
 
-def get_velocity_metric(adata,
-                        key,
-                        vkey,
-                        cluster_key,
-                        cluster_edges,
-                        gene_mask=None,
-                        embed='umap',
-                        n_jobs=None):
+def get_velocity_metric(
+    adata: AnnData,
+    key: str,
+    vkey: str,
+    cluster_key: str,
+    cluster_edges: List[Tuple[str, str]],
+    gene_mask: Optional[np.ndarray] = None,
+    embed: str = 'umap',
+    n_jobs: Optional[int] = None
+) -> Tuple[Dict, float, Dict, float, Dict, float, Dict, float, float]:
     """
     Computes Cross-Boundary Direction Correctness and In-Cluster Coherence.
     The function calls scvelo.tl.velocity_graph.
@@ -65,8 +70,7 @@ def get_velocity_metric(adata,
             Number of parallel jobs. Defaults to None.
 
     Returns:
-        tuple
-
+        Tuple
             - dict: In-Cluster Coherence per cell type transition
             - float: Mean In-Cluster Coherence
             - dict: CBDir per cell type transition
@@ -117,15 +121,17 @@ def get_velocity_metric(adata,
             mean_constcy_score)
 
 
-def get_metric(adata,
-               method,
-               key,
-               vkey,
-               cluster_key="clusters",
-               gene_key='velocity_genes',
-               cluster_edges=None,
-               embed='umap',
-               n_jobs=None):
+def get_metric(
+    adata: AnnData,
+    method: str,
+    key: str,
+    vkey: str,
+    cluster_key: str = "clusters",
+    gene_key: str = 'velocity_genes',
+    cluster_edges: Optional[List[Tuple[str, str]]]=None,
+    embed: str = 'umap',
+    n_jobs: Optional[int] = None
+) -> pd.DataFrame:
     """
     Get performance metrics given a method.
 
@@ -297,30 +303,32 @@ def get_metric(adata,
     return stats, stats_type
 
 
-def post_analysis(adata,
-                  test_id,
-                  methods,
-                  keys,
-                  gene_key='velocity_genes',
-                  compute_metrics=True,
-                  raw_count=False,
-                  genes=[],
-                  plot_type=['time', 'gene', 'stream'],
-                  cluster_key="clusters",
-                  cluster_edges=[],
-                  nplot=500,
-                  frac=0.0,
-                  embed="umap",
-                  time_colormap='plasma',
-                  dot_size=50,
-                  grid_size=(1, 1),
-                  sparsity_correction=True,
-                  stream_figsize=None,
-                  palette=None,
-                  dpi=120,
-                  figure_path=None,
-                  save=None,
-                  **kwargs):
+def post_analysis(
+    adata: AnnData,
+    test_id: str,
+    methods: List[str],
+    keys: List[str],
+    gene_key: str = 'velocity_genes',
+    compute_metrics: bool = False,
+    raw_count: bool = False,
+    genes: List[str] = [],
+    plot_type: List[str] = ['time', 'gene', 'stream'],
+    cluster_key: str = "clusters",
+    cluster_edges: List[Tuple[str, str]] = [],
+    nplot: int = 500,
+    frac: float = 0.0,
+    embed: str = "umap",
+    time_colormap: str = 'plasma',
+    dot_size: int = 50,
+    grid_size: Tuple[int, int] = (1, 1),
+    sparsity_correction: bool = True,
+    stream_figsize: Optional[Tuple[float, float]] = None,
+    palette: Optional[List] = None,
+    dpi: float = 120,
+    figure_path: Optional[str] = None,
+    save: Optional[str] = None,
+    **kwargs
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """High-level API for method evaluation and plotting after training.
     This function computes performance metrics and generates plots based on user input.
 
@@ -404,7 +412,6 @@ def post_analysis(adata,
 
     Returns:
         tuple
-
             - :class:`pandas.DataFrame`: Contains the dataset-wise performance metrics of all methods.
             - :class:`pandas.DataFrame`: Contains the performance metrics of each pair of ancestor and desendant cell types.
 
@@ -469,17 +476,21 @@ def post_analysis(adata,
     # Compute metrics and generate plots for each method
     for i, method in enumerate(methods):
         if compute_metrics:
-            stats_i, stats_type_i = get_metric(adata,
-                                               method,
-                                               keys[i],
-                                               vkeys[i],
-                                               cluster_key,
-                                               gene_key,
-                                               cluster_edges,
-                                               embed,
-                                               n_jobs=(kwargs['n_jobs']
-                                                       if 'n_jobs' in kwargs
-                                                       else None))
+            stats_i, stats_type_i = get_metric(
+                adata,
+                method,
+                keys[i],
+                vkeys[i],
+                cluster_key,
+                gene_key,
+                cluster_edges,
+                embed,
+                n_jobs=(
+                    kwargs['n_jobs']
+                    if 'n_jobs' in kwargs
+                    else None
+                )
+            )
             stats_type_list.append(stats_type_i)
             # avoid duplicate methods with different keys
             method_ = f"{method} ({keys[i]})" if method in stats else method
@@ -555,22 +566,28 @@ def post_analysis(adata,
         print("---     Computing Peformance Metrics     ---")
         print(f"Dataset Size: {adata.n_obs} cells, {adata.n_vars} genes")
         stats_df = pd.DataFrame(stats)
-        stats_type_df = pd.concat(stats_type_list,
-                                  axis=1,
-                                  keys=methods,
-                                  names=['Model'])
+        stats_type_df = pd.concat(
+            stats_type_list,
+            axis=1,
+            keys=methods,
+            names=['Model']
+        )
         pd.set_option("display.precision", 3)
 
     print("---   Plotting  Results   ---")
     save_format = kwargs["save_format"] if "save_format" in kwargs else "png"
 
     if 'cluster' in plot_type or "all" in plot_type:
-        plot_cluster(adata.obsm[f"X_{embed}"],
-                     adata.obs[cluster_key].to_numpy(),
-                     embed=embed,
-                     palette=palette,
-                     save=(None if figure_path is None else 
-                           f"{figure_path}/{test_id}_umap.png"))
+        plot_cluster(
+            adata.obsm[f"X_{embed}"],
+            adata.obs[cluster_key].to_numpy(),
+            embed=embed,
+            palette=palette,
+            save=(
+                None if figure_path is None else 
+                f"{figure_path}/{test_id}_umap.png"
+            )
+        )
 
     # Generate plots
     if "time" in plot_type or "all" in plot_type:
@@ -591,16 +608,18 @@ def post_analysis(adata,
         else:
             n_row = 1
             n_col = k
-        plot_time_grid(T,
-                       X_embed,
-                       capture_time,
-                       None,
-                       dot_size=dot_size,
-                       down_sample=min(10, max(1, adata.n_obs//5000)),
-                       grid_size=(n_row, n_col),
-                       color_map=time_colormap,
-                       save=(None if figure_path is None else
-                             f"{figure_path}/{test_id}_time.{save_format}"))
+        plot_time_grid(
+            T,
+            X_embed,
+            capture_time,
+            None,
+            dot_size=dot_size,
+            down_sample=min(10, max(1, adata.n_obs//5000)),
+            grid_size=(n_row, n_col),
+            color_map=time_colormap,
+            save=(None if figure_path is None else
+                    f"{figure_path}/{test_id}_time.{save_format}")
+        )
 
     if len(genes) == 0:
         return
@@ -618,19 +637,21 @@ def post_analysis(adata,
             Labels_phase[method_] = cell_state(adata, method, keys[i], gene_indices)
             Legends_phase[method_] = ['Induction', 'Repression', 'Off', 'Unknown']
             Labels_phase_demo[method] = None
-        plot_phase_grid(grid_size[0],
-                        grid_size[1],
-                        genes,
-                        U[:, gene_indices],
-                        S[:, gene_indices],
-                        Labels_phase,
-                        Legends_phase,
-                        Uhat,
-                        Shat,
-                        Labels_phase_demo,
-                        path=figure_path,
-                        figname=test_id,
-                        format=save_format)
+        plot_phase_grid(
+            grid_size[0],
+            grid_size[1],
+            genes,
+            U[:, gene_indices],
+            S[:, gene_indices],
+            Labels_phase,
+            Legends_phase,
+            Uhat,
+            Shat,
+            Labels_phase_demo,
+            path=figure_path,
+            figname=test_id,
+            format=save_format
+        )
 
     if 'gene' in plot_type or 'all' in plot_type:
         T = {}
@@ -653,26 +674,28 @@ def post_analysis(adata,
             else:
                 T[method_] = adata.obs[f"{keys[i]}_time"].to_numpy()
 
-        plot_sig_grid(grid_size[0],
-                      grid_size[1],
-                      genes,
-                      T,
-                      U[:, gene_indices],
-                      S[:, gene_indices],
-                      Labels_sig,
-                      Legends_sig,
-                      That,
-                      Uhat,
-                      Shat,
-                      V,
-                      Yhat,
-                      frac=frac,
-                      down_sample=min(20, max(1, adata.n_obs//5000)),
-                      sparsity_correction=sparsity_correction,
-                      palette=palette,
-                      path=figure_path,
-                      figname=test_id,
-                      format=save_format)
+        plot_sig_grid(
+            grid_size[0],
+            grid_size[1],
+            genes,
+            T,
+            U[:, gene_indices],
+            S[:, gene_indices],
+            Labels_sig,
+            Legends_sig,
+            That,
+            Uhat,
+            Shat,
+            V,
+            Yhat,
+            frac=frac,
+            down_sample=min(20, max(1, adata.n_obs//5000)),
+            sparsity_correction=sparsity_correction,
+            palette=palette,
+            path=figure_path,
+            figname=test_id,
+            format=save_format
+        )
 
     if 'stream' in plot_type or 'all' in plot_type:
         try:
@@ -689,21 +712,28 @@ def post_analysis(adata,
                     gene_subset = adata.var_names[adata.var['velocity_genes'].to_numpy()]
                 else:
                     gene_subset = adata.var_names[~np.isnan(adata.layers[vkey][0])]
-                velocity_graph(adata, vkey=vkey, gene_subset=gene_subset, n_jobs=get_n_cpu(adata.n_obs))
-                velocity_embedding_stream(adata,
-                                          basis=embed,
-                                          vkey=vkey,
-                                          title="",
-                                          figsize=stream_figsize,
-                                          color=cluster_key,
-                                          palette=palette,
-                                          size=dot_size,
-                                          legend_loc=stream_legend_loc,
-                                          legend_fontsize=legend_fontsize,
-                                          dpi=dpi,
-                                          show=True,
-                                          save=(None if figure_path is None else
-                                                f'{figure_path}/{test_id}_{keys[i]}_stream.png'))
+                velocity_graph(
+                    adata,
+                    vkey=vkey,
+                    gene_subset=gene_subset,
+                    n_jobs=get_n_cpu(adata.n_obs)
+                )
+                velocity_embedding_stream(
+                    adata,
+                    basis=embed,
+                    vkey=vkey,
+                    title="",
+                    figsize=stream_figsize,
+                    color=cluster_key,
+                    palette=palette,
+                    size=dot_size,
+                    legend_loc=stream_legend_loc,
+                    legend_fontsize=legend_fontsize,
+                    dpi=dpi,
+                    show=True,
+                    save=(None if figure_path is None else
+                        f'{figure_path}/{test_id}_{keys[i]}_stream.png')
+                )
         except ImportError:
             print('Please install scVelo in order to generate stream plots')
             pass

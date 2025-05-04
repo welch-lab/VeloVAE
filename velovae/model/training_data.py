@@ -1,3 +1,4 @@
+from typing import Optional
 import numpy as np
 from torch.utils.data import Dataset
 
@@ -8,21 +9,28 @@ class SCData(Dataset):
     unspliced or spliced count number of a single gene.
     The dataset also contains the cell labels (types).
     """
-    def __init__(self, D, labels, u0=None, s0=None, t0=None, weight=None):
+    def __init__(
+        self, D: np.ndarray,
+        labels: np.ndarray,
+        u0: Optional[np.ndarray] = None,
+        s0: Optional[np.ndarray] = None,
+        t0: Optional[np.ndarray] = None,
+        weight: Optional[np.ndarray] = None
+    ):
         """Constructor
 
         Args:
-            D (:class:`numpy array`):
+            D (:class:`numpy.ndarray`):
                 Cell-by-gene data matrix, (N, G)
-            labels (:class:`numpy array`):
+            labels (:class:`numpy.ndarray`):
                 Cell type annotation, (N, 1)
-            u0 (:class:`numpy array`, optional):
+            u0 (:class:`numpy.ndarray`, optional):
                 Cell-by-gene unspliced initial condition, (N, G). Defaults to None.
-            s0 (:class:`numpy array`, optional):
+            s0 (:class:`numpy.ndarray`, optional):
                 Cell-by-gene spliced initial condition, (N, G). Defaults to None.
-            t0 (:class:`numpy array`, optional): 
+            t0 (:class:`numpy.ndarray`, optional): 
                 Time at the initial condition for each cell. Defaults to None.
-            weight (:class:`numpy array`, optional):
+            weight (:class:`numpy.ndarray`, optional):
                 Sample weight. Defaults to None.
         """
         self.N, self.G = D.shape[0], D.shape[1]//2
@@ -57,7 +65,16 @@ class SCTimedData(Dataset):
     This class is almost the same as SCData. The only difference is the addition
     of cell time. This is used for training the branching ODE.
     """
-    def __init__(self, D, labels, t, u0=None, s0=None, t0=None, weight=None):
+    def __init__(
+        self,
+        D: np.ndarray,
+        labels: np.ndarray,
+        t: np.ndarray,
+        u0: Optional[np.ndarray] = None,
+        s0: Optional[np.ndarray] = None,
+        t0: Optional[np.ndarray] = None,
+        weight: Optional[np.ndarray] = None
+    ):
         """Constructor
 
         Args:

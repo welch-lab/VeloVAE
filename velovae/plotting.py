@@ -1409,6 +1409,7 @@ def plot_vel_axis(ax,
                       headlength=headlength,
                       color='k')
     else:
+        assert len(labels) == len(x) == len(v), f"Labels, x, and v must have the same length, but got {len(labels)}, {len(x)}, and {len(v)}."
         colors = (palette if isinstance(palette, np.ndarray) or isinstance(palette, list)
                   else get_colors(len(legends), palette))
         cell_types_int = np.unique(labels)
@@ -1659,7 +1660,7 @@ def plot_sig_grid(Nr,
                                            1)
                         plot_vel_axis(ax_sig[3*i+2],
                                       t,
-                                      Shat[methods[0]][:, idx],
+                                      S[:, idx],
                                       V[methods[0]][:, idx],
                                       Labels[methods[0]],
                                       Legends[methods[0]],
@@ -1828,12 +1829,12 @@ def plot_sig_grid(Nr,
         lgd = fig_sig.legend(handles,
                              labels,
                              fontsize=legend_fontsize,
-                             markerscale=2.0,
+                             markerscale=3.0,
                              bbox_to_anchor=(-0.03/Nc, l_indent),
                              loc='upper right')
 
         fig_sig.subplots_adjust(hspace=0.3, wspace=0.12)
-
+        plt.tight_layout()
         save = None if (path is None or figname is None) else f'{path}/{figname}_sig_{i_fig+1}.{format}'
         save_fig(fig_sig, save, (lgd,))
 

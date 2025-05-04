@@ -1,14 +1,18 @@
+from typing import Optional, Tuple
+from anndata import AnnData
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from .model_util import ode_numpy, ode_br_numpy, pred_su_numpy
 
 
-def rna_velocity_vanillavae(adata,
-                            key,
-                            use_raw=False,
-                            use_scv_genes=False,
-                            k=10,
-                            return_copy=False):
+def rna_velocity_vanillavae(
+    adata: AnnData,
+    key: str,
+    use_raw: bool = False,
+    use_scv_genes: bool = False,
+    k: int = 10,
+    return_copy: bool = False
+) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     """Compute the velocity based on:
        du/dt = alpha - beta * u, ds/dt = beta * u - gamma * s
 
@@ -28,14 +32,10 @@ def rna_velocity_vanillavae(adata,
             Results will be saved to adata by default. Defaults to False.
 
     Returns:
-        tuple:
-
+        Tuple:
             - Vu (:class:`numpy.ndarray`): Velocity of u
-
             - V (:class:`numpy.ndarray`): Velocity of s
-
             - U (:class:`numpy.ndarray`): Predicted u values
-
             - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = adata.var[f"{key}_alpha"].to_numpy()
@@ -53,13 +53,15 @@ def rna_velocity_vanillavae(adata,
             U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
             U = U/scaling
         else:
-            U, S = ode_numpy(t.reshape(-1, 1),
-                             alpha,
-                             beta,
-                             gamma,
-                             ton,
-                             toff,
-                             None)  # don't need scaling here
+            U, S = ode_numpy(
+                t.reshape(-1, 1),
+                alpha,
+                beta,
+                gamma,
+                ton,
+                toff,
+                None  # don't need scaling here
+            )
             adata.layers["Uhat"] = U*scaling
             adata.layers["Shat"] = S
     # smooth transition at the switch-on time
@@ -79,14 +81,16 @@ def rna_velocity_vanillavae(adata,
         return Vu, V, U, S
 
 
-def rna_velocity_vae(adata,
-                     key,
-                     use_raw=False,
-                     use_scv_genes=False,
-                     sigma=None,
-                     approx=False,
-                     full_vb=False,
-                     return_copy=False):
+def rna_velocity_vae(
+    adata: AnnData,
+    key: str,
+    use_raw: bool = False,
+    use_scv_genes: bool = False,
+    sigma: Optional[float] = None,
+    approx: bool = False,
+    full_vb: bool = False,
+    return_copy: bool = False
+) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     """Compute the velocity based on:
        du/dt = rho * alpha - beta * u, ds/dt = beta * u - gamma * s
 
@@ -110,14 +114,10 @@ def rna_velocity_vae(adata,
             Results will be saved to adata by default. Defaults to False.
 
     Returns:
-        tuple:
-
+        Tuple:
             - Vu (:class:`numpy.ndarray`): Velocity of u
-
             - V (:class:`numpy.ndarray`): Velocity of s
-
             - U (:class:`numpy.ndarray`): Predicted u values
-
             - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = np.exp(adata.var[f"{key}_logmu_alpha"].to_numpy()) if full_vb\
@@ -140,11 +140,14 @@ def rna_velocity_vae(adata,
             U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
             U = U/scaling
         else:
-            U, S = pred_su_numpy(np.clip(t-t0, 0, None).reshape(-1, 1),
-                                 U0/scaling,
-                                 S0,
-                                 alpha*rho,
-                                 beta, gamma)
+            U, S = pred_su_numpy(
+                np.clip(t-t0, 0, None).reshape(-1, 1),
+                U0/scaling,
+                S0,
+                alpha*rho,
+                beta,
+                gamma
+            )
             U, S = np.clip(U, 0, None), np.clip(S, 0, None)
             adata.layers["Uhat"] = U * scaling
             adata.layers["Shat"] = S
@@ -156,10 +159,12 @@ def rna_velocity_vae(adata,
         Vu = rho * alpha - beta * U
     if sigma is not None:
         time_order = np.argsort(t)
-        V[time_order] = gaussian_filter1d(V[time_order], sigma,
-                                          axis=0, mode="nearest")
-        Vu[time_order] = gaussian_filter1d(Vu[time_order], sigma,
-                                           axis=0, mode="nearest")
+        V[time_order] = gaussian_filter1d(
+            V[time_order], sigma, axis=0, mode="nearest"
+        )
+        Vu[time_order] = gaussian_filter1d(
+            Vu[time_order], sigma, axis=0, mode="nearest"
+        )
     adata.layers[f"{key}_velocity"] = V
     adata.layers[f"{key}_velocity_u"] = Vu
     if use_scv_genes:
@@ -169,12 +174,14 @@ def rna_velocity_vae(adata,
         return Vu, V, U, S
 
 
-def rna_velocity_brode(adata,
-                       key,
-                       use_raw=False,
-                       use_scv_genes=False,
-                       k=10.0,
-                       return_copy=False):
+def rna_velocity_brode(
+    adata: AnnData,
+    key: str,
+    use_raw: bool = False,
+    use_scv_genes: bool = False,
+    k: float = 10.0,
+    return_copy: bool = False
+) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     """Compute the velocity based on:
         ds/dt = beta * u - gamma * s
         where u and s are predicted by branching ODE
@@ -195,14 +202,10 @@ def rna_velocity_brode(adata,
             Results will be saved to adata by default. Defaults to False.
 
     Returns:
-        tuple:
-
+        Tuple:
             - Vu (:class:`numpy.ndarray`): Velocity of u
-
             - V (:class:`numpy.ndarray`): Velocity of s
-
             - U (:class:`numpy.ndarray`): Predicted u values
-
             - S (:class:`numpy.ndarray`): Predicted s values
     """
     alpha = adata.varm[f"{key}_alpha"].T
@@ -225,15 +228,17 @@ def rna_velocity_brode(adata,
             U, S = adata.layers[f"{key}_uhat"], adata.layers[f"{key}_shat"]
             U = U/scaling
         else:
-            U, S = ode_br_numpy(t.reshape(-1, 1),
-                                y,
-                                np.argmax(w, 1),
-                                alpha=alpha,
-                                beta=beta,
-                                gamma=gamma,
-                                t_trans=t_trans,
-                                u0_root=u0_root,
-                                s0_root=s0_root)
+            U, S = ode_br_numpy(
+                t.reshape(-1, 1),
+                y,
+                np.argmax(w, 1),
+                alpha=alpha,
+                beta=beta,
+                gamma=gamma,
+                t_trans=t_trans,
+                u0_root=u0_root,
+                s0_root=s0_root
+            )
             adata.layers["Uhat"] = U
             adata.layers["Shat"] = S
 

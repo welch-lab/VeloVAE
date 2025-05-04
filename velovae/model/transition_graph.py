@@ -4,6 +4,8 @@ A transition graph represents relations between cell types.
 It is a directed graph with cell types as vertices and
 edges represent progenitor-descendant relations.
 """
+from typing import Dict, Iterable, Optional, Tuple
+from anndata import AnnData
 import numpy as np
 from copy import deepcopy
 import scanpy as sc
@@ -15,12 +17,23 @@ from ..analysis.evaluation_util import calibrated_cross_boundary_correctness
 #######################################################################
 
 
-def encode_type(cell_types_raw):
-    #######################################################################
-    # Use integer to encode the cell types
-    # Each cell type has one unique integer label.
-    #######################################################################
+def encode_type(cell_types_raw: Iterable[str]) -> Tuple[Dict[str, int], Dict[int, str]]:
+    """
+    Encode a list of cell type strings into unique integer labels.
 
+    Each unique cell type in `cell_types_raw` is assigned a unique integer
+    label, enabling numeric representation of cell types for downstream
+    processing.
+
+    Args:
+        cell_types_raw (Iterable[str]): An iterable of cell type strings to encode.
+
+    Returns:
+        Tuple[Dict[str, int], Dict[int, str]]:
+            A tuple containing two dictionaries:
+            - The first maps each cell type string to a unique integer label.
+            - The second maps each integer label back to the corresponding cell type string.
+    """
     # Map cell types to integers
     label_dic = {}
     label_dic_rev = {}
@@ -31,11 +44,27 @@ def encode_type(cell_types_raw):
     return label_dic, label_dic_rev
 
 
-def encode_graph(graph_raw, init_types_raw, label_dic):
-    #######################################################################
-    # Encode the transition graph using integers
-    # Each cell type has one unique integer label.
-    #######################################################################
+def encode_graph(
+    graph_raw: Dict[str, Iterable[str]],
+    init_types_raw: Iterable[str],
+    label_dic: Dict[str, int]
+) -> Tuple[Dict[int, Iterable[int]], Iterable[int]]:
+    """
+    Encode the transition graph by mapping cell type names to unique integer labels.
+
+    Args:
+        graph_raw (Dict[str, Iterable[str]]):
+            A dictionary representing the adjacency list of transition graph.
+        init_types_raw (Iterable[str]):
+            An iterable of initial cell type names as strings.
+        label_dic (Dict[str, int]):
+            A dictionary mapping cell type strings to unique integer labels.
+
+    Returns:
+        A tuple containing:
+            - A dictionary with integer keys and iterable integer values representing the encoded transition graph.
+            - An iterable of integers representing the encoded initial cell types.
+    """
 
     graph_enc = {}
     for type_ in graph_raw.keys():
@@ -45,10 +74,27 @@ def encode_graph(graph_raw, init_types_raw, label_dic):
     return graph_enc, init_types_enc
 
 
-def decode_graph(graph, init_types, label_dic_rev):
-    #######################################################################
-    # Decode the transition graph from integers to the type name
-    #######################################################################
+def decode_graph(
+    graph: Dict[int, Iterable[int]],
+    init_types: Iterable[int],
+    label_dic_rev: Dict[int, str]
+) -> Tuple[Dict[str, Iterable[str]], Iterable[str]]:
+    """
+    Decode the transition graph from integer labels to their corresponding type names.
+
+    Args:
+        graph (Dict[int, Iterable[int]]):
+            A dictionary representing the adjacency list of an integer-encoded graph.
+        init_types (Iterable[int]):
+            Iterable of integer labels representing initial node types.
+        label_dic_rev (Dict[int, str]):
+            A dictionary mapping integer labels to their string type names.
+
+    Returns:
+        Tuple[Dict[str, Iterable[str]], Iterable[str]]:
+            - Decoded graph with string type names as keys and iterable of string type names as adjacency lists.
+            - Iterable of string type names corresponding to the initial types.
+    """
 
     graph_dec = {}
     for type_ in graph.keys():
@@ -58,11 +104,13 @@ def decode_graph(graph, init_types, label_dic_rev):
     return graph_dec, init_types_dec
 
 
-def str2int(cell_labels_raw, label_dic):
+def str2int(cell_labels_raw: Iterable[str], label_dic: Dict[str, int]) -> np.ndarray:
+    """ Convert cell labels from string to integer representation. """
     return np.array([label_dic[cell_labels_raw[i]] for i in range(len(cell_labels_raw))])
 
 
-def int2str(cell_labels, label_dic_rev):
+def int2str(cell_labels: Iterable[int], label_dic_rev: Dict[int, str]) -> np.ndarray:
+    """ Convert cell labels from integer to string representation. """
     return np.array([label_dic_rev[cell_labels[i]] for i in range(len(cell_labels))])
 
 
@@ -95,11 +143,35 @@ def recoverTransitionTime(t_trans, ts, graph, init_type):
     return t_trans_orig, ts_orig
 
 
-def merge_nodes(graph, parents, n_nodes, loop, v_outside):
-    #######################################################################
-    # Merge nodes into a super-node and change the graph accordingly
-    #######################################################################
+def merge_nodes(
+    graph: np.ndarray,
+    parents: np.ndarray,
+    n_nodes: int,
+    loop: np.ndarray,
+    v_outside: np.ndarray
+) -> Tuple[Dict[int, int], Dict[int, int], Dict[int, int], np.ndarray]:
+    """
+    Merge nodes into a super-node and adjust the graph structure accordingly.
 
+    This function groups a set of nodes into a single super-node, updating the
+    given graph and associated data structures to reflect this merging. It
+    modifies connectivity and related mappings to maintain consistency after
+    merging.
+
+    Args:
+        graph (np.ndarray): The adjacency matrix representing the graph.
+        parents (np.ndarray): Array indicating the parent of each node.
+        n_nodes (int): Number of nodes in the graph.
+        loop (np.ndarray): Array indicating loops within nodes.
+        v_outside (np.ndarray): Array representing external connections or nodes.
+
+    Returns:
+        Tuple[Dict[int, int], Dict[int, int], Dict[int, int], np.ndarray]: 
+            - v_map: Mapping of original node indices to new node indices.
+            - v_to_loop: Mapping of nodes outside the loop to the corresponding node in the loop.
+            - loop_to_v: Mapping of nodes in the loop to their corresponding vertices.
+            - graph_new: The updated adjacency matrix after merging nodes.
+    """
     # Create a new map from
     v_map = {}
     v_to_loop = {}  # maps any vertex outside the loop to the vertex in the loop with the maximum weight
@@ -146,7 +218,8 @@ def merge_nodes(graph, parents, n_nodes, loop, v_outside):
     return v_map, v_to_loop, loop_to_v, graph_new
 
 
-def adj_matrix_to_list(A):
+def adj_matrix_to_list(A: np.ndarray) -> Dict[int, Iterable[int]]:
+    """ Convert an adjacency matrix to an adjacency list. """
     n_type = A.shape[0]
     adj_list = {}
     for i in range(n_type):
@@ -158,10 +231,19 @@ def adj_matrix_to_list(A):
     return adj_list
 
 
-def check_connected(adj_list, root, n_nodes):
-    #######################################################################
-    # Check if a directed graph is connected
-    #######################################################################
+def check_connected(adj_list: Dict[int, Iterable[int]], root: int, n_nodes: int) -> bool:
+    """
+    Check if all nodes in a directed graph are reachable from a given root node.
+
+    Args:
+        adj_list (Dict[int, Iterable[int]]): Adjacency list representing the graph, 
+            where keys are node indices and values are iterables of neighbor node indices.
+        root (int): The root node index from which reachability is checked.
+        n_nodes (int): Total number of nodes in the graph.
+
+    Returns:
+        bool: True if all nodes are reachable from the root, False otherwise.
+    """
 
     checked = np.array([False for i in range(n_nodes)])
 
@@ -177,11 +259,19 @@ def check_connected(adj_list, root, n_nodes):
     return np.all(checked)
 
 
-def get_loop(trace_back, n_nodes, start):
-    #######################################################################
-    # trace_back is a dictionary mapping each node to its antecedent
-    #######################################################################
+def get_loop(trace_back: Dict[int, int], n_nodes: int, start: int):
+    """
+    Retrieve the nodes forming a loop in a graph by tracing back from a start node.
 
+    Args:
+        trace_back (Dict[int, int]): A dictionary mapping each node to its antecedent node.
+        n_nodes (int): Total number of nodes in the graph.
+        start (int): The node from which the trace back to find the loop begins.
+
+    Returns:
+        List[int]: A list of nodes representing the detected loop, ordered from entry
+                   point back to the start.
+    """
     loop = []
     v_outside = []
     ptr = start
@@ -200,11 +290,20 @@ def get_loop(trace_back, n_nodes, start):
     return np.flip(loop), v_outside
 
 
-def check_loop(adj_list, n_nodes):
-    #######################################################################
-    # Check whether a loop exists in a graph
-    # Applies BFS
-    #######################################################################
+def check_loop(adj_list: Dict[int, Iterable[int]], n_nodes: int) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Check whether a loop exists in a graph using a Breadth-First Search (BFS) approach.
+
+    Args:
+        adj_list (Dict[int, Iterable[int]]): Adjacency list representing the graph,
+            where keys are node indices and values are iterables of connected nodes.
+        n_nodes (int): The number of nodes in the graph.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Two numpy arrays indicating nodes involved in loops and loop structures found.
+
+    This function traverses the graph using BFS to detect if any cycles (loops) exist.
+    """
     loop = []
 
     for node in range(n_nodes):
@@ -227,7 +326,7 @@ def check_loop(adj_list, n_nodes):
     return np.array([]), np.array(range(n_nodes))
 
 
-def edmond_chu_liu(graph, r):
+def edmond_chu_liu(graph: np.ndarray, r: int) -> np.ndarray:
     """Find a minimum spanning tree in a directed graph.
 
     Args:
@@ -323,15 +422,17 @@ def edmond_chu_liu(graph, r):
 class TransGraph():
     """Transiton Graph
     """
-    def __init__(self,
-                 adata,
-                 tkey,
-                 embed_key,
-                 cluster_key,
-                 vkey=None,
-                 train_idx=None,
-                 k=5,
-                 res=0.005):
+    def __init__(
+        self,
+        adata: AnnData,
+        tkey: str,
+        embed_key: str,
+        cluster_key: str,
+        vkey: Optional[str] = None,
+        train_idx: Optional[np.ndarray] = None,
+        k: int = 5,
+        res: float = 0.005
+    ):
         """Class constructor
 
         Args:
@@ -366,21 +467,21 @@ class TransGraph():
         self.t = adata.obs[tkey].to_numpy() if train_idx is None else adata.obs[tkey][train_idx].to_numpy()
         self.z = adata.obsm[embed_key] if train_idx is None else adata.obsm[embed_key][train_idx]
         self.use_vel_graph = vkey is not None
-        self._time_based_partition(adata,
-                                   train_idx,
-                                   k,
-                                   res)
+        self._time_based_partition(
+            adata, train_idx, k, res
+        )
         if vkey is not None:
-            self._get_velocity_flow(adata,
-                                    tkey,
-                                    cluster_key,
-                                    vkey)
+            self._get_velocity_flow(
+                adata, tkey, cluster_key, vkey
+            )
 
-    def _time_based_partition(self,
-                              adata,
-                              train_idx=None,
-                              k=5,
-                              res=0.005):
+    def _time_based_partition(
+        self,
+        adata: AnnData,
+        train_idx: Optional[np.ndarray] = None,
+        k: int = 5,
+        res: float = 0.005
+    ):
         """Partition cells into several graphs representing distinct lineages.
         The algorithm applies Louvain clustering with low resolution.
 
@@ -391,7 +492,7 @@ class TransGraph():
                 Indices of training samples. Defaults to None.
             k (int, optional):
                 Number of neighbors used in Louvain clustering. Default to 5.
-            res (int, optional):
+            res (float, optional):
                 Resolution parameter used in Louvain clustering. Default to 0.005.
         """
         # Partition the graph
@@ -416,12 +517,14 @@ class TransGraph():
         print("Number of partitions: ", len(lineages))
         return
 
-    def _get_velocity_flow(self,
-                           adata,
-                           tkey,
-                           cluster_key,
-                           vkey):
-        """Wrapper function for retreving the cross-boundary direction correctness (CBDir).
+    def _get_velocity_flow(
+        self,
+        adata: AnnData,
+        tkey: str,
+        cluster_key: str,
+        vkey: str
+    ):
+        """Calculate the cross-boundary direction correctness (CBDir) to estimate transition probability.
 
         Args:
             adata (:class:anndata.AnnData):
@@ -433,26 +536,30 @@ class TransGraph():
             vkey (str):
                 Key for RNA velocity in adata.layers.
         """
-        self.cbdir, _, self.tscore, _ = calibrated_cross_boundary_correctness(adata,
-                                                                              cluster_key,
-                                                                              vkey,
-                                                                              tkey,
-                                                                              cluster_edges=None,
-                                                                              x_emb='Ms',
-                                                                              sum_up=True)
+        self.cbdir, _, self.tscore, _ = calibrated_cross_boundary_correctness(
+            adata,
+            cluster_key,
+            vkey,
+            tkey,
+            cluster_edges=None,
+            x_emb='Ms',
+            sum_up=True
+        )
         return
 
     def _get_init_time(self):
-        # Estimate initial time
+        """ Estimate initial time """
         self.t_init = np.zeros((self.n_type))
         for i in (self.cell_types):
             self.t_init[i] = np.quantile(self.t[self.cell_labels == i], 0.05)
 
-    def _time_based_graph(self,
-                          n_par=2,
-                          dt=(0.01, 0.05),
-                          k=5,
-                          soft_assign=True):
+    def _time_based_graph(
+        self,
+        n_par: int = 2,
+        dt: Tuple[float, float] = (0.01, 0.05),
+        k: int = 5,
+        soft_assign: bool = True
+    ) -> np.ndarray:
         """Build a cell type transition graph using time-based KNN approach.
 
         Args:
@@ -475,15 +582,17 @@ class TransGraph():
         # Compute cell-type transition probability
         print("Computing type-to-type transition probability")
         range_t = np.quantile(self.t, 0.99) - np.quantile(self.t, 0.01)
-        P_raw = knn_transition_prob(self.t,
-                                    self.z,
-                                    self.t,
-                                    self.z,
-                                    self.cell_labels,
-                                    self.n_type,
-                                    [dt[0]*range_t, dt[1]*range_t],
-                                    k,
-                                    soft_assign)
+        P_raw = knn_transition_prob(
+            self.t,
+            self.z,
+            self.t,
+            self.z,
+            self.cell_labels,
+            self.n_type,
+            [dt[0]*range_t, dt[1]*range_t],
+            k,
+            soft_assign
+        )
 
         psum = P_raw.sum(1)
         P_raw = P_raw/psum.reshape(-1, 1)
@@ -509,7 +618,7 @@ class TransGraph():
         self.w = P
         return P_raw
 
-    def _velocity_based_graph(self, n_par=2):
+    def _velocity_based_graph(self, n_par: int = 2) -> np.ndarray:
         """Build a cell type transition graph using velocity flows.
 
         Args:
@@ -554,11 +663,13 @@ class TransGraph():
         self.w = P  # pruned graph
         return P_raw
 
-    def compute_transition_deterministic(self,
-                                         n_par=2,
-                                         dt=(0.01, 0.05),
-                                         k=5,
-                                         soft_assign=True):
+    def compute_transition_deterministic(
+        self,
+        n_par: int = 2,
+        dt: Tuple[float,float] = (0.01, 0.05),
+        k: int = 5,
+        soft_assign: bool = True
+    ) -> np.ndarray:
         """Compute a type-to-type transition based a cell-to-cell transition matrix
 
         Args:
@@ -579,7 +690,7 @@ class TransGraph():
                 across the cells.
 
         Returns:
-            :class:`numpy array`:
+            :class:`numpy.ndarray`:
                 Cell type transition probability matrix
         """
         if self.use_vel_graph:
