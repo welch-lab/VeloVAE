@@ -584,8 +584,8 @@ class BrODE():
         self.load_config(config)
 
         if self.config["learning_rate"] is None:
-            p = (np.sum(adata.layers["unspliced"].A > 0)
-                 + (np.sum(adata.layers["spliced"].A > 0)))/adata.n_obs/adata.n_vars/2
+            p = (np.sum(adata.layers["unspliced"].toarray() > 0)
+                 + (np.sum(adata.layers["spliced"].toarray() > 0)))/adata.n_obs/adata.n_vars/2
             self._set_lr(p)
             print(f'Learning Rate based on Data Sparsity: {self.config["learning_rate"]:.4f}')
 

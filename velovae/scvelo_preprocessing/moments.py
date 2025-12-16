@@ -79,12 +79,12 @@ def moments(
         adata.layers["Ms"] = (
             csr_matrix.dot(connectivities, csr_matrix(adata.layers["spliced"]))
             .astype(np.float32)
-            .A
+            .toarray()
         )
         adata.layers["Mu"] = (
             csr_matrix.dot(connectivities, csr_matrix(adata.layers["unspliced"]))
             .astype(np.float32)
-            .A
+            .toarray()
         )
         # if renormalize: normalize_per_cell(adata, layers={'Ms', 'Mu'}, enforce=True)
 

@@ -438,7 +438,7 @@ def post_analysis(
         makedirs(figure_path, exist_ok=True)
     # Retrieve data
     if raw_count:
-        U, S = adata.layers["unspliced"].A, adata.layers["spliced"].A
+        U, S = adata.layers["unspliced"].toarray(), adata.layers["spliced"].toarray()
     else:
         U, S = adata.layers["Mu"], adata.layers["Ms"]
     X_embed = adata.obsm[f"X_{embed}"]

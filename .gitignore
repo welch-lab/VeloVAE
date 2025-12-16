@@ -1,5 +1,6 @@
 *.sh
 convert_loom.py
+build/
 data/
 figures/
 checkpoints/
@@ -12,5 +13,4 @@ dist/
 tests/
 Rscript/
 .Rhistory
-
-
+velovae.egg-info/

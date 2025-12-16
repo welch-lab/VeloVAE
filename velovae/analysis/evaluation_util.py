@@ -377,7 +377,7 @@ def get_err_velovae(
     ll_train_gene = np.ones((adata.n_vars))
     ll_test_gene = np.ones((adata.n_vars))
     if discrete:
-        U, S = adata.layers["unspliced"].A, adata.layers["spliced"].A
+        U, S = adata.layers["unspliced"].toarray(), adata.layers["spliced"].toarray()
         lu, ls = adata.obs["library_scale_u"].to_numpy(), adata.obs["library_scale_s"].to_numpy()
         Uhat = Uhat*(lu.reshape(-1, 1))
         Shat = Shat*(ls.reshape(-1, 1))
@@ -995,7 +995,7 @@ def get_err_pv(adata: AnnData, key: str, gene_mask: Optional[np.ndarray] = None,
         adata.var[f'{key}_likelihood_train'] = np.ones((adata.n_vars))*np.nan
         adata.var[f'{key}_likelihood_test'] = np.ones((adata.n_vars))*np.nan
         if discrete:
-            U, S = adata.layers['unspliced'].A, adata.layers['spliced'].A
+            U, S = adata.layers['unspliced'].toarray(), adata.layers['spliced'].toarray()
             Mu_u, Mu_s = adata.layers[f'{key}_ut'], adata.layers[f'{key}_st']
             Uhat, Shat = adata.layers[f'{key}_u'], adata.layers[f'{key}_s']
         else:

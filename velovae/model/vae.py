@@ -182,7 +182,7 @@ class decoder(nn.Module):
         if checkpoint is None:
             # Get dispersion and library size factor for the discrete model
             if discrete:
-                U, S = adata.layers['unspliced'].A.astype(float), adata.layers['spliced'].A.astype(float)
+                U, S = adata.layers['unspliced'].toarray().astype(float), adata.layers['spliced'].toarray().astype(float)
                 # Dispersion
                 mean_u, mean_s, dispersion_u, dispersion_s = get_dispersion(U[train_idx], S[train_idx])
                 adata.var["mean_u"] = mean_u
@@ -1646,8 +1646,8 @@ class VAE(VanillaVAE):
         """
         self.load_config(config)
         if self.config["learning_rate"] is None:
-            p = (np.sum(adata.layers["unspliced"].A > 0)
-                 + (np.sum(adata.layers["spliced"].A > 0)))/adata.n_obs/adata.n_vars/2
+            p = (np.sum(adata.layers["unspliced"].toarray() > 0)
+                 + (np.sum(adata.layers["spliced"].toarray() > 0)))/adata.n_obs/adata.n_vars/2
             self._set_lr(p)
             print(f'Learning Rate based on Data Sparsity: {self.config["learning_rate"]:.4f}')
         print("--------------------------- Train a VeloVAE ---------------------------")
